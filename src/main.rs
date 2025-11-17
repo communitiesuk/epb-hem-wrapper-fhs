@@ -1,6 +1,6 @@
 use clap::{Args, Parser};
-use hem::output::FileOutput;
-use hem::read_weather_file::{ExternalConditions, weather_data_to_vec};
+use home_energy_model::output::FileOutput;
+use home_energy_model::read_weather_file::{ExternalConditions, weather_data_to_vec};
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;

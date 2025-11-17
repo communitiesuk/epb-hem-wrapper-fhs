@@ -1,4 +1,4 @@
-use hem::{
+use home_energy_model::{
     core::units::{DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT},
     input::ApplianceGainsEvent,
 };

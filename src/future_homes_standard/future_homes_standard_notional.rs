@@ -10,26 +10,26 @@ use crate::future_homes_standard::input::{
     UValueEditableBuildingElementJsonValue,
 };
 use anyhow::{anyhow, bail};
-use hem::compare_floats::min_of_2;
-use hem::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
-use hem::core::schedule::{expand_events, TypedScheduleEvent};
-use hem::core::units::{
+use home_energy_model::compare_floats::min_of_2;
+use home_energy_model::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
+use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model::core::units::{
     convert_profile_to_daily, JOULES_PER_KILOJOULE, JOULES_PER_KILOWATT_HOUR, WATTS_PER_KILOWATT,
 };
-use hem::core::water_heat_demand::cold_water_source::ColdWaterSource;
-use hem::core::water_heat_demand::dhw_demand::{
+use home_energy_model::core::water_heat_demand::cold_water_source::ColdWaterSource;
+use home_energy_model::core::water_heat_demand::dhw_demand::{
     DomesticHotWaterDemand, DomesticHotWaterDemandData,
 };
-use hem::core::water_heat_demand::misc::water_demand_to_kwh;
-use hem::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
-use hem::input::{
+use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
+use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
+use home_energy_model::input::{
     BuildingElement, ColdWaterSourceType, GroundBuildingElement, GroundBuildingElementJsonValue,
     HeatPumpSourceType, HeatSourceWetDetails, SpaceHeatSystemHeatSource, WaterPipeContentsType,
     WaterPipework, WaterPipeworkLocation,
 };
-use hem::simulation_time::SimulationTime;
-use hem::statistics::{np_interp, percentile};
-use hem::{
+use home_energy_model::simulation_time::SimulationTime;
+use home_energy_model::statistics::{np_interp, percentile};
+use home_energy_model::{
     compare_floats::max_of_2,
     core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection},
 };
@@ -1545,14 +1545,13 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use hem::core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection};
-
     use super::*;
     use approx::assert_relative_eq;
-    use hem::input::{
+    use home_energy_model::core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection};
+    use home_energy_model::input::{
         EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, WaterPipeworkSimple,
     };
-    use hem::input::{HotWaterSource, WasteWaterHeatRecovery};
+    use home_energy_model::input::{HotWaterSource, WasteWaterHeatRecovery};
     use rstest::{fixture, rstest};
     use serde_json::json;
     use std::borrow::BorrowMut;

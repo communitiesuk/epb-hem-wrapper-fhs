@@ -8,8 +8,8 @@ use crate::{CalculationKey, FhsFlags};
 
 use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
-use hem::output::Output;
-use hem::{CalculationContext, CalculationResultsWithContext, HemResponse, RunResults};
+use home_energy_model::output::Output;
+use home_energy_model::{CalculationContext, CalculationResultsWithContext, HemResponse, RunResults};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::LazyLock;
