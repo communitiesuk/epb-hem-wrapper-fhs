@@ -2,7 +2,15 @@
 
 ## Overview
 
-TBC
+The Future Homes Standard (FHS) is a wrapper around the Home Energy Model (HEM) - 
+the UK Government’s proposed National Calculation Methodology for assessing the energy performance of dwellings. 
+FHS deals with assessing compliance with Part L of the building regulations and can do so by creating an actual 
+and notional building which are both assessed using the core HEM and corresponding FHS postprocessing steps.
+
+Please note that the FHS wrapper is currently in development and should not be used for any official purpose.
+
+This project constitutes a port into Rust of
+the wrapper written in Python commissioned by DESNZ.
 
 ## Running the wrapper
 
