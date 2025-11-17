@@ -6,9 +6,9 @@ use std::io::{BufReader, Cursor, ErrorKind, Write};
 use std::str::from_utf8;
 use std::sync::Arc;
 use uuid::Uuid;
-use fhs::FhsFlags;
-use fhs::read_weather_file::weather_data_to_vec;
-use fhs::{Output, run_wrappers};
+use home_energy_model_wrapper_fhs::FhsFlags;
+use home_energy_model_wrapper_fhs::read_weather_file::weather_data_to_vec;
+use home_energy_model_wrapper_fhs::{Output, run_wrappers};
 
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     // Extract some useful information from the request

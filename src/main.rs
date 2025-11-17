@@ -8,8 +8,8 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
-use fhs::FhsFlags;
-use fhs::run_wrappers;
+use home_energy_model_wrapper_fhs::FhsFlags;
+use home_energy_model_wrapper_fhs::run_wrappers;
 
 #[derive(Parser, Default, Debug)]
 #[clap(author, version, about, long_about = None)]

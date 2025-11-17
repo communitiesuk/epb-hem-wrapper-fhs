@@ -528,44 +528,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fhs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "approx",
- "bitflags",
- "clap",
- "csv",
- "home-energy-model",
- "indexmap",
- "itertools",
- "jsonschema",
- "parking_lot",
- "partial_application",
- "rand 0.9.2",
- "rand_distr 0.5.1",
- "rand_mt",
- "rand_pcg",
- "rayon",
- "rstest",
- "serde",
- "serde_json",
- "serde_valid",
- "smartstring",
- "strum",
- "strum_macros",
- "thiserror 2.0.17",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
 name = "fhs-compliance-lambda"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fhs",
+ "home-energy-model-wrapper-fhs",
  "lambda_http",
  "parking_lot",
  "serde_json",
@@ -816,6 +783,39 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "home-energy-model-wrapper-fhs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "approx",
+ "bitflags",
+ "clap",
+ "csv",
+ "home-energy-model",
+ "indexmap",
+ "itertools",
+ "jsonschema",
+ "parking_lot",
+ "partial_application",
+ "rand 0.9.2",
+ "rand_distr 0.5.1",
+ "rand_mt",
+ "rand_pcg",
+ "rayon",
+ "rstest",
+ "serde",
+ "serde_json",
+ "serde_valid",
+ "smartstring",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.17",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

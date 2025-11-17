@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.82.0"
 
 [dependencies]
-fhs = { path = ".." }
+home-energy-model-wrapper-fhs = { path = ".." }
 anyhow = "1.0.100"
 lambda_http = "1.0.1"
 parking_lot = "0.12.5"
