@@ -12,7 +12,7 @@ csv = "1.4.0"
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "separate-fhs" }
 indexmap = { version = "2.11.4", features = ["serde", "arbitrary"] }
 itertools = "0.14.0"
-jsonschema = "0.33.0"
+jsonschema = "0.35.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
 partial_application = "0.2.1"
 rand = "0.9.1"
