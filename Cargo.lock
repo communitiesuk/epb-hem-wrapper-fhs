@@ -454,6 +454,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-encoding"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
+
+[[package]]
 name = "derivative"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -827,7 +833,7 @@ dependencies = [
  "home-energy-model",
  "indexmap",
  "itertools",
- "jsonschema 0.35.0",
+ "jsonschema 0.37.1",
  "parking_lot",
  "partial_application",
  "rand 0.9.2",
@@ -1196,13 +1202,13 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.35.0"
+version = "0.37.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0303b14f91cbac17c64aaf2ef60ab71fe5f34c3867cedcbca72c9dd15f5040fe"
+checksum = "ae66e2951b8570591298ab528f9f457bcc38cdc24ee927cece9310248aa32a74"
 dependencies = [
  "ahash",
- "base64",
  "bytecount",
+ "data-encoding",
  "email_address",
  "fancy-regex",
  "fraction",
@@ -1212,7 +1218,7 @@ dependencies = [
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing 0.35.0",
+ "referencing 0.37.1",
  "regex",
  "regex-syntax",
  "reqwest",
@@ -1921,9 +1927,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.35.0"
+version = "0.37.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d0d0665043906aacf1d83bea9d61e5134f8f437815b84320e7facf8ff4e9c2"
+checksum = "c1efd6958dfa348f532982eaa367ffbf78e077bc8f1f7a0173778914ec647437"
 dependencies = [
  "ahash",
  "fluent-uri 0.4.1",
