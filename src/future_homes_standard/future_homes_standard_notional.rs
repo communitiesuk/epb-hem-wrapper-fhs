@@ -1547,7 +1547,9 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use home_energy_model::core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection};
+    use home_energy_model::core::space_heat_demand::building_element::{
+        pitch_class, HeatFlowDirection,
+    };
     use home_energy_model::input::{
         EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, WaterPipeworkSimple,
     };

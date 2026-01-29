@@ -1,8 +1,8 @@
 use crate::future_homes_standard::fhs_appliance::FhsAppliance;
 use crate::future_homes_standard::fhs_hw_events::{
-    HotWaterEventGenerator, reset_events_and_provide_drawoff_generator,
+    reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
-use crate::future_homes_standard::input::{InputForProcessing, JsonAccessResult, json_error};
+use crate::future_homes_standard::input::{json_error, InputForProcessing, JsonAccessResult};
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
@@ -12,7 +12,7 @@ use home_energy_model::core::units::{
 };
 use home_energy_model::corpus::{Corpus, OutputOptions, ResultsEndUser};
 use home_energy_model::external_conditions::{
-    ExternalConditions, WindowShadingObject, create_external_conditions,
+    create_external_conditions, ExternalConditions, WindowShadingObject,
 };
 use home_energy_model::input::{
     EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType,
@@ -25,7 +25,7 @@ use home_energy_model::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::Deserialize;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 use smartstring::alias::String;
 use std::collections::HashMap;
 use std::io::{BufReader, Cursor, Read};
@@ -1472,33 +1472,25 @@ impl AppliancePropensities<AsDataFile> {
             ..
         } = self;
 
-        let [
-            cleaning_washing_machine,
-            cleaning_tumble_dryer,
-            cleaning_dishwasher,
-            cooking_electric_oven,
-            cooking_microwave,
-            cooking_kettle,
-            cooking_gas_cooker,
-            consumer_electronics,
-        ] = [
-            cleaning_washing_machine,
-            cleaning_tumble_dryer,
-            cleaning_dishwasher,
-            cooking_electric_oven,
-            cooking_microwave,
-            cooking_kettle,
-            cooking_gas_cooker,
-            consumer_electronics,
-        ]
-        .into_iter()
-        .map(|probabilities| -> [f64; 24] {
-            let sumcol = probabilities.iter().sum::<f64>();
-            probabilities.map(|x| x / sumcol)
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("Problem normalising appliance propensities.");
+        let [cleaning_washing_machine, cleaning_tumble_dryer, cleaning_dishwasher, cooking_electric_oven, cooking_microwave, cooking_kettle, cooking_gas_cooker, consumer_electronics] =
+            [
+                cleaning_washing_machine,
+                cleaning_tumble_dryer,
+                cleaning_dishwasher,
+                cooking_electric_oven,
+                cooking_microwave,
+                cooking_kettle,
+                cooking_gas_cooker,
+                consumer_electronics,
+            ]
+            .into_iter()
+            .map(|probabilities| -> [f64; 24] {
+                let sumcol = probabilities.iter().sum::<f64>();
+                probabilities.map(|x| x / sumcol)
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("Problem normalising appliance propensities.");
 
         AppliancePropensities {
             hour: self.hour,
@@ -2821,7 +2813,11 @@ pub(super) fn create_hot_water_use_pattern(
 
     // if part G has been complied with, apply 5% reduction to duration of Other events
     let part_g_bonus = if let Some(part_g_compliance) = input.part_g_compliance()? {
-        if part_g_compliance { 0.95 } else { 1.0 }
+        if part_g_compliance {
+            0.95
+        } else {
+            1.0
+        }
     } else {
         bail!("Part G compliance missing from input file");
     };
