@@ -499,7 +499,7 @@
     "EnergySupply": "mains elec"
   },
   "General": {
-    "storeys_in_building": 1,
+    "storeys_in_dwelling": 1,
     "build_type": "house"
   },
   "Infiltration": {

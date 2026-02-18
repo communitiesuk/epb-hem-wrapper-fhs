@@ -994,14 +994,14 @@ fn add_wwhrs(
     //      storeys in building for houses and assume 1 for flats. Note that this
     //      means that maisonettes cannot be handled at present.
 
-    let storeys_in_building = match input.build_type()?.as_str() {
-        "house" => input.storeys_in_building()?,
+    let storeys_in_dwelling = match input.build_type()?.as_str() {
+        "house" => input.storeys_in_dwelling()?,
         "flat" => 1,
         unknown_type => bail!("Encountered unexpected building type '{unknown_type}'"),
     };
 
     // add WWHRS if more than 1 storeys in dwelling, notional A and not FEE
-    if storeys_in_building > 1 && is_notional_a && !is_fee {
+    if storeys_in_dwelling > 1 && is_notional_a && !is_fee {
         input.register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS)?;
         input.set_wwhrs(json!({
             NOTIONAL_WWHRS: {
@@ -1451,11 +1451,17 @@ fn add_solar_pv(
     is_fee: bool,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let number_of_storeys = input.storeys_in_building()?;
+    let build_type = input.build_type()?;
+
+    let storeys_in_building = if build_type == "flat" {
+        input.storeys_in_building()?.ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?
+    } else {
+        input.storeys_in_dwelling()?
+    };
 
     // PV is included in the notional if the building contains 15 stories or
     // less that contain dwellings.
-    if number_of_storeys <= 15 && is_notional_a && !is_fee {
+    if storeys_in_building <= 15 && is_notional_a && !is_fee {
         let ground_floor_area = input
             .ground_floor_area()?
             .ok_or_else(|| anyhow!("Notional wrapped expected ground floor area to be set"))?;
@@ -1467,11 +1473,11 @@ fn add_solar_pv(
                 (peak_kw, base_height_pv)
             }
             "flat" => {
-                let peak_kw = total_floor_area * 0.4 / (4.5 * number_of_storeys as f64);
+                let peak_kw = total_floor_area * 0.4 / (4.5 * storeys_in_building as f64);
                 let zone_total_volume = input.total_zone_volume()?;
                 let zone_total_area = input.total_zone_area()?;
                 let base_height_pv =
-                    (zone_total_volume / zone_total_area + 0.3) * number_of_storeys as f64;
+                    (zone_total_volume / zone_total_area + 0.3) * storeys_in_building as f64;
 
                 (peak_kw, base_height_pv)
             }
@@ -1999,7 +2005,7 @@ mod tests {
 
     #[rstest]
     fn test_add_wwhrs(mut test_input: InputForProcessing) {
-        test_input.set_storeys_in_building(2).unwrap();
+        test_input.set_storeys_in_dwelling(2).unwrap();
 
         let cold_water_source_type = ColdWaterSourceType::MainsWater;
 

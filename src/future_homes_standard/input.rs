@@ -1908,23 +1908,23 @@ impl InputForProcessing {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_storeys_in_building(&mut self, storeys: usize) -> JsonAccessResult<&Self> {
+    pub(crate) fn set_storeys_in_dwelling(&mut self, storeys: usize) -> JsonAccessResult<&Self> {
         self.root_object_mut("General")?
-            .insert("storeys_in_building".into(), json!(storeys));
+            .insert("storeys_in_dwelling".into(), json!(storeys));
 
         Ok(self)
     }
 
-    pub(crate) fn storeys_in_building(&self) -> JsonAccessResult<usize> {
+    pub(crate) fn storeys_in_dwelling(&self) -> JsonAccessResult<usize> {
         Ok(self
             .input
             .get("General")
             .ok_or(json_error("General node not found"))?
-            .get("storeys_in_building")
-            .ok_or(json_error("storeys_in_building field not found"))?
+            .get("storeys_in_dwelling")
+            .ok_or(json_error("storeys_in_dwelling field not found"))?
             .as_u64()
             .ok_or(json_error(
-                "storeys_in_building field is not a positive integer",
+                "storeys_in_dwelling field is not a positive integer",
             ))? as usize)
     }
 
@@ -1938,6 +1938,19 @@ impl InputForProcessing {
             .as_str()
             .ok_or(json_error("The build_type field was not a string"))?
             .into())
+    }
+
+    pub(crate) fn storeys_in_building(&self) -> JsonAccessResult<Option<usize>> {
+        Ok(self.input
+            .get("General")
+            .ok_or(json_error("General node not found"))?
+            .get("storeys_in_building")
+            .map(|v| {
+                v.as_u64()
+                    .ok_or(json_error("storeys_in_building is not a positive integer"))
+                    .map(|n| n as usize) })
+            .transpose()?
+        )
     }
 
     pub(crate) fn hot_water_cylinder_volume(&self) -> JsonAccessResult<Option<f64>> {
