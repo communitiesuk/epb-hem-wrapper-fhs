@@ -1,4 +1,7 @@
-use lambda_http::{Body, Error, Request, Response, run, service_fn, tracing};
+use home_energy_model_wrapper_fhs::read_weather_file::weather_data_to_vec;
+use home_energy_model_wrapper_fhs::FhsFlags;
+use home_energy_model_wrapper_fhs::{run_wrappers, Output};
+use lambda_http::{run, service_fn, tracing, Body, Error, Request, Response};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::io;
@@ -6,9 +9,6 @@ use std::io::{BufReader, Cursor, ErrorKind, Write};
 use std::str::from_utf8;
 use std::sync::Arc;
 use uuid::Uuid;
-use home_energy_model_wrapper_fhs::FhsFlags;
-use home_energy_model_wrapper_fhs::read_weather_file::weather_data_to_vec;
-use home_energy_model_wrapper_fhs::{Output, run_wrappers};
 
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     // Extract some useful information from the request

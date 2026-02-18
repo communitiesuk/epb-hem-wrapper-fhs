@@ -10,7 +10,7 @@ use home_energy_model::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jsonschema::{BasicOutput, Validator};
-use serde_json::{Map, Value as JsonValue, json};
+use serde_json::{json, Map, Value as JsonValue};
 use serde_valid::json::ToJsonString;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
@@ -18,8 +18,7 @@ use std::sync::LazyLock;
 use thiserror::Error;
 
 static FHS_SCHEMA_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
-    let schema =
-        serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
+    let schema = serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
     jsonschema::validator_for(&schema).unwrap()
 });
 
@@ -1941,16 +1940,17 @@ impl InputForProcessing {
     }
 
     pub(crate) fn storeys_in_building(&self) -> JsonAccessResult<Option<usize>> {
-        Ok(self.input
+        Ok(self
+            .input
             .get("General")
             .ok_or(json_error("General node not found"))?
             .get("storeys_in_building")
             .map(|v| {
                 v.as_u64()
                     .ok_or(json_error("storeys_in_building is not a positive integer"))
-                    .map(|n| n as usize) })
-            .transpose()?
-        )
+                    .map(|n| n as usize)
+            })
+            .transpose()?)
     }
 
     pub(crate) fn hot_water_cylinder_volume(&self) -> JsonAccessResult<Option<f64>> {

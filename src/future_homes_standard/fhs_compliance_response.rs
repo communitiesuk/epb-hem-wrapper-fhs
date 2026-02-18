@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-use crate::CalculationKey;
-use crate::future_homes_standard::future_homes_standard::{FinalRates, calc_final_rates};
+use crate::future_homes_standard::future_homes_standard::{calc_final_rates, FinalRates};
 use crate::future_homes_standard::future_homes_standard_fee::calc_fabric_energy_efficiency;
+use crate::CalculationKey;
 use anyhow::anyhow;
-use home_energy_model::{CalculationResultsWithContext, SummaryData, build_summary_data};
+use home_energy_model::{build_summary_data, CalculationResultsWithContext, SummaryData};
 use indexmap::IndexMap;
 use serde::Serialize;
 use smartstring::alias::String;

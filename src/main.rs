@@ -1,6 +1,8 @@
 use clap::{Args, Parser};
 use home_energy_model::output::FileOutput;
-use home_energy_model::read_weather_file::{ExternalConditions, weather_data_to_vec};
+use home_energy_model::read_weather_file::{weather_data_to_vec, ExternalConditions};
+use home_energy_model_wrapper_fhs::run_wrappers;
+use home_energy_model_wrapper_fhs::FhsFlags;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
@@ -8,8 +10,6 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
-use home_energy_model_wrapper_fhs::FhsFlags;
-use home_energy_model_wrapper_fhs::run_wrappers;
 
 #[derive(Parser, Default, Debug)]
 #[clap(author, version, about, long_about = None)]

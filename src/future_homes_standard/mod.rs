@@ -9,7 +9,9 @@ use crate::{CalculationKey, FhsFlags};
 use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::output::Output;
-use home_energy_model::{CalculationContext, CalculationResultsWithContext, HemResponse, RunResults};
+use home_energy_model::{
+    CalculationContext, CalculationResultsWithContext, HemResponse, RunResults,
+};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -17,12 +19,12 @@ use std::sync::LazyLock;
 mod fhs_appliance;
 mod fhs_compliance_response;
 mod fhs_hw_events;
+mod fhs_storeys_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;
 pub(crate) mod future_homes_standard_fee;
 pub(crate) mod future_homes_standard_notional;
 pub mod input;
-mod fhs_storeys_validation;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;

@@ -1454,7 +1454,9 @@ fn add_solar_pv(
     let build_type = input.build_type()?;
 
     let storeys_in_building = if build_type == "flat" {
-        input.storeys_in_building()?.ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?
+        input
+            .storeys_in_building()?
+            .ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?
     } else {
         input.storeys_in_dwelling()?
     };
@@ -1553,7 +1555,9 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use home_energy_model::core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection};
+    use home_energy_model::core::space_heat_demand::building_element::{
+        pitch_class, HeatFlowDirection,
+    };
     use home_energy_model::input::{
         EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, WaterPipeworkSimple,
     };
