@@ -109,6 +109,12 @@ impl Imev {
         self.on_times = on_times;
     }
 
+    fn assign_on_time(&mut self, event: Event) -> anyhow::Result<()> {
+        let times = event.chunkify(self.simulation_start_time, self.simulation_end_time)?;
+        self.on_times.extend(times);
+        Ok(())
+    }
+
     fn on_fraction(&self, event: Event) -> anyhow::Result<f64> {
         // fraction of the given event's duration that the iMEV is on
         let test_periods = event.chunkify(self.simulation_start_time, self.simulation_end_time)?;
