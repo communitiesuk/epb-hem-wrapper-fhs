@@ -24,6 +24,16 @@ impl Event {
         // if duration takes us beyond the simulation time or the start is < simulation start time
         // break into multiple events strictly starting and ending during the simulation
         // with start < end
+        if self.start + self.duration <= simulation_start_time || self.start >= simulation_end_time
+        {
+            bail!(
+                "Event (start={}, duration={}) wholly outside the simulation time ({} to {})",
+                self.start,
+                self.duration,
+                simulation_start_time,
+                simulation_end_time
+            );
+        }
         if self.duration > simulation_end_time - simulation_start_time {
             bail!(
                 "Event (start={}, duration={}) is longer than the simulation time ({} to {})",
@@ -146,6 +156,24 @@ mod test {
             let times = event.chunkify(0., 10.).unwrap();
             // Then the event is converted to a single time
             assert_eq!(times[0], Time { start: 1., end: 6. });
+        }
+
+        #[test]
+        fn test_error_for_event_before_time_window() {
+            // Given an event that ends before the start of the time period
+            let event = Event {
+                start: -10.,
+                duration: 5.,
+                event_type: None,
+            };
+            let times = event.chunkify(0., 10.);
+            // The event can't be chunkified
+            assert!(times.is_err());
+            // So appropriate error
+            assert_eq!(
+                times.unwrap_err().to_string(),
+                "Event (start=-10, duration=5) wholly outside the simulation time (0 to 10)"
+            );
         }
     }
 }
