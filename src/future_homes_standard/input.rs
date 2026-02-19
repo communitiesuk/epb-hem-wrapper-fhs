@@ -2,9 +2,9 @@ use anyhow::{anyhow, bail};
 use home_energy_model::core::schedule::NumericSchedule;
 use home_energy_model::input::{
     ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
-    HeatSourceWetDetails, HeatingControlType, Input, ReducedInputForCalcHtcHlp,
-    SmartApplianceBattery, SpaceHeatSystemHeatSource, WasteWaterHeatRecovery, WaterDistribution,
-    WaterHeatingEvent, WaterPipework,
+    HeatingControlType, Input, ReducedInputForCalcHtcHlp, SmartApplianceBattery,
+    SpaceHeatSystemHeatSource, WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent,
+    WaterPipework,
 };
 use home_energy_model::simulation_time::SimulationTime;
 use indexmap::IndexMap;
@@ -822,7 +822,6 @@ impl InputForProcessing {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn heat_source_for_space_heat_system(
         &self,
         space_heat_system: &str,
@@ -1882,7 +1881,7 @@ impl InputForProcessing {
 
     pub(crate) fn heat_source_wet(
         &self,
-    ) -> anyhow::Result<IndexMap<smartstring::alias::String, HeatSourceWetDetails>> {
+    ) -> anyhow::Result<IndexMap<smartstring::alias::String, JsonValue>> {
         self.root()?
             .get("HeatSourceWet")
             .and_then(|value| value.as_object())
