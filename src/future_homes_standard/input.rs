@@ -1804,6 +1804,40 @@ impl InputForProcessing {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn mechanical_ventilation_control_by_key(
+        &self,
+        mech_vent_key: &str,
+    ) -> JsonAccessResult<&JsonValue> {
+        let infiltration_ventilation_node = self
+            .input
+            .get("InfiltrationVentilation")
+            .ok_or(json_error("InfiltrationVentilation node not found"))?
+            .as_object()
+            .ok_or(json_error("InfiltrationVentilation node is not an object"))?;
+        let mech_vent_map = infiltration_ventilation_node
+            .get("MechanicalVentilation")
+            .ok_or(json_error("MechanicalVentilation node not found"))?
+            .as_object()
+            .ok_or(json_error("MechanicalVentilation node is not an object"))?;
+        let mech_vent = mech_vent_map
+            .get(mech_vent_key)
+            .ok_or(json_error(format!(
+                "No MechanicalVentilation with key {}",
+                mech_vent_key
+            )))?
+            .as_object()
+            .ok_or(json_error(format!(
+                "MechanicalVentilation {} is not an object",
+                mech_vent_key
+            )))?;
+        let mech_vent_control = mech_vent.get("Control").ok_or(json_error(format!(
+            "Control is not on MechanicalVentilation object {}",
+            mech_vent_key
+        )))?;
+        Ok(mech_vent_control)
+    }
+
     pub fn appliance_gains_events(
         &self,
     ) -> anyhow::Result<IndexMap<smartstring::alias::String, Vec<ApplianceGainsEvent>>> {

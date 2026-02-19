@@ -1,3 +1,4 @@
+use crate::future_homes_standard::input::InputForProcessing;
 use anyhow::bail;
 
 enum EventType {
@@ -183,6 +184,19 @@ impl IMevCycle {
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .map(|(_, _, imev)| imev.clone()))
     }
+}
+
+/// Turn on intermittent MEVs whenever cooking or tapping events occur.
+/// Largest intermittent MEV used for cooking events, all other MEVs used for tapping events.
+/// Mutates the proj_dict. Does nothing if there are no intermittent MEVs in the proj_dict.
+/// Provide start, end and step in units of hours.
+fn create_i_mev_pattern(
+    input: &mut InputForProcessing,
+    start: f64,
+    end: f64,
+    step: f64,
+) -> anyhow::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -381,6 +395,62 @@ mod test {
             assert_relative_eq!(schedule[0], 0.2);
             assert_relative_eq!(schedule[1], 0.);
             assert_relative_eq!(schedule[2], 0.8);
+        }
+    }
+
+    mod test_create_i_mev_pattern {
+        use crate::future_homes_standard::fhs_imev_scheduler::create_i_mev_pattern;
+        use crate::future_homes_standard::input::InputForProcessing;
+        use rstest::{fixture, rstest};
+        use serde_json::json;
+
+        #[fixture]
+        fn ventilation_input() -> InputForProcessing {
+            // Tapping event durations are in minutes, cooking event durations in hours
+            let ventilation_input_json = json!({
+                "ApplianceGains": {"Oven": {"Events": [{"start": 0, "duration": 2}]}},
+                "Control": {},
+                "Events": {
+                    "Shower": {"shower_1": [{"start": 2, "duration": 6}]},
+                    "Bath": {},
+                    "Other": {},
+                },
+                "InfiltrationVentilation": {
+                    "MechanicalVentilation": {
+                        "big_vent": {
+                            "design_outdoor_air_flow_rate": 400,
+                            "vent_type": "Intermittent MEV",
+                        },
+                        "little_vent": {
+                            "design_outdoor_air_flow_rate": 50,
+                            "vent_type": "Intermittent MEV",
+                        },
+                    }
+                },
+            });
+
+            InputForProcessing {
+                input: ventilation_input_json,
+            }
+        }
+
+        #[ignore = "WIP"]
+        #[rstest]
+        fn test_simple_set_of_fulfillable_events(mut ventilation_input: InputForProcessing) {
+            // Given:
+            //   a valid single valid mechanical vent each of >216 m3/hr and < 216 m3/hr
+            //   a couple of shower events that don't overlap (including run-on)
+            //   a couple of cooking events that don't overlap
+
+            // When the scheduler is run for a 3 hour period in steps of 0.5 hours
+            create_i_mev_pattern(&mut ventilation_input, 0., 3., 0.5);
+            // Then the project dictionary is mutated with a Control for each vent
+            assert_eq!(
+                ventilation_input
+                    .mechanical_ventilation_control_by_key("big_vent")
+                    .unwrap(),
+                "_intermittent_MEV_control: big_vent"
+            );
         }
     }
 }
