@@ -10,7 +10,7 @@ struct Event {
     event_type: Option<EventType>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, PartialOrd, Clone)]
 struct Time {
     start: f64,
     end: f64,
@@ -80,6 +80,7 @@ impl Event {
     }
 }
 
+#[derive(PartialEq, PartialOrd, Clone)]
 struct IMev {
     name: String,
     on_times: Vec<Time>,
@@ -115,7 +116,7 @@ impl IMev {
         Ok(())
     }
 
-    fn on_fraction(&self, event: Event) -> anyhow::Result<f64> {
+    fn on_fraction(&self, event: &Event) -> anyhow::Result<f64> {
         // fraction of the given event's duration that the iMEV is on
         let test_periods = event.chunkify(self.simulation_start_time, self.simulation_end_time)?;
         let total_duration: f64 = test_periods.iter().map(|p| p.end - p.start).sum::<f64>();
@@ -147,13 +148,40 @@ impl IMev {
         for i in self.simulation_start_time
             ..(self.simulation_end_time as f64 / self.timestep).round() as i32
         {
-            result.push(self.on_fraction(Event {
+            result.push(self.on_fraction(&Event {
                 start: i as f64 * self.timestep,
                 duration: self.timestep,
                 event_type: None,
             })?);
         }
         Ok(result)
+    }
+}
+
+#[derive(PartialEq, PartialOrd)]
+struct IMevCycle {
+    i_mevs: Vec<IMev>,
+}
+
+impl IMevCycle {
+    fn get_next_best_imev(&self, event: &Event) -> anyhow::Result<Option<IMev>> {
+        if self.i_mevs.is_empty() {
+            return Ok(None);
+        }
+
+        // Select an iMEV from the group using the best availability as the first criterion
+        // Tie break by the least used fan to try to keep fan use relatively even
+        let mut scores_and_i_mevs: Vec<(f64, usize, &IMev)> = Vec::new();
+        for i_mev in &self.i_mevs {
+            let availability_score = i_mev.on_fraction(event)?;
+            let times_on_score = i_mev.on_times.len();
+            scores_and_i_mevs.push((availability_score, times_on_score, i_mev));
+        }
+
+        Ok(scores_and_i_mevs
+            .into_iter()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .map(|(_, _, imev)| imev.clone()))
     }
 }
 
