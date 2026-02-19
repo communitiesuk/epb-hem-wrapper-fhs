@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = "1.0.100"
 approx = "0.5.1"
 bitflags = "2.10.0"
-clap = { version = "4.5.51", features = ["derive"], optional = true }
+clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "separate-fhs" }
 indexmap = { version = "2.12.1", features = ["serde", "arbitrary"] }
