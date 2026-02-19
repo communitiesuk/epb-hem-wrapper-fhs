@@ -78,6 +78,79 @@ impl Event {
     }
 }
 
+struct Imev {
+    name: String,
+    on_times: Vec<Time>,
+    simulation_start_time: i32,
+    simulation_end_time: i32,
+    timestep: f64,
+}
+
+impl Imev {
+    fn new(
+        name: &str,
+        simulation_start_time: i32,
+        simulation_end_time: i32,
+        timestep: f64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            on_times: Default::default(),
+            simulation_start_time,
+            simulation_end_time,
+            timestep,
+        }
+    }
+
+    fn set_on_times(&mut self, on_times: Vec<Time>) {
+        self.on_times = on_times;
+    }
+
+    fn on_fraction(&self, event: Event) -> anyhow::Result<f64> {
+        // fraction of the given event's duration that the iMEV is on
+        let test_periods = event.chunkify(
+            self.simulation_start_time as f64,
+            self.simulation_end_time as f64,
+        )?;
+        let total_duration: f64 = test_periods.iter().map(|p| p.end - p.start).sum::<f64>();
+        let mut duration_on = 0.;
+        for period in test_periods {
+            let mut on_times = self
+                .on_times
+                .iter()
+                .filter(|on| !(on.start > period.end || on.end < period.start))
+                .collect::<Vec<&Time>>();
+            let mut current_time_end = period.start;
+            while current_time_end < period.end && !on_times.is_empty() {
+                let current_time = on_times
+                    .iter()
+                    .min_by(|a, b| a.start.partial_cmp(&b.start).unwrap())
+                    .unwrap();
+                duration_on +=
+                    (period.end.min(current_time.end)) - (current_time_end.max(current_time.start));
+                current_time_end = current_time.end;
+                // Keep only on_times that extend beyond current_time_end
+                on_times.retain(|on| on.end > current_time_end);
+            }
+        }
+        Ok(duration_on / total_duration)
+    }
+    
+    fn schedulise(&self) -> anyhow::Result<Vec<f64>> {
+        let mut result = Vec::new();
+        for i in self.simulation_start_time
+            ..(self.simulation_end_time as f64 / self.timestep).round() as i32
+        {
+            result.push(self.on_fraction(Event {
+                start: i as f64 * self.timestep,
+                duration: self.timestep,
+                event_type: None,
+            })?);
+        }
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod test {
     mod test_event {
@@ -213,6 +286,27 @@ mod test {
                 }
             );
             assert_eq!(times[1], Time { start: 1., end: 5. });
+        }
+    }
+
+    mod test_imev_schedulise {
+        use crate::future_homes_standard::fhs_imev_scheduler::{Imev, Time};
+
+        #[test]
+        fn test_returns_on_fractions_for_non_overlapping_on_times() {
+            // Given an IMEV with on_times within a given time window
+            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            imev.set_on_times(vec![
+                Time { start: 2., end: 3. },
+                Time {
+                    start: 3.5,
+                    end: 4.5,
+                },
+            ]);
+            // When converting to a schedule
+            let schedule = imev.schedulise().unwrap();
+            // Then the schedule reflects the time that the vent is on in each timestep
+            assert_eq!(schedule, vec![1., 0.5, 0.5]);
         }
     }
 }
