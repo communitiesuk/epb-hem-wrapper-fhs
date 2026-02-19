@@ -8,20 +8,18 @@ struct Event {
     event_type: Option<EventType>,
 }
 
-#[derive(Debug, PartialEq, Default, Clone)]
+#[derive(Debug, PartialEq)]
 struct Time {
     start: f64,
     end: f64,
 }
 impl Event {
-    fn chunkify(&self, simulation_start_time: usize, simulation_end_time: usize) -> Vec<Time> {
+    fn chunkify(&self, simulation_start_time: f64, simulation_end_time: f64) -> Vec<Time> {
         // if duration takes us beyond the simulation time or the start is < simulation start time
         // break into multiple events strictly starting and ending during the simulation
         // with start < end
-        let simulation_start_time = simulation_start_time as f64;
-        let simulation_end_time = simulation_end_time as f64;
 
-        let times = if self.start < simulation_start_time {
+        if self.start < simulation_start_time {
             let underspill = simulation_start_time - self.start;
             vec![
                 Time {
@@ -33,11 +31,21 @@ impl Event {
                     end: simulation_start_time + self.duration - underspill,
                 },
             ]
+        } else if self.start + self.duration > simulation_end_time {
+            let overspill = self.start + self.duration - simulation_end_time;
+            vec![
+                Time {
+                    start: self.start,
+                    end: self.start + self.duration - overspill,
+                },
+                Time {
+                    start: simulation_start_time,
+                    end: simulation_start_time + overspill,
+                },
+            ]
         } else {
             todo!()
-        };
-
-        times
+        }
     }
 }
 
@@ -55,18 +63,37 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0, 10);
+            let times = event.chunkify(0., 10.);
             // Then the event is split into two time periods
             assert_eq!(
-                times,
-                &[
-                    Time {
-                        start: 9.,
-                        end: 10.
-                    },
-                    Time { start: 0., end: 4. }
-                ]
+                times[0],
+                Time {
+                    start: 9.,
+                    end: 10.
+                }
             );
+            assert_eq!(times[1], Time { start: 0., end: 4. });
+        }
+
+        #[test]
+        fn test_event_chunkifies_duration_overspilling_loop_time() {
+            // Given an event that ends after the end of the time period
+            let event = Event {
+                start: 8.,
+                duration: 5.,
+                event_type: None,
+            };
+            // When the event is chunkified
+            let times = event.chunkify(0., 10.);
+            // Then the event is split into two time periods
+            assert_eq!(
+                times[0],
+                Time {
+                    start: 8.,
+                    end: 10.
+                }
+            );
+            assert_eq!(times[1], Time { start: 0., end: 3. });
         }
     }
 }
