@@ -59,7 +59,10 @@ impl Event {
                 },
             ]
         } else {
-            todo!()
+            vec![Time {
+                start: self.start,
+                end: self.start + self.duration,
+            }]
         };
         Ok(times)
     }
@@ -129,6 +132,20 @@ mod test {
                 errror,
                 "Event (start=-1, duration=12) is longer than the simulation time (0 to 10)"
             );
+        }
+
+        #[test]
+        fn test_event_falling_within_loop_time() {
+            // Given an event that ends after the end of the time period
+            let event = Event {
+                start: 1.,
+                duration: 5.,
+                event_type: None,
+            };
+            // When the event is chunkified
+            let times = event.chunkify(0., 10.).unwrap();
+            // Then the event is converted to a single time
+            assert_eq!(times[0], Time { start: 1., end: 6. });
         }
     }
 }
