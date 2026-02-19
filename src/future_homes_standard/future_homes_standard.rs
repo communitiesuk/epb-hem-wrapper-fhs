@@ -1,8 +1,8 @@
 use crate::future_homes_standard::fhs_appliance::FhsAppliance;
 use crate::future_homes_standard::fhs_hw_events::{
-    HotWaterEventGenerator, reset_events_and_provide_drawoff_generator,
+    reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
-use crate::future_homes_standard::input::{InputForProcessing, JsonAccessResult, json_error};
+use crate::future_homes_standard::input::{json_error, InputForProcessing, JsonAccessResult};
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
@@ -12,7 +12,7 @@ use home_energy_model::core::units::{
 };
 use home_energy_model::corpus::{Corpus, OutputOptions, ResultsEndUser};
 use home_energy_model::external_conditions::{
-    ExternalConditions, WindowShadingObject, create_external_conditions,
+    create_external_conditions, ExternalConditions, WindowShadingObject,
 };
 use home_energy_model::input::{
     EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType,
@@ -25,7 +25,7 @@ use home_energy_model::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::Deserialize;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 use smartstring::alias::String;
 use std::collections::HashMap;
 use std::io::{BufReader, Cursor, Read};
@@ -813,42 +813,42 @@ struct DryMetabolicGainsRow {
 fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 07:00-09:30 and then 16:30-22:00
     let mut heating_fhs_weekday = Vec::with_capacity(48);
-    heating_fhs_weekday.extend(repeat_n(false,14));
-    heating_fhs_weekday.extend(repeat_n(true,5));
-    heating_fhs_weekday.extend(repeat_n(false,14));
-    heating_fhs_weekday.extend(repeat_n(true,11));
-    heating_fhs_weekday.extend(repeat_n(false,4));
+    heating_fhs_weekday.extend(repeat_n(false, 14));
+    heating_fhs_weekday.extend(repeat_n(true, 5));
+    heating_fhs_weekday.extend(repeat_n(false, 14));
+    heating_fhs_weekday.extend(repeat_n(true, 11));
+    heating_fhs_weekday.extend(repeat_n(false, 4));
     let heating_fhs_weekday: [bool; 48] = heating_fhs_weekday.try_into().unwrap();
 
     // Start all-day HW schedule 1 hour before space heating
     let mut _sched_allday_weekday = Vec::with_capacity(48);
-    _sched_allday_weekday.extend(repeat_n(false,13));
-    _sched_allday_weekday.extend(repeat_n(true,31));
-    _sched_allday_weekday.extend(repeat_n(false,4));
+    _sched_allday_weekday.extend(repeat_n(false, 13));
+    _sched_allday_weekday.extend(repeat_n(true, 31));
+    _sched_allday_weekday.extend(repeat_n(false, 4));
     let _sched_allday_weekday: [bool; 48] = _sched_allday_weekday.try_into().unwrap();
 
     // 07:00-09:30 and then 18:30-22:00
     let mut heating_nonlivingarea_fhs_weekday = Vec::with_capacity(48);
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false,14));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true,5));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false,18));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true,7));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false,4));
+    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 14));
+    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true, 5));
+    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 18));
+    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true, 7));
+    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 4));
     let heating_nonlivingarea_fhs_weekday: [bool; 48] =
         heating_nonlivingarea_fhs_weekday.try_into().unwrap();
 
     // 08:30 - 22:00
     let mut heating_fhs_weekend = Vec::with_capacity(48);
-    heating_fhs_weekend.extend(repeat_n(false,17));
-    heating_fhs_weekend.extend(repeat_n(true,27));
-    heating_fhs_weekend.extend(repeat_n(false,4));
+    heating_fhs_weekend.extend(repeat_n(false, 17));
+    heating_fhs_weekend.extend(repeat_n(true, 27));
+    heating_fhs_weekend.extend(repeat_n(false, 4));
     let heating_fhs_weekend: [bool; 48] = heating_fhs_weekend.try_into().unwrap();
 
     // Start all-day HW schedule 1 hour before space heating
     let mut _hw_sched_allday_weekend = Vec::with_capacity(48);
-    _hw_sched_allday_weekend.extend(repeat_n(false,15));
-    _hw_sched_allday_weekend.extend(repeat_n(true,29));
-    _hw_sched_allday_weekend.extend(repeat_n(false,4));
+    _hw_sched_allday_weekend.extend(repeat_n(false, 15));
+    _hw_sched_allday_weekend.extend(repeat_n(true, 29));
+    _hw_sched_allday_weekend.extend(repeat_n(false, 4));
     let _hw_sched_allday_weekend: [bool; 48] = _hw_sched_allday_weekend.try_into().unwrap();
 
     // if there is no separate time control of the non-living rooms
@@ -1472,33 +1472,25 @@ impl AppliancePropensities<AsDataFile> {
             ..
         } = self;
 
-        let [
-            cleaning_washing_machine,
-            cleaning_tumble_dryer,
-            cleaning_dishwasher,
-            cooking_electric_oven,
-            cooking_microwave,
-            cooking_kettle,
-            cooking_gas_cooker,
-            consumer_electronics,
-        ] = [
-            cleaning_washing_machine,
-            cleaning_tumble_dryer,
-            cleaning_dishwasher,
-            cooking_electric_oven,
-            cooking_microwave,
-            cooking_kettle,
-            cooking_gas_cooker,
-            consumer_electronics,
-        ]
-        .into_iter()
-        .map(|probabilities| -> [f64; 24] {
-            let sumcol = probabilities.iter().sum::<f64>();
-            probabilities.map(|x| x / sumcol)
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("Problem normalising appliance propensities.");
+        let [cleaning_washing_machine, cleaning_tumble_dryer, cleaning_dishwasher, cooking_electric_oven, cooking_microwave, cooking_kettle, cooking_gas_cooker, consumer_electronics] =
+            [
+                cleaning_washing_machine,
+                cleaning_tumble_dryer,
+                cleaning_dishwasher,
+                cooking_electric_oven,
+                cooking_microwave,
+                cooking_kettle,
+                cooking_gas_cooker,
+                consumer_electronics,
+            ]
+            .into_iter()
+            .map(|probabilities| -> [f64; 24] {
+                let sumcol = probabilities.iter().sum::<f64>();
+                probabilities.map(|x| x / sumcol)
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("Problem normalising appliance propensities.");
 
         AppliancePropensities {
             hour: self.hour,
@@ -2821,7 +2813,11 @@ pub(super) fn create_hot_water_use_pattern(
 
     // if part G has been complied with, apply 5% reduction to duration of Other events
     let part_g_bonus = if let Some(part_g_compliance) = input.part_g_compliance()? {
-        if part_g_compliance { 0.95 } else { 1.0 }
+        if part_g_compliance {
+            0.95
+        } else {
+            1.0
+        }
     } else {
         bail!("Part G compliance missing from input file");
     };
@@ -3635,17 +3631,17 @@ pub(super) fn create_cold_water_feed_temps(
 
     let output_feed_temp = repeat_n(&cold_feed_schedule_m[0], 31)
         .flatten()
-        .chain(repeat_n(&cold_feed_schedule_m[1],28).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[2],31).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[3],30).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[4],31).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[5],30).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[6],31).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[7],31).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[8],30).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[9],31).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[10],30).flatten())
-        .chain(repeat_n(&cold_feed_schedule_m[11],31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[1], 28).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[2], 31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[3], 30).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[4], 31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[5], 30).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[6], 31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[7], 31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[8], 30).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[9], 31).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[10], 30).flatten())
+        .chain(repeat_n(&cold_feed_schedule_m[11], 31).flatten())
         .cloned()
         .collect::<Vec<_>>();
 
