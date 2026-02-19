@@ -80,7 +80,7 @@ impl Event {
     }
 }
 
-struct Imev {
+struct IMev {
     name: String,
     on_times: Vec<Time>,
     simulation_start_time: i32,
@@ -88,7 +88,7 @@ struct Imev {
     timestep: f64,
 }
 
-impl Imev {
+impl IMev {
     fn new(
         name: &str,
         simulation_start_time: i32,
@@ -296,13 +296,13 @@ mod test {
     }
 
     mod test_imev_schedulise {
-        use crate::future_homes_standard::fhs_imev_scheduler::{Imev, Time};
+        use crate::future_homes_standard::fhs_imev_scheduler::{IMev, Time};
         use approx::assert_relative_eq;
 
         #[test]
         fn test_returns_on_fractions_for_non_overlapping_on_times() {
             // Given an IMEV with on_times within a given time window
-            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            let mut imev = IMev::new("venty mcventface", 2, 5, 1.);
             imev.set_on_times(vec![
                 Time { start: 2., end: 3. },
                 Time {
@@ -319,7 +319,7 @@ mod test {
         #[test]
         fn test_returns_on_fractions_for_overlapping_on_times() {
             // Given an IMEV with on_times within a given time window
-            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            let mut imev = IMev::new("venty mcventface", 2, 5, 1.);
             imev.set_on_times(vec![
                 Time { start: 2., end: 3. },
                 Time {
@@ -336,7 +336,7 @@ mod test {
         #[test]
         fn test_returns_on_fractions_for_overspilling_on_times() {
             // Given an IMEV with on_times within a given time window
-            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            let mut imev = IMev::new("venty mcventface", 2, 5, 1.);
             imev.set_on_times(vec![
                 Time {
                     start: 2.,
