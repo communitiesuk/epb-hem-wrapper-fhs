@@ -1,3 +1,5 @@
+use anyhow::bail;
+
 enum EventType {
     Tapping,
     Cooking,
@@ -14,12 +16,25 @@ struct Time {
     end: f64,
 }
 impl Event {
-    fn chunkify(&self, simulation_start_time: f64, simulation_end_time: f64) -> Vec<Time> {
+    fn chunkify(
+        &self,
+        simulation_start_time: f64,
+        simulation_end_time: f64,
+    ) -> anyhow::Result<Vec<Time>> {
         // if duration takes us beyond the simulation time or the start is < simulation start time
         // break into multiple events strictly starting and ending during the simulation
         // with start < end
+        if self.duration > simulation_end_time - simulation_start_time {
+            bail!(
+                "Event (start={}, duration={}) is longer than the simulation time ({} to {})",
+                self.start,
+                self.duration,
+                simulation_start_time,
+                simulation_end_time
+            );
+        }
 
-        if self.start < simulation_start_time {
+        let times = if self.start < simulation_start_time {
             let underspill = simulation_start_time - self.start;
             vec![
                 Time {
@@ -45,7 +60,8 @@ impl Event {
             ]
         } else {
             todo!()
-        }
+        };
+        Ok(times)
     }
 }
 
@@ -63,7 +79,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0., 10.);
+            let times = event.chunkify(0., 10.).unwrap();
             // Then the event is split into two time periods
             assert_eq!(
                 times[0],
@@ -84,7 +100,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0., 10.);
+            let times = event.chunkify(0., 10.).unwrap();
             // Then the event is split into two time periods
             assert_eq!(
                 times[0],
@@ -94,6 +110,25 @@ mod test {
                 }
             );
             assert_eq!(times[1], Time { start: 0., end: 3. });
+        }
+
+        #[test]
+        fn test_event_chunkifies_covering_both_ends_of_time_window() {
+            // Given an event that ends after the end of the time period
+            let event = Event {
+                start: -1.,
+                duration: 12.,
+                event_type: None,
+            };
+            // The event can't be chunkified
+            let times = event.chunkify(0., 10.);
+            assert!(times.is_err());
+            // So appropriate error
+            let errror = times.unwrap_err().to_string();
+            assert_eq!(
+                errror,
+                "Event (start=-1, duration=12) is longer than the simulation time (0 to 10)"
+            );
         }
     }
 }
