@@ -175,5 +175,44 @@ mod test {
                 "Event (start=-10, duration=5) wholly outside the simulation time (0 to 10)"
             );
         }
+
+        #[test]
+        fn test_error_for_event_after_time_window() {
+            // Given an event that ends before the start of the time period
+            let event = Event {
+                start: 15.,
+                duration: 5.,
+                event_type: None,
+            };
+            let times = event.chunkify(0., 10.);
+            // The event can't be chunkified
+            assert!(times.is_err());
+            // So appropriate error
+            assert_eq!(
+                times.unwrap_err().to_string(),
+                "Event (start=15, duration=5) wholly outside the simulation time (0 to 10)"
+            );
+        }
+
+        #[test]
+        fn test_event_chunkifies_start_time_less_than_start_time_non_zero_start_time() {
+            // Given an event that starts before t=0
+            let event = Event {
+                start: 0.,
+                duration: 5.,
+                event_type: None,
+            };
+            // When the event is chunkified
+            let times = event.chunkify(1., 11.).unwrap();
+            // Then the event is split into two time periods
+            assert_eq!(
+                times[0],
+                Time {
+                    start: 10.,
+                    end: 11.
+                }
+            );
+            assert_eq!(times[1], Time { start: 1., end: 5. });
+        }
     }
 }
