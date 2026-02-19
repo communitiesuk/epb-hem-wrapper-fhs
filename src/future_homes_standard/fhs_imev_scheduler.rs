@@ -104,6 +104,7 @@ impl Imev {
         }
     }
 
+    #[cfg(test)]
     fn set_on_times(&mut self, on_times: Vec<Time>) {
         self.on_times = on_times;
     }
@@ -290,6 +291,7 @@ mod test {
 
     mod test_imev_schedulise {
         use crate::future_homes_standard::fhs_imev_scheduler::{Imev, Time};
+        use approx::assert_relative_eq;
 
         #[test]
         fn test_returns_on_fractions_for_non_overlapping_on_times() {
@@ -306,6 +308,45 @@ mod test {
             let schedule = imev.schedulise().unwrap();
             // Then the schedule reflects the time that the vent is on in each timestep
             assert_eq!(schedule, vec![1., 0.5, 0.5]);
+        }
+
+        #[test]
+        fn test_returns_on_fractions_for_overlapping_on_times() {
+            // Given an IMEV with on_times within a given time window
+            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            imev.set_on_times(vec![
+                Time { start: 2., end: 3. },
+                Time {
+                    start: 2.5,
+                    end: 3.5,
+                },
+            ]);
+            // When converting to a schedule
+            let schedule = imev.schedulise().unwrap();
+            // Then the schedule reflects the time that the vent is on in each timestep
+            assert_eq!(schedule, vec![1., 0.5, 0.]);
+        }
+
+        #[test]
+        fn test_returns_on_fractions_for_overspilling_on_times() {
+            // Given an IMEV with on_times within a given time window
+            let mut imev = Imev::new("venty mcventface", 2, 5, 1.);
+            imev.set_on_times(vec![
+                Time {
+                    start: 2.,
+                    end: 2.2,
+                },
+                Time {
+                    start: 4.2,
+                    end: 5.,
+                },
+            ]);
+            // When converting to a schedule
+            let schedule = imev.schedulise().unwrap();
+            // Then the schedule reflects the time that the vent is on in each timestep
+            assert_relative_eq!(schedule[0], 0.2);
+            assert_relative_eq!(schedule[1], 0.);
+            assert_relative_eq!(schedule[2], 0.8);
         }
     }
 }
