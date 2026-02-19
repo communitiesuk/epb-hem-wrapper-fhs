@@ -18,12 +18,14 @@ struct Time {
 impl Event {
     fn chunkify(
         &self,
-        simulation_start_time: f64,
-        simulation_end_time: f64,
+        simulation_start_time: i32,
+        simulation_end_time: i32,
     ) -> anyhow::Result<Vec<Time>> {
         // if duration takes us beyond the simulation time or the start is < simulation start time
         // break into multiple events strictly starting and ending during the simulation
         // with start < end
+        let simulation_start_time = simulation_start_time as f64;
+        let simulation_end_time = simulation_end_time as f64;
         if self.start + self.duration <= simulation_start_time || self.start >= simulation_end_time
         {
             bail!(
@@ -108,10 +110,7 @@ impl Imev {
 
     fn on_fraction(&self, event: Event) -> anyhow::Result<f64> {
         // fraction of the given event's duration that the iMEV is on
-        let test_periods = event.chunkify(
-            self.simulation_start_time as f64,
-            self.simulation_end_time as f64,
-        )?;
+        let test_periods = event.chunkify(self.simulation_start_time, self.simulation_end_time)?;
         let total_duration: f64 = test_periods.iter().map(|p| p.end - p.start).sum::<f64>();
         let mut duration_on = 0.;
         for period in test_periods {
@@ -135,7 +134,7 @@ impl Imev {
         }
         Ok(duration_on / total_duration)
     }
-    
+
     fn schedulise(&self) -> anyhow::Result<Vec<f64>> {
         let mut result = Vec::new();
         for i in self.simulation_start_time
@@ -165,7 +164,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0., 10.).unwrap();
+            let times = event.chunkify(0, 10).unwrap();
             // Then the event is split into two time periods
             assert_eq!(
                 times[0],
@@ -186,7 +185,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0., 10.).unwrap();
+            let times = event.chunkify(0, 10).unwrap();
             // Then the event is split into two time periods
             assert_eq!(
                 times[0],
@@ -207,7 +206,7 @@ mod test {
                 event_type: None,
             };
             // The event can't be chunkified
-            let times = event.chunkify(0., 10.);
+            let times = event.chunkify(0, 10);
             assert!(times.is_err());
             // So appropriate error
             let errror = times.unwrap_err().to_string();
@@ -226,7 +225,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(0., 10.).unwrap();
+            let times = event.chunkify(0, 10).unwrap();
             // Then the event is converted to a single time
             assert_eq!(times[0], Time { start: 1., end: 6. });
         }
@@ -239,7 +238,7 @@ mod test {
                 duration: 5.,
                 event_type: None,
             };
-            let times = event.chunkify(0., 10.);
+            let times = event.chunkify(0, 10);
             // The event can't be chunkified
             assert!(times.is_err());
             // So appropriate error
@@ -257,7 +256,7 @@ mod test {
                 duration: 5.,
                 event_type: None,
             };
-            let times = event.chunkify(0., 10.);
+            let times = event.chunkify(0, 10);
             // The event can't be chunkified
             assert!(times.is_err());
             // So appropriate error
@@ -276,7 +275,7 @@ mod test {
                 event_type: None,
             };
             // When the event is chunkified
-            let times = event.chunkify(1., 11.).unwrap();
+            let times = event.chunkify(1, 11).unwrap();
             // Then the event is split into two time periods
             assert_eq!(
                 times[0],
