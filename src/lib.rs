@@ -195,7 +195,7 @@ pub fn run_wrappers(
             ChosenWrapper::FhsCompliance(_) => {
                 input.par_iter()
                     .map(|(key, input_value)| {
-                        home_energy_model::run_project(RunInput::Json(input_value.input.clone()), &SinkOutput::default(), None, tariff_data_file, heat_balance, detailed_output_heating_cooling)
+                        home_energy_model::run_project(RunInput::Json(input_value.input.clone()), &SinkOutput, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)
                             .map(|result_value| (*key, result_value))
                     }).collect()
             }

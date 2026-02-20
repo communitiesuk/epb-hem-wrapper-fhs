@@ -1973,8 +1973,7 @@ impl InputForProcessing {
     }
 
     pub(crate) fn storeys_in_building(&self) -> JsonAccessResult<Option<usize>> {
-        Ok(self
-            .input
+        self.input
             .get("General")
             .ok_or(json_error("General node not found"))?
             .get("storeys_in_building")
@@ -1983,7 +1982,7 @@ impl InputForProcessing {
                     .ok_or(json_error("storeys_in_building is not a positive integer"))
                     .map(|n| n as usize)
             })
-            .transpose()?)
+            .transpose()
     }
 
     pub(crate) fn hot_water_cylinder_volume(&self) -> JsonAccessResult<Option<f64>> {
