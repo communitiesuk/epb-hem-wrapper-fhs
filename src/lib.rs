@@ -1,3 +1,4 @@
+use crate::future_homes_standard::fhs_sleeved_dhn_validation::validate_sleeved_dhn;
 use crate::future_homes_standard::input::{ingest_for_processing, InputForProcessing};
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
 use anyhow::anyhow;
@@ -123,6 +124,9 @@ pub fn run_wrappers(
             let mut input_for_processing = ingest_for_processing(input)?;
             input_for_processing
                 .merge_external_conditions_data(external_conditions_data.map(|x| x.into()))?;
+
+            validate_sleeved_dhn(&input_for_processing)?; // TODO 1.0.0a4 migration - is this called in correct place?
+
             Ok(input_for_processing)
         }
 

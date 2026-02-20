@@ -13,7 +13,7 @@ enum HeatNetworkType {
     Communal,
 }
 
-fn validate_sleeved_dhn(input: InputForProcessing) -> anyhow::Result<()> {
+pub(crate) fn validate_sleeved_dhn(input: &InputForProcessing) -> anyhow::Result<()> {
     // Sleeved DHNs must be used for space heating and DHW
     for (heat_source_wet_key, heat_source_wet) in input.heat_source_wet()? {
         let is_heat_network = heat_source_wet
@@ -128,7 +128,7 @@ mod test {
     fn test_sleeved_dhn_used_for_space_heating_and_dhw(dhn_sleeved: InputForProcessing) {
         // Given an input where a sleeved DHN is used for both HotWater and SpaceHeating
         // When validation is called then no error
-        assert!(validate_sleeved_dhn(dhn_sleeved).is_ok());
+        assert!(validate_sleeved_dhn(&dhn_sleeved).is_ok());
     }
 
     #[rstest]
@@ -138,7 +138,7 @@ mod test {
             json!("blah");
 
         // When validation is called
-        let result = validate_sleeved_dhn(dhn_sleeved);
+        let result = validate_sleeved_dhn(&dhn_sleeved);
 
         // Then validation error is raised that the sleeved DHN must be used for both
         assert_eq!(result.unwrap_err().to_string(), "HeatSourceWet 'sleeved_dhn' is a sleeved DHN which must be used for both space heating and hot water");
@@ -150,7 +150,7 @@ mod test {
         dhn_sleeved.input["SpaceHeatSystem"]["radiators"]["HeatSource"]["name"] = json!("blah");
 
         // When validation is called
-        let result = validate_sleeved_dhn(dhn_sleeved);
+        let result = validate_sleeved_dhn(&dhn_sleeved);
 
         // Then validation error is raised that the sleeved DHN must be used for both
         assert_eq!(result.unwrap_err().to_string(), "HeatSourceWet 'sleeved_dhn' is a sleeved DHN which must be used for both space heating and hot water");
@@ -164,7 +164,7 @@ mod test {
             json!({"HeatSource": {"name": "another heat source"}});
 
         // When validation is called then no error
-        assert!(validate_sleeved_dhn(dhn_sleeved).is_ok());
+        assert!(validate_sleeved_dhn(&dhn_sleeved).is_ok());
     }
 
     #[rstest]
@@ -176,7 +176,7 @@ mod test {
         });
 
         // When validation is called
-        let result = validate_sleeved_dhn(dhn_sleeved);
+        let result = validate_sleeved_dhn(&dhn_sleeved);
 
         // Then validation error is raised that the second sleeved DHN must be used for both
         assert_eq!(result.unwrap_err().to_string(), "HeatSourceWet 'sleeved_dhn_2' is a sleeved DHN which must be used for both space heating and hot water");
@@ -190,7 +190,7 @@ mod test {
         dhn_sleeved.input["SpaceHeatSystem"]["radiators"]["HeatSource"]["name"] = json!("blah");
 
         // When validation is called then no error
-        assert!(validate_sleeved_dhn(dhn_sleeved).is_ok());
+        assert!(validate_sleeved_dhn(&dhn_sleeved).is_ok());
     }
 
     #[rstest]
@@ -198,7 +198,7 @@ mod test {
         // Given an input where a sleeved DHN is used for both HotWater and SpaceHeating
         // and the HotWaterSource is of type HIU referencing the sleeved DHN HeatSourceWet
         // When validation is called then no error
-        assert!(validate_sleeved_dhn(dhn_sleeved_with_hiu).is_ok());
+        assert!(validate_sleeved_dhn(&dhn_sleeved_with_hiu).is_ok());
     }
 
     #[rstest]
@@ -211,7 +211,7 @@ mod test {
             json!("another heat source wet");
 
         // When validation is called
-        let result = validate_sleeved_dhn(dhn_sleeved_with_hiu);
+        let result = validate_sleeved_dhn(&dhn_sleeved_with_hiu);
 
         // Then a validation error is raised that the sleeved DHN must be used for both
         assert_eq!(result.unwrap_err().to_string(), "HeatSourceWet 'sleeved_dhn' is a sleeved DHN which must be used for both space heating and hot water");
