@@ -184,7 +184,7 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    fn zone_node(&self) -> JsonAccessResult<&serde_json::Map<std::string::String, JsonValue>> {
+    pub(crate) fn zone_node(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root_object("Zone")
     }
 
@@ -1896,6 +1896,13 @@ impl InputForProcessing {
             .and_then(|infiltration| infiltration.get("noise_nuisance"))
             .and_then(|nuisance| nuisance.as_bool())
             .unwrap_or(false)
+    }
+
+    pub(crate) fn ventilation_zone_base_height(&self) -> JsonAccessResult<f64> {
+        self.root_object("InfiltrationVentilation")?
+            .get("ventilation_zone_base_height")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| json_error("ventilation_zone_base_height missing or not a number"))
     }
 
     pub(crate) fn infiltration_ventilation_mut(
