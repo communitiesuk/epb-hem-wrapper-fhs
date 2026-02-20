@@ -59,6 +59,7 @@
             "type": "StorageTank",
             "volume": 80.0,
             "daily_losses": 1.68,
+            "init_temp": 55.0,
             "ColdWaterSource": "mains water",
             "HeatSource": {
                 "hp": {
@@ -70,28 +71,16 @@
                     "thermostat_position": 0.33
                 }
             },
-            "primary_pipework": [
-                {
-                    "location": "internal",
-                    "internal_diameter_mm": 30,
-                    "external_diameter_mm": 32,
-                    "length": 6.0,
-                    "insulation_thermal_conductivity": 0.040,
-                    "insulation_thickness_mm": 35,
-                    "surface_reflectivity": false,
-                    "pipe_contents": "water"
-                },
-                {
-                    "location": "external",
-                    "internal_diameter_mm": 30,
-                    "external_diameter_mm": 35,
-                    "length": 5.0,
-                    "insulation_thermal_conductivity": 0.035,
-                    "insulation_thickness_mm": 35,
-                    "surface_reflectivity": false,
-                    "pipe_contents": "water"
-                }
-            ]
+            "primary_pipework": [{
+                "location": "internal",
+                "internal_diameter_mm": 25,
+                "external_diameter_mm": 27,
+                "length": 2.0,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 38,
+                "surface_reflectivity": false,
+                "pipe_contents": "water"
+            }]
         }
     },
     "HotWaterDemand": {
@@ -134,7 +123,7 @@
             "type": "HeatPump",
             "EnergySupply": "mains elec",
             "source_type": "OutsideAir",
-            "sink_type": "Water",
+            "sink_type": "Glycol25",
             "backup_ctrl_type": "TopUp",
             "modulating_control": true,
             "min_modulation_rate_35": 0.35,
@@ -151,6 +140,12 @@
             "power_off": 0.015,
             "power_max_backup": 3.0,
             "is_heat_network": false,
+            "BufferTank": {
+                "daily_losses": 1.68,
+                "volume": 50,
+                "pump_fixed_flow_rate": 15,
+                "pump_power_at_flow_rate": 0.040
+            },
             "test_data_EN14825": [
                 {
                     "test_letter": "A",
@@ -278,7 +273,7 @@
             "temp_diff_emit_dsgn": 10.0,
             "variable_flow": true,
             "min_flow_rate": 3,
-            "max_flow_rate": 18,
+            "max_flow_rate": 14,
             "HeatSource": {
                 "name": "hp",
                 "temp_flow_limit_upper": 65.0
@@ -290,26 +285,11 @@
                 "min_flow_temp": 30},
             "design_flow_temp": 55,
             "Zone": "whole dwelling"
-        },
-        "backup": {
-            "type": "InstantElecHeater",
-            "rated_power": 12.0,
-            "convective_type": "Wall heating, radiant ceiling panels, accumulation stoves",
-            "EnergySupply": "mains elec"
         }
     },
     "SpaceCoolSystem": {
         "cooling system": {
             "type": "AirConditioning",
-            "advanced_start": 1.0,
-            "cooling_capacity": 6.0,
-            "efficiency": 4.3,
-            "frac_convective": 0.95,
-            "EnergySupply": "mains elec"
-        },
-        "cooling system backup": {
-            "type": "AirConditioning",
-            "temp_setback": 25.0,
             "cooling_capacity": 6.0,
             "efficiency": 4.3,
             "frac_convective": 0.95,
@@ -387,8 +367,8 @@
     },
     "Zone": {
         "whole dwelling": {
-            "SpaceHeatSystem": ["radiators", "backup"],
-            "SpaceCoolSystem": ["cooling system", "cooling system backup"],
+            "SpaceHeatSystem": "radiators",
+            "SpaceCoolSystem": "cooling system",
             "livingroom_area": 16.0,
             "restofdwelling_area": 80.0,
             "volume": 500.0,
