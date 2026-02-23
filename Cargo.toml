@@ -7,12 +7,12 @@ edition = "2021"
 anyhow = "1.0.100"
 approx = "0.5.1"
 bitflags = "2.10.0"
-clap = { version = "4.5.51", features = ["derive"], optional = true }
+clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "separate-fhs" }
-indexmap = { version = "2.11.4", features = ["serde", "arbitrary"] }
+indexmap = { version = "2.12.1", features = ["serde", "arbitrary"] }
 itertools = "0.14.0"
-jsonschema = "0.35.0"
+jsonschema = "0.37.4"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
 partial_application = "0.2.1"
 rand = "0.9.1"
@@ -28,7 +28,7 @@ smartstring = "1.0.1"
 strum = "0.27.1"
 strum_macros = "0.27.0"
 thiserror = "2.0.17"
-tracing = "0.1.41"
+tracing = "0.1.43"
 tracing-subscriber = "0.3.20"
 walkdir = "2.5.0"
 
