@@ -9,17 +9,15 @@ use home_energy_model::input::{
 use home_energy_model::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use jsonschema::{BasicOutput, Validator};
-use serde_json::{Map, Value as JsonValue, json};
-use serde_valid::json::ToJsonString;
+use jsonschema::Validator;
+use serde_json::{json, Map, Value as JsonValue};
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use std::sync::LazyLock;
 use thiserror::Error;
 
 static FHS_SCHEMA_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
-    let schema =
-        serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
+    let schema = serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
     jsonschema::validator_for(&schema).unwrap()
 });
 
@@ -38,11 +36,17 @@ impl InputForProcessing {
 
         let validator = &FHS_SCHEMA_VALIDATOR;
 
-        if let BasicOutput::Invalid(errors) = validator.apply(&input_for_processing.input).basic() {
+        let evaluation = validator.evaluate(&input_for_processing.input);
+
+        if !evaluation.flag().valid {
             bail!(
                 "Invalid JSON against the FHS schema: {}",
-                serde_json::to_value(errors)?.to_json_string_pretty()?
-            ); // TODO build this handling logic out
+                evaluation
+                    .iter_errors()
+                    .map(|e| e.error.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
         }
 
         Ok(input_for_processing)
