@@ -2129,6 +2129,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
+
+[[package]]
 name = "rand_distr"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,11 +2156,11 @@ dependencies = [
 
 [[package]]
 name = "rand_mt"
-version = "5.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9375873db1061df25ed185eb584cd8839196db7a43803daa0612c5ae53be5b5"
+checksum = "f0d59333477bc9d764d459adf2dd29265af9905a0b01d610e1b4eec39c40c9c5"
 dependencies = [
- "rand_core 0.9.5",
+ "rand_core 0.10.0",
 ]
 
 [[package]]
