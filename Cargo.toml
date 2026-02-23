@@ -25,7 +25,7 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 serde_valid = "2.0.0"
 smartstring = "1.0.1"
-strum = "0.27.1"
+strum = "0.28.0"
 strum_macros = "0.27.0"
 thiserror = "2.0.17"
 tracing = "0.1.43"
