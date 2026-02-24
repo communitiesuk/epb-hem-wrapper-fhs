@@ -91,6 +91,7 @@ fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>)
         .sum()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FuelOutput {
     pub(crate) fuel: FuelType,
     pub(crate) eer_energy: f64,
@@ -124,4 +125,378 @@ pub(crate) fn by_fuel(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use home_energy_model::input::ExternalConditionsInput;
+    use home_energy_model::{load_weather_data, WeatherFileType};
+    use rstest::*;
+    use serde_json::{json, Value};
+    use std::io::Cursor;
+
+    #[fixture]
+    fn instant_elec_project() -> Input {
+        // Thing that matters here is that there are two EnergySupply entries
+        // One called "mains elec" with fuel = electricity
+        // One called "mains gas" with fuel = mains_gas
+        // Two mechanical vents "mechvent1", "mechvent2"
+        // One SpaceHeatSystem called "main"
+        // A "hw cylinder" with a heat source called "immersion"
+
+        let mut project = serde_json::from_str::<Value>(include_str!(
+            "../../examples/input/future_homes_standard/demo_FHS.json"
+        ))
+        .unwrap();
+        let weather = ExternalConditionsInput::from(
+            load_weather_data(
+                Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                WeatherFileType::Epw,
+            )
+            .unwrap(),
+        );
+        let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+        project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+        project["ExternalConditions"]["shading_segments"] = shading_segments;
+        // TODO complete when functions are implemented during migration to 1.0.0a4
+        // initial_preprocessing(&mut project);
+        // final_preprocessing(&mut project);
+
+        let _input: Input = serde_json::from_value(project).unwrap();
+
+        todo!()
+    }
+
+    #[fixture]
+    fn instant_elec_output_summary() -> OutputSummary {
+        // delivered energy matters here
+
+        // make OutputSummary derive Deserialize, and uncomment
+        serde_json::from_value(json!({
+            "total_floor_area": 100,
+            "space_heat_demand_total": 1000,
+            "space_cool_demand_total": -100,
+            "electricity_peak_consumption": {
+                "peak": 10,
+                "index": 1,
+                "month": 1,
+                "day": 1,
+                "hour": 1,
+            },
+            "energy_supply": {
+                "mains elec": {
+                    "generation": 0,
+                    "consumption": 1100,
+                    "generation_to_consumption": 0,
+                    "generation_to_grid": 0,
+                    "generation_to_diverter": 0,
+                    "generation_to_storage": 0,
+                    "grid_to_consumption": 1100,
+                    "grid_to_storage": 0,
+                    "storage_to_consumption": 0,
+                    "storage_efficiency": null,
+                    "net_import": 1100,
+                    "total_gross_import": 1100,
+                    "total_gross_export": 0,
+                },
+                "delivered_energy": {
+                    "mains elec": {
+                        "mechvent1": 100,  // vent
+                        "mechvent3": 200,  // not a vent
+                        "lighting": 300,  // counts as lighting
+                        "something random": 400,  // not relevant for EER
+                        "hw cylinder": 500,  // counts as water heating
+                        "immersion": 600,  // counts as water heating
+                        "something_water_heating": 700,  // counts as water heating
+                    },
+                    "mains gas": {
+                        "main": 1000,  // heating system counts
+                        "Hobs": 100,  // not relevant for EER,
+                        "something_space_heating": 200,  // counts as space heating
+                        "auxillary_pump_thing": 300,  // counts as a space heating system pump
+                    }
+                },
+                "hot_water_demand_daily_75th_percentile": {
+                    "hw cylinder": 1000,
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[fixture]
+    fn heat_network_project() -> Input {
+        // Thing that matters here is that there is two EnergySupply's
+        // One called "mains elec" with fuel = electricity
+        // One called "custom_heat_network_supply" with fuel = custom
+        // One mechanical vent "cMEV"
+        // One SpaceHeatSystem called "SpaceHeatSystem1"
+        // A "hw cylinder" with a heat source called "heat network"
+
+        let mut project = serde_json::from_str::<Value>(include_str!(
+            "../../examples/input/future_homes_standard/DESN-H-End-02-HN-cMEV.json"
+        ))
+        .unwrap();
+        let weather = ExternalConditionsInput::from(
+            load_weather_data(
+                Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                WeatherFileType::Epw,
+            )
+            .unwrap(),
+        );
+        let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+        project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+        project["ExternalConditions"]["shading_segments"] = shading_segments;
+        // TODO complete when functions are implemented during migration to 1.0.0a4
+        // initial_preprocessing(&mut project);
+        // final_preprocessing(&mut project);
+
+        let _input: Input = serde_json::from_value(project).unwrap();
+
+        todo!()
+    }
+
+    #[fixture]
+    fn heat_network_output_summary() -> OutputSummary {
+        // delivered energy matters here
+
+        // uncomment below once OutputSummary derives Deserialize
+        serde_json::from_value(json!({
+            "total_floor_area": 100,
+            "space_heat_demand_total": 1000,
+            "space_cool_demand_total": -100,
+            "electricity_peak_consumption": {
+                "peak": 10,
+                "index": 1,
+                "month": 1,
+                "day": 1,
+                "hour": 1,
+            },
+            "energy_supply": {
+                "mains elec": {
+                    "generation": 0,
+                    "consumption": 1100,
+                    "generation_to_consumption": 0,
+                    "generation_to_grid": 0,
+                    "generation_to_diverter": 0,
+                    "generation_to_storage": 0,
+                    "grid_to_consumption": 1100,
+                    "grid_to_storage": 0,
+                    "storage_to_consumption": 0,
+                    "storage_efficiency": null,
+                    "net_import": 1100,
+                    "total_gross_import": 1100,
+                    "total_gross_export": 0,
+                }
+            },
+            "delivered_energy": {
+                "mains elec": {
+                    "cMEV": 100,  // vent
+                    "mechvent3": 200,  // not a vent
+                    "topup": 300,  // counts as lighting
+                    "something random": 400,  // not relevant for EER
+                    "hw cylinder": 500,  // counts as water heating
+                    "heat network": 600,  // counts as water heating
+                    "something_water_heating": 700,  // counts as water heating
+                },
+                "custom_heat_network_supply": {
+                    "SpaceHeatSystem1": 1000,  // heating system counts
+                    "Hobs": 100,  // not relevant for EER,
+                    "something_space_heating": 200,  // counts as space heating
+                    "auxillary_pump_thing": 300,  // counts as a space heating system pump
+                }
+            },
+            "hot_water_demand_daily_75th_percentile": {
+                "hw cylinder": 1000
+            }
+        }))
+        .unwrap()
+    }
+
+    #[fixture]
+    fn electricity_and_gas_project() -> Input {
+        // Thing that matters here is that there are three EnergySupply objects
+        // One called "mains elec" with fuel = electricity
+        // One called "mains gas" with fuel = mains_gas
+        // One called "LPG_bulk" with fuel = LPG_bulk
+        // One mechanical vent "cMEV"
+        // One SpaceHeatSystem called "SpaceHeatSystem1"
+        // A "hw cylinder" with a heat source called "boiler"
+
+        let mut project = serde_json::from_str::<Value>(include_str!(
+            "../../examples/input/future_homes_standard/DESN-H-End-02-Blr-cMEV-Combi-lpg-bulk.json"
+        ))
+        .unwrap();
+        let weather = ExternalConditionsInput::from(
+            load_weather_data(
+                Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                WeatherFileType::Epw,
+            )
+            .unwrap(),
+        );
+        let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+        project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+        project["ExternalConditions"]["shading_segments"] = shading_segments;
+        // TODO complete when functions are implemented during migration to 1.0.0a4
+        // initial_preprocessing(&mut project);
+        // final_preprocessing(&mut project);
+
+        let _input: Input = serde_json::from_value(project).unwrap();
+
+        todo!()
+    }
+
+    #[fixture]
+    fn electricity_and_gas_output_summary() -> OutputSummary {
+        // delivered energy matters here
+
+        // uncomment below once OutputSummary derives Deserialize
+        serde_json::from_value(json!({
+            "total_floor_area": 100,
+            "space_heat_demand_total": 1000,
+            "space_cool_demand_total": -100,
+            "electricity_peak_consumption": {
+                "peak": 10,
+                "index": 1,
+                "month": 1,
+                "day": 1,
+                "hour": 1,
+            },
+            "energy_supply": {
+                "mains elec": {
+                    "generation": 0,
+                    "consumption": 1100,
+                    "generation_to_consumption": 0,
+                    "generation_to_grid": 0,
+                    "generation_to_diverter": 0,
+                    "generation_to_storage": 0,
+                    "grid_to_consumption": 1100,
+                    "grid_to_storage": 0,
+                    "storage_to_consumption": 0,
+                    "storage_efficiency": null,
+                    "net_import": 1100,
+                    "total_gross_import": 1100,
+                    "total_gross_export": 0,
+                }
+            },
+            "delivered_energy": {
+                "mains elec": {
+                    "cMEV": 100,  // vent
+                    "lighting": 300,  // counts as lighting
+                    "something random": 400,  // not relevant for EER
+                    "hw cylinder": 20,  // counts as water heating
+                },
+                "LPG_bulk": {
+                    "boiler": 600,  // counts as water heating
+                    "Hobs": 100,  // not relevant for EER,
+                    "something_space_heating": 200,  // counts as space heating
+                },
+                "mains gas": {},
+            },
+            "hot_water_demand_daily_75th_percentile": {
+                "hw cylinder": 1000
+            }
+        }))
+        .unwrap()
+    }
+
+    #[rstest]
+    #[ignore = "ignored until fixtures can be fully implemented"]
+    fn test_without_custom_fuel(
+        instant_elec_project: Input,
+        instant_elec_output_summary: OutputSummary,
+    ) {
+        // Given a by fuel lookup is called
+        let fuels = by_fuel(&instant_elec_project, &instant_elec_output_summary).unwrap();
+        // then the total delivered energy is calculated based on the floor area normalised
+        // calculated properties
+        assert_eq!(
+            fuels,
+            vec![
+                FuelOutput {
+                    fuel: FuelType::Electricity,
+                    eer_energy: 2200.,
+                    unit_price: 16.49.into(),
+                    standing_charge: 0.into(),
+                },
+                FuelOutput {
+                    fuel: FuelType::MainsGas,
+                    eer_energy: 1500.,
+                    unit_price: 3.64.into(),
+                    standing_charge: 92.into(),
+                }
+            ]
+        );
+    }
+
+    #[rstest]
+    #[ignore = "ignored until fixtures can be fully implemented"]
+    fn test_with_custom_fuel(
+        heat_network_project: Input,
+        heat_network_output_summary: OutputSummary,
+    ) {
+        // Given a by fuel lookup is called
+        let fuels = by_fuel(&heat_network_project, &heat_network_output_summary).unwrap();
+        // then the total delivered energy is calculated based on the floor area normalised
+        // calculated properties
+        assert_eq!(
+            fuels,
+            vec![
+                FuelOutput {
+                    fuel: FuelType::Electricity,
+                    eer_energy: 2200.,
+                    unit_price: 16.49.into(),
+                    standing_charge: 0.into(),
+                },
+                FuelOutput {
+                    fuel: FuelType::MainsGas,
+                    eer_energy: 1500.,
+                    unit_price: None,
+                    standing_charge: None,
+                }
+            ]
+        );
+    }
+
+    #[rstest]
+    #[ignore = "ignored until fixtures can be fully implemented"]
+    fn test_electricity_and_gas(
+        electricity_and_gas_project: Input,
+        electricity_and_gas_output_summary: OutputSummary,
+    ) {
+        // Given a project that has electricity, LPG_bulk and mains_gas energy supplies
+        // When a by_fuel lookup is called
+        let fuels = by_fuel(
+            &electricity_and_gas_project,
+            &electricity_and_gas_output_summary,
+        )
+        .unwrap();
+        // Then the total delivered energy is calculated from the
+        // floor-area-normalised results for all three energy supplies.
+        // Note that nothing uses the mains_gas supply, so it has zero delivered energy.
+        assert_eq!(
+            fuels,
+            vec![
+                FuelOutput {
+                    fuel: FuelType::Electricity,
+                    eer_energy: 420.,
+                    unit_price: 16.49.into(),
+                    standing_charge: 0.into(),
+                },
+                FuelOutput {
+                    fuel: FuelType::LpgBulk,
+                    eer_energy: 800.,
+                    unit_price: 6.74.into(),
+                    standing_charge: 62.into(),
+                },
+                FuelOutput {
+                    fuel: FuelType::MainsGas,
+                    eer_energy: 0.,
+                    unit_price: 3.64.into(),
+                    standing_charge: 92.into(),
+                }
+            ]
+        );
+    }
 }
