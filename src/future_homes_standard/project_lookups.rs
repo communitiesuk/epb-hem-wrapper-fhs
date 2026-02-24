@@ -92,10 +92,10 @@ fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>)
 }
 
 pub(crate) struct FuelOutput {
-    fuel: FuelType,
-    eer_energy: f64,
-    unit_price: Option<f64>,
-    standing_charge: Option<u32>,
+    pub(crate) fuel: FuelType,
+    pub(crate) eer_energy: f64,
+    pub(crate) unit_price: Option<f64>,
+    pub(crate) standing_charge: Option<u32>,
 }
 
 pub(crate) fn by_fuel(
