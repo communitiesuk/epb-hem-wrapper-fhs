@@ -1177,7 +1177,7 @@ dependencies = [
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-6"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#d5bf13bbc5ef94fd02fa628af1d0ac4a3612fba1"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#e10d1f801ac592d055a8f4cbba325ddd76b33e90"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2751,7 +2751,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

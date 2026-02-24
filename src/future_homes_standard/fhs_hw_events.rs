@@ -2,7 +2,7 @@ use crate::future_homes_standard::future_homes_standard::HourlyHotWaterEvent;
 use crate::future_homes_standard::input::InputForProcessing;
 use anyhow::{anyhow, bail};
 use csv::Reader;
-use home_energy_model_legacy::core::water_heat_demand::misc::frac_hot_water;
+use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
 use home_energy_model_legacy::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
@@ -101,11 +101,16 @@ pub fn reset_events_and_provide_drawoff_generator(
                 .iter()
                 .position(|&value| value as f64 > event.time)
                 .unwrap();
-            let frac_hw = frac_hot_water(
+            let frac_hw = match calc_fraction_hot_water(
                 event_temperature,
                 hw_temperature,
                 cold_water_feed_temps[event.time.floor() as usize],
-            );
+            ) {
+                Ok(frac_hw) => frac_hw,
+                Err(e) => {
+                    panic!("{e}")
+                }
+            };
             (event.volume / frac_hw / flow_rate)
                 * fhw
                 * OTHER_HW_FACTOR_M[other_month_index]
