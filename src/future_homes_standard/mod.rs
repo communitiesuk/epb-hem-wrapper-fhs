@@ -28,6 +28,7 @@ pub mod future_homes_standard;
 pub(crate) mod future_homes_standard_fee;
 pub(crate) mod future_homes_standard_notional;
 pub mod input;
+mod project_lookups;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;
