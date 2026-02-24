@@ -1,5 +1,5 @@
-use crate::future_homes_standard::input::InputForProcessing;
-use anyhow::{anyhow, bail};
+use crate::future_homes_standard::input::{json_error, InputForProcessing};
+use anyhow::bail;
 
 /// Validate that the dwelling contains at least one BuildingElementTransparent which represents a window
 pub(crate) fn validate_existence_of_window(input: &InputForProcessing) -> anyhow::Result<()> {
@@ -7,7 +7,7 @@ pub(crate) fn validate_existence_of_window(input: &InputForProcessing) -> anyhow
         let elements = zone
             .get("BuildingElement")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| anyhow!("BuildingElement node not present"))?;
+            .ok_or_else(|| json_error("BuildingElement node not present"))?;
 
         if !elements.values().any(|el| {
             el.get("type").and_then(|el_type| el_type.as_str())
@@ -30,7 +30,7 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
         let elements = zone
             .get("BuildingElement")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| anyhow!("BuildingElement node not present"))?;
+            .ok_or_else(|| json_error("BuildingElement node not present"))?;
 
         for (element_name, element) in elements {
             if element.get("type").and_then(|el_type| el_type.as_str())
@@ -39,7 +39,7 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
                 let base_height = element
                     .get("base_height")
                     .and_then(|height| height.as_f64())
-                    .ok_or_else(|| anyhow!("Window base_height missing or not a number"))?;
+                    .ok_or_else(|| json_error("Window base_height missing or not a number"))?;
 
                 if base_height < ventilation_zone_base_height {
                     bail!("Window '{element_name}' in Zone '{zone_name}' has base_height ({base_height} m) below ventilation_zone_base_height ({ventilation_zone_base_height} m)");
