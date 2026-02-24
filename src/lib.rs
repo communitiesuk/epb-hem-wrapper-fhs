@@ -6,14 +6,14 @@ use crate::future_homes_standard::input::{ingest_for_processing, InputForProcess
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
 use anyhow::anyhow;
 use bitflags::bitflags;
-use home_energy_model::errors::{HemError, PostprocessingError};
-use home_energy_model::input::Input;
-pub use home_energy_model::output::Output;
-use home_energy_model::output::SinkOutput;
-pub use home_energy_model::read_weather_file;
-use home_energy_model::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
-use home_energy_model::RunInput;
-pub use home_energy_model::{CalculationResultsWithContext, HemResponse};
+use home_energy_model_legacy::errors::{HemError, PostprocessingError};
+use home_energy_model_legacy::input::Input;
+pub use home_energy_model_legacy::output::Output;
+use home_energy_model_legacy::output::SinkOutput;
+pub use home_energy_model_legacy::read_weather_file;
+use home_energy_model_legacy::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
+use home_energy_model_legacy::RunInput;
+pub use home_energy_model_legacy::{CalculationResultsWithContext, HemResponse};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -201,7 +201,7 @@ pub fn run_wrappers(
             ChosenWrapper::FhsCompliance(_) => {
                 input.par_iter()
                     .map(|(key, input_value)| {
-                        home_energy_model::run_project(RunInput::Json(input_value.input.clone()), &SinkOutput, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)
+                        home_energy_model_legacy::run_project(RunInput::Json(input_value.input.clone()), &SinkOutput, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)
                             .map(|result_value| (*key, result_value))
                     }).collect()
             }
@@ -209,7 +209,7 @@ pub fn run_wrappers(
                 let input_value = input
                     .get(&CalculationKey::Primary)
                     .ok_or_else(|| anyhow!("Primary key missing"))?;
-                let calculation_result = home_energy_model::run_project(RunInput::Json(input_value.input.clone()), &output, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)?;
+                let calculation_result = home_energy_model_legacy::run_project(RunInput::Json(input_value.input.clone()), &output, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)?;
                 Ok(HashMap::from([(CalculationKey::Primary, calculation_result)]))
             }
         };

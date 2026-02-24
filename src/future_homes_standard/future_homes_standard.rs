@@ -5,23 +5,23 @@ use crate::future_homes_standard::fhs_hw_events::{
 use crate::future_homes_standard::input::{json_error, InputForProcessing, JsonAccessResult};
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
-use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
 use home_energy_model::core::units::{
     DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, LITRES_PER_CUBIC_METRE, MINUTES_PER_HOUR,
     SECONDS_PER_HOUR, WATTS_PER_KILOWATT,
 };
-use home_energy_model::corpus::{Corpus, OutputOptions, ResultsEndUser};
-use home_energy_model::external_conditions::{
+use home_energy_model_legacy::core::schedule::{expand_numeric_schedule, reject_nulls};
+use home_energy_model_legacy::corpus::{Corpus, OutputOptions, ResultsEndUser};
+use home_energy_model_legacy::external_conditions::{
     create_external_conditions, ExternalConditions, WindowShadingObject,
 };
-use home_energy_model::input::{
+use home_energy_model_legacy::input::{
     EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType,
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, Input,
     MechanicalVentilationForProcessing, MechanicalVentilationJsonValue, SmartApplianceBattery,
     TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
-use home_energy_model::output::Output;
-use home_energy_model::simulation_time::SimulationTime;
+use home_energy_model_legacy::output::Output;
+use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -3664,7 +3664,7 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
         .all_building_elements()?
         .values()
         .filter_map(|el| match el {
-            home_energy_model::input::BuildingElement::Transparent {
+            home_energy_model_legacy::input::BuildingElement::Transparent {
                 orientation,
                 g_value,
                 frame_area_fraction,

@@ -11,24 +11,24 @@ use crate::future_homes_standard::input::{
 };
 use anyhow::{anyhow, bail};
 use home_energy_model::compare_floats::min_of_2;
-use home_energy_model::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
-use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
-use home_energy_model::core::units::{
+use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
+use home_energy_model_legacy::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
+use home_energy_model_legacy::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model_legacy::core::units::{
     convert_profile_to_daily, JOULES_PER_KILOJOULE, JOULES_PER_KILOWATT_HOUR, WATTS_PER_KILOWATT,
 };
-use home_energy_model::core::water_heat_demand::cold_water_source::ColdWaterSource;
-use home_energy_model::core::water_heat_demand::dhw_demand::{
+use home_energy_model_legacy::core::water_heat_demand::cold_water_source::ColdWaterSource;
+use home_energy_model_legacy::core::water_heat_demand::dhw_demand::{
     DomesticHotWaterDemand, DomesticHotWaterDemandData,
 };
-use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
-use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
-use home_energy_model::input::{
+use home_energy_model_legacy::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
+use home_energy_model_legacy::input::{
     BuildingElement, ColdWaterSourceType, GroundBuildingElement, GroundBuildingElementJsonValue,
     SpaceHeatSystemHeatSource, WaterPipeContentsType, WaterPipework, WaterPipeworkLocation,
 };
-use home_energy_model::simulation_time::SimulationTime;
-use home_energy_model::statistics::{np_interp, percentile};
-use home_energy_model::{
+use home_energy_model_legacy::simulation_time::SimulationTime;
+use home_energy_model_legacy::statistics::{np_interp, percentile};
+use home_energy_model_legacy::{
     compare_floats::max_of_2,
     core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection},
 };
@@ -1555,13 +1555,13 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use home_energy_model::core::space_heat_demand::building_element::{
+    use home_energy_model_legacy::core::space_heat_demand::building_element::{
         pitch_class, HeatFlowDirection,
     };
-    use home_energy_model::input::{
+    use home_energy_model_legacy::input::{
         EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, WaterPipeworkSimple,
     };
-    use home_energy_model::input::{HotWaterSource, WasteWaterHeatRecovery};
+    use home_energy_model_legacy::input::{HotWaterSource, WasteWaterHeatRecovery};
     use rstest::{fixture, rstest};
     use serde_json::json;
     use std::borrow::BorrowMut;

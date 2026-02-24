@@ -1,12 +1,12 @@
 use anyhow::{anyhow, bail};
-use home_energy_model::core::schedule::NumericSchedule;
-use home_energy_model::input::{
+use home_energy_model_legacy::core::schedule::NumericSchedule;
+use home_energy_model_legacy::input::{
     ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
     HeatingControlType, Input, ReducedInputForCalcHtcHlp, SmartApplianceBattery,
     SpaceHeatSystemHeatSource, WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent,
     WaterPipework,
 };
-use home_energy_model::simulation_time::SimulationTime;
+use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jsonschema::Validator;

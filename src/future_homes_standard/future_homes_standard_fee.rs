@@ -3,7 +3,7 @@ use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::input::InputForProcessing;
 use anyhow::anyhow;
 use csv::WriterBuilder;
-use home_energy_model::output::Output;
+use home_energy_model_legacy::output::Output;
 use serde_json::json;
 
 /// This module provides functions to implement pre- and post-processing

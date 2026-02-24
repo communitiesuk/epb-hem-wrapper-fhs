@@ -8,8 +8,8 @@ use crate::{CalculationKey, FhsFlags};
 
 use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
-use home_energy_model::output::Output;
-use home_energy_model::{
+use home_energy_model_legacy::output::Output;
+use home_energy_model_legacy::{
     CalculationContext, CalculationResultsWithContext, HemResponse, RunResults,
 };
 use rayon::prelude::*;

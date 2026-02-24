@@ -4,7 +4,7 @@ use crate::future_homes_standard::future_homes_standard::{calc_final_rates, Fina
 use crate::future_homes_standard::future_homes_standard_fee::calc_fabric_energy_efficiency;
 use crate::CalculationKey;
 use anyhow::anyhow;
-use home_energy_model::{build_summary_data, CalculationResultsWithContext, SummaryData};
+use home_energy_model_legacy::{build_summary_data, CalculationResultsWithContext, SummaryData};
 use indexmap::IndexMap;
 use serde::Serialize;
 use smartstring::alias::String;
