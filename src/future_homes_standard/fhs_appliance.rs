@@ -128,6 +128,9 @@ impl FhsAppliance {
                 let duration =
                     event_duration * (1. + event_size_deviations[event_count]) / f_appliance;
                 event_count += 1;
+                if duration == 0. {
+                    continue;
+                }
                 // step will depend on timestep of flatprofile, always hourly so no adjustment
                 eventlist.push(ApplianceGainsEvent {
                     start: step as f64 + start_offset,
