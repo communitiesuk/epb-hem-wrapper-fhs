@@ -737,6 +737,11 @@ mod test {
             match (a, b) {
                 (a @ &mut Value::Object(_), Value::Object(b)) => {
                     let a = a.as_object_mut().unwrap();
+                    // clobber target object if item being merged is empty object
+                    if b.is_empty() {
+                        a.clear();
+                        return;
+                    }
                     for (k, v) in b {
                         merge_json_values(a.entry(k).or_insert(Value::Null), v);
                     }
@@ -825,9 +830,6 @@ mod test {
                     },
                 }),
             );
-
-            // nix the appliance gains entry as the merge function here doesn't work as intended to override objects
-            ventilation_input.input["ApplianceGains"] = json!({});
 
             // When the scheduler is run for a 3 hour period in steps of 1 hour
             create_imev_pattern(&mut ventilation_input, 0., 3., 1.).unwrap();
@@ -949,9 +951,6 @@ mod test {
                 }),
             );
 
-            // nix the appliance gains entry as the merge function here doesn't work as intended to override objects
-            ventilation_input.input["ApplianceGains"] = json!({});
-
             // When the scheduler is run for a 3 hour period in steps of 1 hour
             create_imev_pattern(&mut ventilation_input, 0., 3., 1.).unwrap();
 
@@ -1013,11 +1012,6 @@ mod test {
                 }),
             );
 
-            // nix the appliance gains entry as the merge function here doesn't work as intended to override objects
-            ventilation_input.input["ApplianceGains"] = json!({});
-            // also nix shower events
-            ventilation_input.input["Events"]["Shower"] = json!({});
-
             // When the scheduler is run for an hour in an one hour step
             create_imev_pattern(&mut ventilation_input, 0., 1., 1.).unwrap();
 
@@ -1045,6 +1039,82 @@ mod test {
             }
         }
 
-        // TODO: test_full_scale_example
+        #[rstest]
+        fn test_full_scale_example() {
+            let mut project_dict = InputForProcessing {
+                input: serde_json::from_str(include_str!(
+                    "test_assets/fixtures/test_demo_FHS_multiple_intermittent_MEV_events.json"
+                ))
+                .unwrap(),
+            };
+
+            create_imev_pattern(&mut project_dict, 0., 8760., 0.5).unwrap();
+
+            let expected = InputForProcessing {
+                input: serde_json::from_str(include_str!(
+                    "test_assets/expected_results/test_demo_FHS_multiple_intermittent_MEV_schedules.json"
+                )).unwrap(),
+            };
+
+            let actual_schedule_1 = project_dict.input["Control"]
+                ["_intermittent_MEV_control: mechvent1"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            let expected_schedule_1 = expected.input["Control"]
+                ["_intermittent_MEV_control: mechvent1"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            for (i, entry) in actual_schedule_1.iter().enumerate() {
+                assert_relative_eq!(entry, &expected_schedule_1[i], epsilon = 1e-7);
+            }
+
+            let actual_schedule_2 = project_dict.input["Control"]
+                ["_intermittent_MEV_control: mechvent2"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            let expected_schedule_2 = expected.input["Control"]
+                ["_intermittent_MEV_control: mechvent2"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            for (i, entry) in actual_schedule_2.iter().enumerate() {
+                assert_relative_eq!(entry, &expected_schedule_2[i], epsilon = 1e-7);
+            }
+
+            let actual_schedule_3 = project_dict.input["Control"]
+                ["_intermittent_MEV_control: mechvent3"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            let expected_schedule_3 = expected.input["Control"]
+                ["_intermittent_MEV_control: mechvent3"]["schedule"]["main"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(Value::as_f64)
+                .flatten()
+                .collect::<Vec<_>>();
+            for (i, entry) in actual_schedule_3.iter().enumerate() {
+                assert_relative_eq!(entry, &expected_schedule_3[i], epsilon = 1e-7);
+            }
+        }
     }
 }
