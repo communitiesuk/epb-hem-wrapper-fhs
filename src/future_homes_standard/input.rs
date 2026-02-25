@@ -1,4 +1,5 @@
-use anyhow::{anyhow, bail};
+use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
+use anyhow::anyhow;
 use home_energy_model_legacy::core::schedule::NumericSchedule;
 use home_energy_model_legacy::input::{
     ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
@@ -9,17 +10,10 @@ use home_energy_model_legacy::input::{
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use jsonschema::Validator;
 use serde_json::{json, Map, Value as JsonValue};
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
-use std::sync::LazyLock;
 use thiserror::Error;
-
-static FHS_SCHEMA_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
-    let schema = serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
-    jsonschema::validator_for(&schema).unwrap()
-});
 
 pub(crate) fn ingest_for_processing(json: impl Read) -> Result<InputForProcessing, anyhow::Error> {
     InputForProcessing::init_with_json(json)
@@ -34,20 +28,7 @@ impl InputForProcessing {
     pub fn init_with_json(json: impl Read) -> Result<Self, anyhow::Error> {
         let input_for_processing = Self::init_with_json_skip_validation(json)?;
 
-        let validator = &FHS_SCHEMA_VALIDATOR;
-
-        let evaluation = validator.evaluate(&input_for_processing.input);
-
-        if !evaluation.flag().valid {
-            bail!(
-                "Invalid JSON against the FHS schema: {}",
-                evaluation
-                    .iter_errors()
-                    .map(|e| e.error.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-        }
+        apply_schema_validation(&input_for_processing.input)?;
 
         Ok(input_for_processing)
     }

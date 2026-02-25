@@ -20,6 +20,7 @@ mod fhs_appliance;
 mod fhs_compliance_response;
 mod fhs_hw_events;
 mod fhs_imev_scheduler;
+pub mod fhs_schema_validation;
 pub(crate) mod fhs_sleeved_dhn_validation;
 mod fhs_storeys_validation;
 pub(crate) mod fhs_window_validation;
