@@ -1028,6 +1028,14 @@ impl InputForProcessing {
             .is_some_and(|shower_type| shower_type == "InstantElecShower")
     }
 
+    pub(crate) fn shower_values_mut(&mut self) -> JsonAccessResult<Option<Vec<&mut JsonValue>>> {
+        Ok(self
+            .hot_water_demand_mut()?
+            .get_mut("Shower")
+            .and_then(|shower_node| shower_node.as_object_mut())
+            .map(|shower| shower.values_mut().collect::<Vec<&mut JsonValue>>()))
+    }
+
     pub(crate) fn register_wwhrs_name_on_mixer_shower(
         &mut self,
         wwhrs: &str,
@@ -1052,6 +1060,13 @@ impl InputForProcessing {
             .hot_water_demand()?
             .get("Bath")
             .and_then(|baths| baths.as_object()))
+    }
+
+    pub(crate) fn baths_mut(&mut self) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
+        Ok(self
+            .hot_water_demand_mut()?
+            .get_mut("Bath")
+            .and_then(|baths| baths.as_object_mut()))
     }
 
     pub fn bath_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
@@ -1091,6 +1106,15 @@ impl InputForProcessing {
             .hot_water_demand()?
             .get("Other")
             .and_then(|other| other.as_object()))
+    }
+
+    pub(crate) fn other_water_uses_mut(
+        &mut self,
+    ) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
+        Ok(self
+            .hot_water_demand_mut()?
+            .get_mut("Other")
+            .and_then(|other| other.as_object_mut()))
     }
 
     pub fn other_water_use_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
@@ -1255,13 +1279,11 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    fn hot_water_demand(&self) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
+    fn hot_water_demand(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root_object("HotWaterDemand")
     }
 
-    fn hot_water_demand_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    fn hot_water_demand_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("HotWaterDemand")
     }
 

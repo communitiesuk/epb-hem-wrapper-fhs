@@ -6,7 +6,7 @@ use super::future_homes_standard::{
 };
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::input::{
-    InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
+    json_error, InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
     UValueEditableBuildingElementJsonValue,
 };
 use anyhow::{anyhow, bail};
@@ -43,10 +43,8 @@ use tracing::instrument;
 const NOTIONAL_WWHRS: &str = "Notional_Inst_WWHRS";
 const NOTIONAL_HIU: &str = "notionalHIU";
 const NOTIONAL_HP: &str = "notional_HP";
-const NOTIONAL_BATH_NAME: &str = "medium";
-const NOTIONAL_SHOWER_NAME: &str = "mixer";
-const NOTIONAL_OTHER_HW_NAME: &str = "other";
 const HEATING_PATTERN: &str = "HeatingPattern_Null";
+const _NOTIONAL_HEAT_NETWORK_NAME: &str = "_notional_heat_network";
 
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
@@ -91,7 +89,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     edit_thermal_bridging(input)?;
 
     // modify bath, shower and other dhw characteristics
-    edit_bath_shower_other(input, cold_water_source)?;
+    edit_bath_shower_other(input)?;
 
     // add WWHRS if needed (and remove any existing systems)
     remove_wwhrs_if_present(input)?;
@@ -945,33 +943,52 @@ fn edit_heatnetwork_space_heating_distribution_system(
 
     Ok(())
 }
-fn edit_bath_shower_other(
-    input: &mut InputForProcessing,
-    cold_water_source_type: ColdWaterSourceType,
-) -> anyhow::Result<()> {
-    // Define Bath, Shower, and Other DHW outlet
-    let notional_bath = json!({ NOTIONAL_BATH_NAME: {
-            "ColdWaterSource": cold_water_source_type,
-            "flowrate": 12,
-            "size": STANDARD_BATH_SIZE
+fn edit_bath_shower_other(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    // Bath - standardize flowrate and size
+    let notional_bath_flowrate = 12.0; // l/min
+    if let Some(baths) = input.baths_mut()? {
+        for bath in baths.values_mut() {
+            bath.as_object_mut()
+                .ok_or_else(|| json_error("Bath was not an object"))?
+                .extend([
+                    ("flowrate".into(), notional_bath_flowrate.into()),
+                    ("size".into(), STANDARD_BATH_SIZE.into()),
+                ]);
         }
-    });
-    input.set_bath(notional_bath)?;
+    };
 
-    let notional_shower = json!({ NOTIONAL_SHOWER_NAME: {
-            "ColdWaterSource": cold_water_source_type,
-            "flowrate": 8,
-            "type": "MixerShower"
-        }
-    });
-    input.set_shower(notional_shower)?;
+    // Shower - convert InstantElecShowers to MixerShowers, and standardize flowrate
+    let notional_shower_flowrate = 8.; // l/min
+    if let Some(shower_values) = input.shower_values_mut()? {
+        for shower in shower_values {
+            let shower = shower
+                .as_object_mut()
+                .ok_or_else(|| json_error("Shower was not an object"))?;
 
-    let notional_other_hw = json!({ NOTIONAL_OTHER_HW_NAME: {
-            "ColdWaterSource": cold_water_source_type,
-            "flowrate": 6,
+            if shower
+                .get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| t == "InstantElecShower")
+            {
+                shower.shift_remove("rated_power");
+                shower.shift_remove("EnergySupply");
+                shower.insert("type".into(), "MixerShower".into());
+            }
+
+            shower.insert("flowrate".into(), notional_shower_flowrate.into());
         }
-    });
-    input.set_other_water_use(notional_other_hw)?;
+    }
+
+    // Other - standardize flowrate
+    let notional_other_flowrate = 6.0; // l/min
+    if let Some(other_water_uses) = input.other_water_uses_mut()? {
+        for other in other_water_uses.values_mut() {
+            other
+                .as_object_mut()
+                .ok_or_else(|| json_error("Other water use was not an object"))?
+                .insert("flowrate".into(), notional_other_flowrate.into());
+        }
+    }
 
     Ok(())
 }
@@ -1094,11 +1111,7 @@ fn calc_daily_hw_demand(
     create_hot_water_use_pattern(input, number_of_occupants, &cold_water_feed_temps)?;
     let sim_timestep = simtime.step;
     let total_timesteps = simtime.total_steps();
-    let event_types_names_list = [
-        ("Shower", NOTIONAL_SHOWER_NAME),
-        ("Bath", NOTIONAL_BATH_NAME),
-        ("Other", NOTIONAL_OTHER_HW_NAME),
-    ];
+    let event_types_names_list = [("Shower", "TODO"), ("Bath", "TODO"), ("Other", "TODO")];
 
     // Initialize a single schedule dictionary
     let mut event_schedules: Vec<Option<Vec<TypedScheduleEvent>>> = vec![None; total_timesteps];
@@ -1857,48 +1870,162 @@ mod tests {
     }
 
     #[rstest]
-    fn test_edit_bath_shower_other(mut test_input: InputForProcessing) {
-        // this is the only cold water source type in the test input JSON file
-        let cold_water_source_type = ColdWaterSourceType::MainsWater;
-        let cold_water_source_type_string = "mains water";
+    fn test_edit_bath_shower_other_with_no_shower(mut test_input: InputForProcessing) {
+        // Given a building with no shower
+        test_input.input["HotWaterDemand"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Shower");
 
-        edit_bath_shower_other(&mut test_input, cold_water_source_type).unwrap();
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
 
-        let expected_baths = json!({ "medium": {
-            "ColdWaterSource": cold_water_source_type_string,
-            "flowrate": 12,
-            "size": 180.
-        }})
-        .as_object()
-        .unwrap()
-        .clone();
+        // Then no notional shower is created
+        assert!(test_input.input["HotWaterDemand"].get("Shower").is_none());
+    }
 
-        let expected_showers = json!({"mixer": {
-            "ColdWaterSource": cold_water_source_type_string,
-            "flowrate": 8,
-            "type": "MixerShower"
-        }})
-        .as_object()
-        .unwrap()
-        .clone();
+    #[rstest]
+    fn test_edit_bath_shower_other_with_no_bath(mut test_input: InputForProcessing) {
+        // Given a building with no bath
+        test_input.input["HotWaterDemand"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Bath");
 
-        let expected_other = json!({"other": {
-            "ColdWaterSource": cold_water_source_type_string,
-            "flowrate": 6,
-        }})
-        .as_object()
-        .unwrap()
-        .clone();
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
 
-        assert_eq!(test_input.baths().unwrap().unwrap().clone(), expected_baths);
+        // Then no notional bath is created
+        assert!(test_input.input["HotWaterDemand"].get("Bath").is_none());
+    }
+
+    #[rstest]
+    fn test_edit_bath_shower_other_converts_instant_elec_shower(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given an actual building with multiple Instant Electric Showers
+        test_input.input["HotWaterDemand"]["Shower"] = json!({
+            "main": {
+                "type": "InstantElecShower",
+                "rated_power": 9.0,
+                "ColdWaterSource": "mains water",
+                "EnergySupply": "mains elec",
+            },
+            "ensuite": {
+                "type": "InstantElecShower",
+                "rated_power": 12.0,
+                "ColdWaterSource": "mains water",
+                "EnergySupply": "mains elec",
+            }
+        });
+
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
+
+        // Then the showers are converted to a MixerShower with the standard
+        // flowrate of 8.0 l/min
+        let notional_shower_flowrate = 8.;
+        let expected_shower = json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": notional_shower_flowrate,
+                "ColdWaterSource": "mains water",
+            },
+            "ensuite": {
+                "type": "MixerShower",
+                "flowrate": notional_shower_flowrate,
+                "ColdWaterSource": "mains water",
+            },
+        });
+
         assert_eq!(
-            test_input.showers().unwrap().unwrap().clone(),
-            expected_showers
+            test_input.input["HotWaterDemand"]["Shower"],
+            expected_shower
         );
+    }
+
+    #[rstest]
+    fn test_edit_bath_shower_other_standardises_shower_flowrate(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given an actual building with multiple MixerShowers with non-standard flowrates
+        test_input.input["HotWaterDemand"]["Shower"] = json!({"main": {"type": "MixerShower", "flowrate": 14.0, "ColdWaterSource": "mains water"},
+            "ensuite": {"type": "MixerShower", "flowrate": 13.0, "ColdWaterSource": "mains water"},
+        });
+
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
+
+        // Then the showers are updated to have a flowrate of 8.0 l/min
+        let notional_shower_flowrate = 8.;
+        let expected_shower = json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": notional_shower_flowrate,
+                "ColdWaterSource": "mains water",
+            },
+            "ensuite": {
+                "type": "MixerShower",
+                "flowrate": notional_shower_flowrate,
+                "ColdWaterSource": "mains water",
+            },
+        });
+
         assert_eq!(
-            test_input.other_water_uses().unwrap().unwrap().clone(),
-            expected_other
+            test_input.input["HotWaterDemand"]["Shower"],
+            expected_shower
         );
+    }
+
+    #[rstest]
+    fn test_edit_bath_shower_other_standardises_other_flowrate(mut test_input: InputForProcessing) {
+        // Given an actual building with other hot water demand with non-standard flowrates
+        test_input.input["HotWaterDemand"]["Other"] = json!({"kitchen": {"ColdWaterSource": "mains water", "flowrate": 15.0},
+            "utility": {"ColdWaterSource": "mains water", "flowrate": 8.0},});
+
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
+
+        // Then the flowrate of each object is set to a standard value of 6.0 l/min
+        let notional_other_flowrate = 6.;
+        let expected_other = json!({
+            "kitchen": {"ColdWaterSource": "mains water", "flowrate": notional_other_flowrate},
+            "utility": {"ColdWaterSource": "mains water", "flowrate": notional_other_flowrate},
+        });
+
+        assert_eq!(test_input.input["HotWaterDemand"]["Other"], expected_other);
+    }
+
+    #[rstest]
+    fn test_edit_bath_shower_other_standardises_bath_size_and_flowrate(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given an actual building with baths with non-standard sizes and flowrates
+        test_input.input["HotWaterDemand"]["Bath"] = json!({
+            "main": {"ColdWaterSource": "mains water", "flowrate": 15.0, "size": 200.0},
+            "ensuite": {"ColdWaterSource": "mains water", "flowrate": 8.0, "size": 150.0},
+        });
+
+        // When the corresponding notional building is created
+        edit_bath_shower_other(&mut test_input).unwrap();
+
+        // Then the baths are set to a size of 180mm and a flowrate of 12.0 l/min
+        let notional_bath_flowrate = 12.;
+        let notional_bath_size = 180.;
+        let expected_bath = json!({
+            "main": {
+                "ColdWaterSource": "mains water",
+                "flowrate": notional_bath_flowrate,
+                "size": notional_bath_size,
+            },
+            "ensuite": {
+                "ColdWaterSource": "mains water",
+                "flowrate": notional_bath_flowrate,
+                "size": notional_bath_size,
+            },
+        });
+
+        assert_eq!(test_input.input["HotWaterDemand"]["Bath"], expected_bath);
     }
 
     // this test does not exist in Python HEM
@@ -2044,7 +2171,7 @@ mod tests {
         let total_floor_area = calc_tfa(&test_input).unwrap();
 
         // Add notional objects that affect HW demand calc
-        edit_bath_shower_other(&mut test_input, cold_water_source_type).unwrap();
+        edit_bath_shower_other(&mut test_input).unwrap();
 
         let daily_hwd =
             calc_daily_hw_demand(&mut test_input, total_floor_area, cold_water_source_type);
