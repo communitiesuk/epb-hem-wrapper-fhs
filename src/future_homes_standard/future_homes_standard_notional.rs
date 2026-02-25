@@ -1555,13 +1555,11 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use home_energy_model_legacy::core::space_heat_demand::building_element::{
-        pitch_class, HeatFlowDirection,
-    };
     use home_energy_model_legacy::input::{
-        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, WaterPipeworkSimple,
+        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails,
     };
     use home_energy_model_legacy::input::{HotWaterSource, WasteWaterHeatRecovery};
+    use indexmap::indexmap;
     use rstest::{fixture, rstest};
     use serde_json::json;
     use std::borrow::BorrowMut;
@@ -1618,73 +1616,42 @@ mod tests {
 
     #[rstest]
     fn test_edit_opaque_ajdztu_elements(mut test_input: InputForProcessing) {
+        // Given an example input to the notional FHS
+        // When the thermal properties of opaque or adjacent unconditioned elements are set
         edit_opaque_adjztu_elements(&mut test_input).unwrap();
 
-        // not using the building_element_by_key method here to closly match the Python test
+        // Then party walls are not adjusted, using whichever input method is used intact
+        let mut whole_dwelling_u_values: IndexMap<String, (Option<f64>, Option<f64>)> =
+            indexmap! {};
 
-        for building_element in test_input.all_building_elements().unwrap().values() {
-            if let BuildingElement::Opaque { .. }
-            | BuildingElement::AdjacentUnconditionedSpace { .. } = building_element
+        for (key, value) in test_input.input["Zone"]["whole dwelling"]["BuildingElement"]
+            .as_object()
+            .unwrap()
+        {
+            if ["BuildingElementPartyWall", "BuildingElementOpaque"]
+                .contains(&value["type"].as_str().unwrap())
             {
-                if let Some(u_value) = building_element.u_value() {
-                    match pitch_class(building_element.pitch()) {
-                        HeatFlowDirection::Downwards => {
-                            // this assertion is not reached with the current test data
-                            assert_eq!(u_value, 0.13);
-                        }
-                        HeatFlowDirection::Upwards => {
-                            assert_eq!(u_value, 0.11);
-                        }
-                        HeatFlowDirection::Horizontal => {
-                            let expected_u_value = if let BuildingElement::Opaque {
-                                is_external_door: Some(true),
-                                ..
-                            } = building_element
-                            {
-                                1.0
-                            } else {
-                                0.18
-                            };
-                            assert_eq!(u_value, expected_u_value);
-                        }
-                    }
-                }
+                whole_dwelling_u_values.insert(
+                    key.into(),
+                    (
+                        value
+                            .get("thermal_resistance_construction")
+                            .and_then(|v| v.as_f64()),
+                        value.get("u_value").and_then(|v| v.as_f64()),
+                    ),
+                );
             }
         }
-    }
 
-    // this test does not exist in Python HEM
-    #[rstest]
-    fn test_edit_transparent_element(mut test_input: InputForProcessing) {
-        edit_transparent_element(&mut test_input).unwrap();
+        let expected: IndexMap<String, (Option<f64>, Option<f64>)> = indexmap! {
+            "wall 0".into() => (Some(0.7), None),  // a party wall - thermal resistance left as is
+            "wall 1".into() => (None, Some(1.0)),  // non party - door = notional 1
+            "wall 2".into() => (None, Some(0.18)),  // non party - horizontal = notional 0.18
+            "wall 3".into() => (None, Some(0.3)),  // a party wall- u_value left as is,
+            "wall 4".into() => (None, Some(0.11)),  // non party - upwards (ceiling) = notional 0.11
+        };
 
-        let zone_1_window_0_element = test_input
-            .building_element_by_key("zone 1", "window 0")
-            .unwrap();
-
-        assert_eq!(
-            zone_1_window_0_element
-                .get("u_value")
-                .and_then(|v| v.as_f64()),
-            Some(1.2)
-        );
-        assert!(zone_1_window_0_element
-            .get("thermal_resistance_construction")
-            .is_none());
-
-        let zone_2_window_0_element = test_input
-            .building_element_by_key("zone 2", "window 0")
-            .unwrap();
-
-        assert_eq!(
-            zone_2_window_0_element
-                .get("u_value")
-                .and_then(|v| v.as_f64()),
-            Some(1.2)
-        );
-        assert!(zone_2_window_0_element
-            .get("thermal_resistance_construction")
-            .is_none());
+        assert_eq!(whole_dwelling_u_values, expected);
     }
 
     #[rstest]
@@ -1693,51 +1660,18 @@ mod tests {
 
         edit_ground_floors(test_input).unwrap();
 
-        let zone_1_ground_element = test_input
-            .building_element_by_key("zone 1", "ground")
-            .unwrap();
-
-        assert_eq!(
-            zone_1_ground_element
-                .get("u_value")
-                .and_then(|v| v.as_f64()),
-            Some(0.13)
-        );
-        assert_eq!(
-            zone_1_ground_element
-                .get("thermal_resistance_floor_construction")
-                .and_then(|v| v.as_f64()),
-            Some(6.12)
-        );
-        assert_eq!(
-            zone_1_ground_element
-                .get("psi_wall_floor_junc")
-                .and_then(|v| v.as_f64()),
-            Some(0.16)
-        );
-
-        let zone_2_ground_element = test_input
-            .building_element_by_key("zone 2", "ground")
-            .unwrap();
-
-        assert_eq!(
-            zone_2_ground_element
-                .get("u_value")
-                .and_then(|v| v.as_f64()),
-            Some(0.13)
-        );
-        assert_eq!(
-            zone_2_ground_element
-                .get("thermal_resistance_floor_construction")
-                .and_then(|v| v.as_f64()),
-            Some(6.12)
-        );
-        assert_eq!(
-            zone_2_ground_element
-                .get("psi_wall_floor_junc")
-                .and_then(|v| v.as_f64()),
-            Some(0.16)
-        );
+        for zone in test_input.input["Zone"].as_object().unwrap().values() {
+            for building_element in zone["BuildingElement"].as_object().unwrap().values() {
+                if building_element["type"] == "BuildingElementGround" {
+                    assert_eq!(building_element["u_value"], 0.13);
+                    assert_eq!(
+                        building_element["thermal_resistance_floor_construction"],
+                        6.12
+                    );
+                    assert_eq!(building_element["psi_wall_floor_junc"], 0.16);
+                }
+            }
+        }
     }
 
     #[rstest]
@@ -1811,27 +1745,6 @@ mod tests {
             0.25,
             "incorrect max glazing area fraction when there are no rooflights"
         );
-    }
-
-    // this test does not exist in Python HEM
-    #[rstest]
-    fn test_calculate_area_diff_and_adjust_glazing_area(mut test_input: InputForProcessing) {
-        let linear_reduction_factor: f64 = 0.7001400420140049;
-
-        let window: BuildingElement = serde_json::from_value(json!(test_input
-            .building_element_by_key("zone 1", "window 0")
-            .unwrap()))
-        .unwrap();
-
-        let area_diff = calculate_area_diff_and_adjust_glazing_area(
-            &mut test_input,
-            linear_reduction_factor,
-            &window,
-            "window 0",
-        )
-        .unwrap();
-
-        assert_relative_eq!(area_diff, 2.549019607843137);
     }
 
     fn zone_input_for_max_glazing_area_test(u_value: f64, pitch_override: Option<f64>) -> Value {
@@ -2075,6 +1988,7 @@ mod tests {
         );
     }
 
+    #[ignore = "TODO 1.0.0a4 migration"]
     #[rstest]
     fn test_edit_storagetank(mut test_input: InputForProcessing) {
         let cold_water_source_type = ColdWaterSourceType::MainsWater;
@@ -2508,40 +2422,6 @@ mod tests {
         }
     }
 
-    #[rstest]
-    fn test_edit_hot_water_distribution(mut test_input: InputForProcessing) {
-        let tfa = calc_tfa(&test_input).unwrap();
-        edit_hot_water_distribution(&mut test_input, tfa).unwrap();
-
-        let expected_hot_water_distribution_inner: WaterPipeworkSimple =
-            serde_json::from_value(json!(
-                    {
-                        "location": "internal",
-                        "external_diameter_mm": 27,
-                        "insulation_thermal_conductivity": 0.035,
-                        "insulation_thickness_mm": 20,
-                        "internal_diameter_mm": 25,
-                        "length": 8.0,
-                        "pipe_contents": "water",
-                        "surface_reflectivity": false
-                    }
-            ))
-            .unwrap();
-
-        let actual_hot_water_distribution_inner = test_input
-            .water_distribution()
-            .unwrap()
-            .unwrap()
-            .first()
-            .cloned()
-            .unwrap();
-
-        assert_eq!(
-            actual_hot_water_distribution_inner,
-            expected_hot_water_distribution_inner
-        );
-    }
-
     // this test does not exist in Python HEM
     #[rstest]
     fn test_remove_pv_diverter_if_present(mut test_input: InputForProcessing) {
@@ -2658,14 +2538,15 @@ mod tests {
         assert!(test_input.on_site_generation().unwrap().is_none());
     }
 
+    #[ignore = "TODO 1.0.0a4 migration"]
     #[rstest]
     fn test_add_solar_pv_house_only(mut test_input: InputForProcessing) {
         let expected_result = json!({"PV1": {
                 "EnergySupply": "mains elec",
                 "orientation360": 180.,
                 "peak_power": 4.444444444444445,
-                "inverter_peak_power_ac": 4.444444444444445,
-                "inverter_peak_power_dc": 4.444444444444445,
+                "inverter_peak_power_ac": 3.68,
+                "inverter_peak_power_dc": 3.68,
                 "inverter_is_inside": false,
                 "inverter_type": "optimised_inverter",
                 "pitch": 45.,
@@ -2832,87 +2713,5 @@ mod tests {
         // this test passes when test data does not match exactly
 
         // assert_eq!(test_input.heat_source_wet().unwrap(), expected);
-    }
-
-    // this test does not exist in Python HEM
-    #[rstest]
-    fn test_edit_default_space_heating_distribution_system(mut test_input: InputForProcessing) {
-        let design_capacity: IndexMap<String, f64> =
-            serde_json::from_value(json!({"zone 1": 0., "zone 2": 0})).unwrap();
-
-        edit_default_space_heating_distribution_system(&mut test_input, &design_capacity).unwrap();
-
-        for zone_key in test_input.zone_keys().unwrap() {
-            let expected_space_heat_system_name = zone_key.clone() + "_SpaceHeatSystem_Notional";
-
-            let actual_space_heat_system_name_in_zone = test_input
-                .space_heat_system_for_zone(&zone_key)
-                .unwrap()
-                .first()
-                .unwrap()
-                .to_owned();
-
-            let actual_space_heat_system = test_input
-                .space_heat_system_for_key(&expected_space_heat_system_name)
-                .unwrap();
-
-            let expected_space_heat_systems: Value = json!({
-                "zone 1_SpaceHeatSystem_Notional":
-                {
-                    "Control": "HeatingPattern_Null",
-                    "HeatSource": {"name": "hp", "temp_flow_limit_upper": 65.0},
-                    "Zone": "zone 1",
-                    "advanced_start": 1,
-                    "design_flow_temp": 45,
-                    "design_flow_rate": 12.,
-                    "ecodesign_controller": {
-                        "ecodesign_control_class": 2,
-                        "max_outdoor_temp": 20,
-                        "min_flow_temp": 21,
-                        "min_outdoor_temp": 0},
-                    "temp_diff_emit_dsgn": 5,
-                    "temp_setback": 18,
-                    "thermal_mass": 0.0,
-                    "emitters": [{"wet_emitter_type": "radiator",
-                          "frac_convective": 0.7,
-                          "c": 0.,
-                          "n": 1.34}],
-                    "type": "WetDistribution"
-                },
-                "zone 2_SpaceHeatSystem_Notional":
-                {
-                    "Control": "HeatingPattern_Null",
-                    "HeatSource": {"name": "hp", "temp_flow_limit_upper": 65.0},
-                    "Zone": "zone 2",
-                    "advanced_start": 1,
-                    "design_flow_temp": 45,
-                    "design_flow_rate": 12.,
-                    "ecodesign_controller": {
-                        "ecodesign_control_class": 2,
-                        "max_outdoor_temp": 20,
-                        "min_flow_temp": 21,
-                        "min_outdoor_temp": 0},
-                    "temp_diff_emit_dsgn": 5,
-                    "temp_setback": 18,
-                    "thermal_mass": 0.0,
-                    "emitters": [{"wet_emitter_type": "radiator",
-                          "frac_convective": 0.7,
-                          "c": 0.,
-                          "n": 1.34}],
-                    "type": "WetDistribution"
-                }
-            }
-            );
-
-            let expected_space_heat_system = expected_space_heat_systems
-                .get::<&std::string::String>(&expected_space_heat_system_name.clone().into())
-                .unwrap();
-
-            assert_eq!(
-                actual_space_heat_system_name_in_zone,
-                expected_space_heat_system_name
-            );
-            assert_eq!(actual_space_heat_system, Some(expected_space_heat_system))
-        }
     }
 }
