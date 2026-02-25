@@ -2743,18 +2743,16 @@ fn check_shower_flowrate(input: &InputForProcessing) -> anyhow::Result<()> {
     let min_flowrate = 8.0;
 
     for (name, (flowrate, allow_low_flowrate)) in input.shower_flowrates()? {
-        match (flowrate, allow_low_flowrate) {
-            (Some(flowrate), _) => {
-                let allow_low_flowrate = allow_low_flowrate.unwrap_or(false);
-                if !allow_low_flowrate && flowrate < min_flowrate {
-                    // only currently known shower name that can have a flowrate is "mixer"
-                    bail!("Invalid flow rate: {flowrate} litres per minute in shower with name '{name}'");
-                }
+        if let (Some(flowrate), _) = (flowrate, allow_low_flowrate) {
+            let allow_low_flowrate = allow_low_flowrate.unwrap_or(false);
+            if !allow_low_flowrate && flowrate < min_flowrate {
+                // only currently known shower name that can have a flowrate is "mixer"
+                bail!(
+                    "Invalid flow rate: {flowrate} litres per minute in shower with name '{name}'"
+                );
             }
-            _ => {}
         }
     }
-
     Ok(())
 }
 
