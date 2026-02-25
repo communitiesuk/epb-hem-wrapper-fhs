@@ -493,6 +493,12 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub(crate) fn set_area_for_zone(&mut self, zone: &str, area: f64) -> JsonAccessResult<&Self> {
+        self.specific_zone_mut(zone)?
+            .insert("area".into(), json!(area));
+        Ok(self)
+    }
+
     pub fn space_heat_control_for_zone(
         &self,
         zone: &str,

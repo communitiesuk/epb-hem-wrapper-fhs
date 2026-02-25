@@ -3672,6 +3672,26 @@ pub(super) fn create_cold_water_feed_temps(
     Ok(output_feed_temp)
 }
 
+/// Add an area property to each zone
+/// Assumes the presence of livingroom_area and restofdwelling_area properties in
+/// each project_dict.Zone[<zone_name>] (as required by the FHS schema),
+/// and sets/creates project_dict.Zone[<zone_name>]["area"] (as required by the
+/// hem_core schema) with a value equal to the sum of those two component areas.
+///
+/// Args:
+/// * `project_dict` (dict) - The main project dictionary where results are stored.
+///
+/// Effects:
+/// * Modifies the project_dict in-place by setting the zone area property.
+pub(super) fn create_zone_area(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for zone in input.zone_keys()? {
+        let living_room_area = input.living_room_area_for_zone(&zone)?;
+        let rest_of_dwelling_area = input.rest_of_dwelling_area_for_zone(&zone)?;
+        input.set_area_for_zone(&zone, living_room_area + rest_of_dwelling_area)?;
+    }
+    Ok(())
+}
+
 fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow::Result<Vec<f64>> {
     let mut total_area = vec![0.; simtime().total_steps()];
 
@@ -4616,5 +4636,15 @@ mod tests {
         // When calc_zone_setpoint_fhs() is called
         // Then an exception is raised
         assert!(calc_zone_setpoint_fhs(&input, "whole dwelling").is_err());
+    }
+
+    #[rstest]
+    fn test_create_zone_area_adds_area_property(mut input: InputForProcessing) {
+        // Given a project with a single whole dwelling zone with a livingroom_area
+        // and restofdwelling_area totalling 125
+        // When create_zone_area() is called        input.input["Zone"]["whole dwelling"]["livingroom_area"] = json!(0.);
+        create_zone_area(&mut input).unwrap();
+        // Then an area property is added with the expected value
+        assert!(input.input["Zone"]["whole dwelling"].get("area").is_some())
     }
 }
