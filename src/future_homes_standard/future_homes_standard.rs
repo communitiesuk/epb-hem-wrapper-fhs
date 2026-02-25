@@ -4566,4 +4566,24 @@ mod tests {
         assert!(calc_n_occupants(0., 1).is_err());
         assert!(calc_n_occupants(-1., 1).is_err());
     }
+
+    #[rstest]
+    fn test_calc_tfa(mut input: InputForProcessing) {
+        // Given a project with a zone area inferred property, and lacking
+        // the livingroom_area and restofdwelling_area properties
+        input.input["Zone"]["whole dwelling"]["area"] = json!(125.);
+        input.input["Zone"]["whole dwelling"]
+            .as_object_mut()
+            .unwrap()
+            .remove_entry("livingroom_area");
+        input.input["Zone"]["whole dwelling"]
+            .as_object_mut()
+            .unwrap()
+            .remove_entry("restofdwelling_area");
+        // When calc_TFA() is called
+        let total_floor_area = calc_tfa(&input).unwrap();
+        // Then it returns the total floor area
+        let expected_total_floor_area = 125.;
+        assert_relative_eq!(total_floor_area, expected_total_floor_area);
+    }
 }
