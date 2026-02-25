@@ -965,7 +965,9 @@ impl InputForProcessing {
             .into())
     }
 
-    pub fn shower_flowrates(&self) -> JsonAccessResult<IndexMap<smartstring::alias::String, f64>> {
+    pub(crate) fn shower_flowrates(
+        &self,
+    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, (Option<f64>, Option<bool>)>> {
         let showers = match self
             .hot_water_demand()?
             .get("Shower")
@@ -978,10 +980,12 @@ impl InputForProcessing {
         Ok(showers
             .iter()
             .filter_map(|(name, shower)| {
-                shower
-                    .get("flowrate")
-                    .and_then(|s| s.as_f64())
-                    .map(|flow_rate| (smartstring::alias::String::from(name), flow_rate))
+                let flowrate = shower.get("flowrate").and_then(|f| f.as_f64());
+                let allow_low_flowrate = shower.get("allow_low_flowrate").and_then(|a| a.as_bool());
+                Some((
+                    smartstring::alias::String::from(name),
+                    (flowrate, allow_low_flowrate),
+                ))
             })
             .collect())
     }

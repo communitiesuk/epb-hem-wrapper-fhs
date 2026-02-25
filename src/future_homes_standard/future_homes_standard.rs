@@ -2731,10 +2731,16 @@ fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow:
 fn check_shower_flowrate(input: &InputForProcessing) -> anyhow::Result<()> {
     let min_flowrate = 8.0;
 
-    for (name, flowrate) in input.shower_flowrates()? {
-        if flowrate < min_flowrate {
-            // only currently known shower name that can have a flowrate is "mixer"
-            bail!("Invalid flow rate: {flowrate} litres per minute in shower with name '{name}'");
+    for (name, (flowrate, allow_low_flowrate)) in input.shower_flowrates()? {
+        match (flowrate, allow_low_flowrate) {
+            (Some(flowrate), _) => {
+                let allow_low_flowrate = allow_low_flowrate.unwrap_or(false);
+                if !allow_low_flowrate && flowrate < min_flowrate {
+                    // only currently known shower name that can have a flowrate is "mixer"
+                    bail!("Invalid flow rate: {flowrate} litres per minute in shower with name '{name}'");
+                }
+            }
+            _ => {}
         }
     }
 
@@ -4443,31 +4449,79 @@ mod tests {
     use approx::assert_relative_eq;
     use rstest::*;
 
-    #[ignore = "useless test reported up to BRE"]
-    // remove following lint escape once test is made good
-    #[allow(clippy::assertions_on_constants)]
-    #[allow(clippy::nonminimal_bool)]
-    #[rstest]
-    fn test_check_invalid_shower_flowrate() {
-        assert!(!false);
+    #[fixture]
+    fn input() -> InputForProcessing {
+        let input = json!({
+            "HotWaterDemand": {
+                "Shower": {
+                    "mixer": {
+                        "type": "MixerShower",
+                        "flowrate": 0,
+                        "ColdWaterSource": "mains water",
+                    },
+                    "IES": {
+                        "type": "InstantElecShower",
+                        "rated_power": 9.0,
+                        "ColdWaterSource": "mains water",
+                        "EnergySupply": "mains elec",
+                    },
+                }
+            },
+            "Zone": {
+                "whole dwelling": {
+                    "livingroom_area": 25.0,
+                    "restofdwelling_area": 100.0,
+                    "volume": 250.0,
+                    "Lighting": {"bulbs": [{"count": 10, "power": 3, "efficacy": 150}]},
+                    "BuildingElement": {
+                        "roof": {
+                            "type": "BuildingElementOpaque",
+                            "is_unheated_pitched_roof": true,
+                            "colour": "Intermediate",
+                            "thermal_resistance_construction": 0.7,
+                            "areal_heat_capacity": "Very light",
+                            "mass_distribution_class": "IE: Mass divided over internal and external side",  // noqa: E501
+                            "pitch": 45,
+                            "orientation360": 90,
+                            "base_height": 2.5,
+                            "height": 2.5,
+                            "width": 10,
+                            "area": 20.0,
+                        }
+                    },
+                    "ThermalBridging": {},
+                }
+            }
+        });
+
+        InputForProcessing { input }
     }
 
-    #[ignore = "useless test reported up to BRE"]
-    // remove following lint escape once test is made good
-    #[allow(clippy::assertions_on_constants)]
     #[rstest]
-    fn test_check_valid_shower_flowrate() {
-        assert!(true);
+    fn test_check_invalid_shower_flowrate(mut input: InputForProcessing) {
+        input.input["HotWaterDemand"]["Shower"]["mixer"]["flowrate"] = json!(7.);
+        let result = check_shower_flowrate(&input);
+        assert!(result.is_err());
+        let errror = result.unwrap_err().to_string();
+        assert_eq!(
+            errror,
+            "Invalid flow rate: 7 litres per minute in shower with name 'mixer'"
+        )
     }
 
-    #[ignore = "useless test reported up to BRE"]
-    // remove following lint escape once test is made good
-    #[allow(clippy::assertions_on_constants)]
     #[rstest]
-    fn test_check_minimum_shower_flowrate() {
-        assert!(true);
+    fn test_check_valid_shower_flowrate(mut input: InputForProcessing) {
+        input.input["HotWaterDemand"]["Shower"]["mixer"]["flowrate"] = json!(10.);
+        let valid_flowrate = check_shower_flowrate(&input);
+        assert!(valid_flowrate.is_ok());
     }
 
+    #[rstest]
+    fn test_check_minimum_shower_flowrate(mut input: InputForProcessing) {
+        input.input["HotWaterDemand"]["Shower"]["mixer"]["flowrate"] = json!(8.);
+        let valid_flowrate = check_shower_flowrate(&input);
+        assert!(valid_flowrate.is_ok());
+    }
     #[rstest]
     fn test_calc_1_occupant() {
         // test with on occupant and a range of floor areas
