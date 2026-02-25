@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::cmp::PartialEq;
 
 #[derive(Deserialize, PartialEq)]
-enum HeatNetworkType {
+pub(crate) enum HeatNetworkType {
     #[serde(rename = "sleeved DHN")]
     SleevedDhn,
     #[serde(rename = "unsleeved DHN")]

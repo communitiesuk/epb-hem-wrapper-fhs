@@ -5,6 +5,7 @@ use super::future_homes_standard::{
     REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END, SIMTIME_START, SIMTIME_STEP,
 };
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
+use crate::future_homes_standard::fhs_sleeved_dhn_validation::HeatNetworkType;
 use crate::future_homes_standard::input::{
     json_error, InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
     UValueEditableBuildingElementJsonValue,
@@ -57,7 +58,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     let is_notional_a = fhs_notional_a_assumptions || fhs_fee_notional_a_assumptions;
     let is_fee = fhs_fee_notional_a_assumptions || fhs_fee_notional_b_assumptions;
     // Check if a heat network is present
-    let is_heat_network = check_heatnetwork_present(input)?;
+    let heat_network_type = check_heatnetwork_status(input)?;
 
     // Determine cold water source
     let cold_water_source = input.cold_water_source()?;
@@ -115,7 +116,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         input,
         cold_water_source,
         total_floor_area,
-        is_heat_network,
+        heat_network_type,
         is_fee,
     )?;
 
@@ -128,18 +129,13 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     Ok(())
 }
 
-fn check_heatnetwork_present(_input: &InputForProcessing) -> anyhow::Result<bool> {
-    // Ok(input.heat_source_wet()?.values().any(|source| {
-    //     matches!(
-    //         source,
-    //         HeatSourceWetDetails::Hiu { .. }
-    //             | HeatSourceWetDetails::HeatPump {
-    //                 source_type: HeatPumpSourceType::HeatNetwork,
-    //                 ..
-    //             }
-    //     )
-    // }))
-    Ok(Default::default()) //TODO 1.0.0a4 migration
+fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option<HeatNetworkType>> {
+    Ok(input.heat_source_wet()?.values().find_map(|source| {
+        source
+            .get("heat_network_type")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        // TODO review 1.0.0a4, should this return enum variant or string, if string value doesn't convert to enum - add error?
+    }))
 }
 
 /// Apply notional lighting efficacy
@@ -1374,14 +1370,15 @@ fn edit_space_heating_system(
     input: &mut InputForProcessing,
     cold_water_source: ColdWaterSourceType,
     total_floor_area: f64,
-    is_heat_network: bool,
+    heat_network_type: Option<HeatNetworkType>,
     is_fee: bool,
 ) -> anyhow::Result<()> {
     // FEE calculation which doesn't need the space heating system at this stage.
     if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
-        if is_heat_network {
+        if heat_network_type.is_some() {
+            // TODO 1.0.0a4 update this condition
             edit_add_heatnetwork_heating(input, cold_water_source)?;
             edit_heatnetwork_space_heating_distribution_system(input)?;
         } else {
@@ -1605,12 +1602,6 @@ mod tests {
             fhs_fee_notional_b_assumptions,
         );
         assert!(actual.is_ok())
-    }
-
-    #[rstest]
-    // this test does not exist in Python HEM
-    fn test_check_heatnetwork_present(test_input: InputForProcessing) {
-        assert!(!check_heatnetwork_present(&test_input).unwrap());
     }
 
     #[rstest]
