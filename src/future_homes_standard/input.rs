@@ -244,6 +244,32 @@ impl InputForProcessing {
             .ok_or(json_error("Area number could not be read as a number"))?)
     }
 
+    pub(crate) fn living_room_area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {
+        Ok(self
+            .zone_node()?
+            .get(zone)
+            .ok_or(anyhow!("Used zone key for a zone that does not exist"))?
+            .get("livingroom_area")
+            .ok_or(json_error("Living room area not found on zone"))?
+            .as_f64()
+            .ok_or(json_error(
+                "Living room area number could not be read as a number",
+            ))?)
+    }
+
+    pub(crate) fn rest_of_dwelling_area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {
+        Ok(self
+            .zone_node()?
+            .get(zone)
+            .ok_or(anyhow!("Used zone key for a zone that does not exist"))?
+            .get("restofdwelling_area")
+            .ok_or(json_error("Rest of dwelling area not found on zone"))?
+            .as_f64()
+            .ok_or(json_error(
+                "Rest of dwelling area number could not be read as a number",
+            ))?)
+    }
+
     #[cfg(test)]
     pub(crate) fn all_thermal_bridgings(&self) -> JsonAccessResult<Vec<&JsonValue>> {
         Ok(self

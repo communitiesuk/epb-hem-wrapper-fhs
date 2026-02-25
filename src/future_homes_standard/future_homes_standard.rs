@@ -783,6 +783,17 @@ fn create_metabolic_gains(
     Ok(())
 }
 
+fn calc_zone_setpoint_fhs(input: &InputForProcessing, zone_name: &str) -> anyhow::Result<f64> {
+    let living_room_area = input.living_room_area_for_zone(zone_name)?;
+    let rest_of_dwelling_area = input.rest_of_dwelling_area_for_zone(zone_name)?;
+    if living_room_area + rest_of_dwelling_area == 0. {
+        bail!("Sum of living room area and rest of dwelling area must be greater than 0");
+    }
+    Ok((LIVING_ROOM_SETPOINT_FHS * living_room_area
+        + REST_OF_DWELLING_SETPOINT_FHS * rest_of_dwelling_area)
+        / (living_room_area + rest_of_dwelling_area))
+}
+
 fn load_metabolic_gains_profile(file: impl Read) -> anyhow::Result<([f64; 48], [f64; 48])> {
     let mut metabolic_gains_reader = Reader::from_reader(BufReader::new(file));
     let rows: Vec<DryMetabolicGainsRow> = metabolic_gains_reader
@@ -4585,5 +4596,27 @@ mod tests {
         // Then it returns the total floor area
         let expected_total_floor_area = 125.;
         assert_relative_eq!(total_floor_area, expected_total_floor_area);
+    }
+
+    #[rstest]
+    fn test_calc_zone_setpoint_fhs(input: InputForProcessing) {
+        // Given a zone with a livingroom_area of 40 and a restofdwelling_area of 100
+        // When calc_zone_setpoint_fhs() is called
+        let setpoint_fhs = calc_zone_setpoint_fhs(&input, "whole dwelling").unwrap();
+        // Then it returns the area weighted mean of 21 degC and 20 degC
+        // i.e. (21 * 25 + 20 * 100) / (25 + 100) = 20.2
+        let expected_setpoint_fhs = 20.2;
+        assert_relative_eq!(setpoint_fhs, expected_setpoint_fhs);
+    }
+
+    #[rstest]
+    fn test_calc_zone_setpoint_fhs_zero_area(mut input: InputForProcessing) {
+        // Given a zone with a total area of zero
+        input.input["Zone"]["whole dwelling"]["livingroom_area"] = json!(0.);
+        input.input["Zone"]["whole dwelling"]["restofdwelling_area"] = json!(0.);
+
+        // When calc_zone_setpoint_fhs() is called
+        // Then an exception is raised
+        assert!(calc_zone_setpoint_fhs(&input, "whole dwelling").is_err());
     }
 }
