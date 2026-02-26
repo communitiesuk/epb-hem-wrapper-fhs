@@ -13,7 +13,7 @@ home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-mo
 home-energy-model-legacy = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "separate-fhs", package = "home-energy-model" }
 indexmap = { version = "2.12.1", features = ["serde", "arbitrary"] }
 itertools = "0.14.0"
-jsonschema = "0.37.4"
+jsonschema = "0.42.1"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
 partial_application = "0.2.1"
 rand = "0.9.1"
@@ -26,7 +26,7 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 serde_valid = "2.0.0"
 smartstring = "1.0.1"
-strum = "0.27.1"
+strum = "0.28.0"
 strum_macros = "0.27.0"
 thiserror = "2.0.17"
 tracing = "0.1.43"
