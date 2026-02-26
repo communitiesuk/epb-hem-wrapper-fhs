@@ -3,7 +3,7 @@ use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::input::InputForProcessing;
 use anyhow::anyhow;
 use csv::WriterBuilder;
-use home_energy_model_legacy::output::Output;
+use home_energy_model::output_writer::OutputWriter;
 use serde_json::json;
 
 /// This module provides functions to implement pre- and post-processing
@@ -189,7 +189,7 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
 }
 
 pub fn apply_fhs_fee_postprocessing(
-    output: &impl Output,
+    output_writer: &impl OutputWriter,
     total_floor_area: f64,
     space_heat_demand_total: f64,
     space_cool_demand_total: f64,
@@ -201,7 +201,7 @@ pub fn apply_fhs_fee_postprocessing(
         total_floor_area,
     );
 
-    let writer = output.writer_for_location_key("postproc", "csv")?;
+    let writer = output_writer.writer_for_location_key("postproc", "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record([

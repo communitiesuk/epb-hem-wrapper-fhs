@@ -1,6 +1,6 @@
 use crate::future_homes_standard::input::{json_error, InputForProcessing};
 use anyhow::bail;
-use home_energy_model_legacy::core::space_heat_demand::building_element::{
+use home_energy_model::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
 use serde_json::{json, Map, Value};

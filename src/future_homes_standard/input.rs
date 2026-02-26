@@ -1,20 +1,23 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
+use home_energy_model::core::schedule::NumericSchedule;
+use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    ColdWaterSourceInput, ReducedInputForCalcHtcHlp, WasteWaterHeatRecovery, WaterDistribution,
-    WaterHeatingEvent,
+    ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
+    HeatingControlType, Input, SmartApplianceBattery, SpaceHeatSystemHeatSource,
+    WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent, WaterPipework,
 };
-use home_energy_model_legacy::core::schedule::NumericSchedule;
-use home_energy_model_legacy::input::{
-    ApplianceGainsEvent, BuildingElement, ExternalConditionsInput, HeatingControlType, Input,
-    SmartApplianceBattery, SpaceHeatSystemHeatSource, WaterPipework,
+use home_energy_model::input::{
+    Control, EnergySupplyInput, InfiltrationVentilation, InputForCalcHtcHlp, ZoneDictionary,
 };
-use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as JsonValue};
+use serde_valid::Validate;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
+use std::sync::Arc;
 use thiserror::Error;
 
 pub(crate) fn ingest_for_processing(json: impl Read) -> Result<InputForProcessing, anyhow::Error> {
@@ -453,7 +456,7 @@ impl InputForProcessing {
     pub fn set_non_appliance_demand_24hr_on_smart_appliance_control(
         &mut self,
         smart_control_name: &str,
-        non_appliance_demand_24hr_input: IndexMap<smartstring::alias::String, Vec<f64>>,
+        non_appliance_demand_24hr_input: IndexMap<Arc<str>, Vec<f64>>,
     ) -> JsonAccessResult<&Self> {
         if let Some(ref mut control) = self
             .smart_appliance_controls_mut()?
@@ -2602,6 +2605,52 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
         }
 
         Ok(())
+    }
+}
+
+// The purpose of this struct is to allow deserialisation of an input just containing the data needed for the
+// calc_htc_hlp function in the corpus module, so that we can ignore other areas of the data that may not be in the
+// expected shape for a core input.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[serde(rename_all = "PascalCase")]
+pub struct ReducedInputForCalcHtcHlp {
+    #[serde(rename = "temp_internal_air_static_calcs")]
+    pub(crate) temp_internal_air_static_calcs: f64,
+    pub(crate) simulation_time: SimulationTime,
+    pub(crate) external_conditions: Arc<ExternalConditionsInput>,
+    pub(crate) energy_supply: EnergySupplyInput,
+    pub(crate) control: Control,
+    pub(crate) zone: ZoneDictionary,
+    pub(crate) infiltration_ventilation: InfiltrationVentilation,
+}
+
+impl InputForCalcHtcHlp for ReducedInputForCalcHtcHlp {
+    fn simulation_time(&self) -> &SimulationTime {
+        &self.simulation_time
+    }
+
+    fn energy_supply(&self) -> &EnergySupplyInput {
+        &self.energy_supply
+    }
+
+    fn external_conditions(&self) -> &ExternalConditionsInput {
+        self.external_conditions.as_ref()
+    }
+
+    fn control(&self) -> &Control {
+        &self.control
+    }
+
+    fn infiltration_ventilation(&self) -> &InfiltrationVentilation {
+        &self.infiltration_ventilation
+    }
+
+    fn zone(&self) -> &ZoneDictionary {
+        &self.zone
+    }
+
+    fn temp_internal_air_static_calcs(&self) -> f64 {
+        self.temp_internal_air_static_calcs
     }
 }
 

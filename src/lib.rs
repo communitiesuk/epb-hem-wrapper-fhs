@@ -6,14 +6,13 @@ use crate::future_homes_standard::input::{ingest_for_processing, InputForProcess
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
 use anyhow::anyhow;
 use bitflags::bitflags;
-use home_energy_model_legacy::errors::{HemError, PostprocessingError};
-use home_energy_model_legacy::input::Input;
-pub use home_energy_model_legacy::output::Output;
-use home_energy_model_legacy::output::SinkOutput;
-pub use home_energy_model_legacy::read_weather_file;
-use home_energy_model_legacy::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
-use home_energy_model_legacy::RunInput;
-pub use home_energy_model_legacy::{CalculationResultsWithContext, HemResponse};
+use home_energy_model::errors::{HemError, PostprocessingError};
+use home_energy_model::input::Input;
+use home_energy_model::output_writer::OutputWriter;
+pub use home_energy_model::read_weather_file;
+use home_energy_model::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
+use home_energy_model::CalculationResult;
+pub use home_energy_model::HemResponse;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -52,8 +51,8 @@ pub(crate) trait HemWrapper {
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>>;
     fn apply_postprocessing(
         &self,
-        output: &impl Output,
-        results: &HashMap<CalculationKey, CalculationResultsWithContext>,
+        output: &impl OutputWriter,
+        results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
     ) -> anyhow::Result<Option<HemResponse>>;
 }
@@ -91,8 +90,8 @@ impl HemWrapper for ChosenWrapper {
 
     fn apply_postprocessing(
         &self,
-        output: &impl Output,
-        results: &HashMap<CalculationKey, CalculationResultsWithContext>,
+        output: &impl OutputWriter,
+        results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
     ) -> anyhow::Result<Option<HemResponse>> {
         match self {
@@ -110,7 +109,7 @@ impl HemWrapper for ChosenWrapper {
 pub fn run_wrappers(
     // TODO: consider if this should move to main.rs
     input: impl Read,
-    output: impl Output,
+    output_writer: impl OutputWriter,
     external_conditions_data: Option<ExternalConditionsFromFile>,
     tariff_data_file: Option<&str>,
     flags: &FhsFlags,
@@ -156,7 +155,7 @@ pub fn run_wrappers(
         }
 
         #[instrument(skip_all)]
-        fn write_preproc_file(input: &Input, output: &impl Output, location_key: &str, file_extension: &str) -> anyhow::Result<()> {
+        fn write_preproc_file(input: &Input, output: &impl OutputWriter, location_key: &str, file_extension: &str) -> anyhow::Result<()> {
             let writer = output.writer_for_location_key(location_key, file_extension)?;
             if let Err(e) = serde_json::to_writer_pretty(writer, input) {
                 error!("Could not write out preprocess file: {}", e);
@@ -189,7 +188,7 @@ pub fn run_wrappers(
         // 2b.(!) If preprocess-only flag is present and there is a primary calculation key, write out preprocess file
         if preprocess_only {
             if let Some(input) = input.get(&CalculationKey::Primary) {
-                write_preproc_file(&input.clone().finalize()?, &output, "preproc", "json")?;
+                write_preproc_file(&input.clone().finalize()?, &output_writer, "preproc", "json")?;
             } else {
                 error!("Preprocess-only flag only set up to work with a calculation using a primary calculation key (i.e. not FHS compliance)");
             }
@@ -197,11 +196,12 @@ pub fn run_wrappers(
             return Ok(None);
         }
 
-        let contextualised_results: Result<HashMap<CalculationKey, CalculationResultsWithContext>, HemError> = match wrapper {
+        let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> = match wrapper {
             ChosenWrapper::FhsCompliance(_) => {
                 input.par_iter()
                     .map(|(key, input_value)| {
-                        home_energy_model_legacy::run_project(RunInput::Json(input_value.input.clone()), &SinkOutput, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)
+                        let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
+                        home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
                             .map(|result_value| (*key, result_value))
                     }).collect()
             }
@@ -209,7 +209,8 @@ pub fn run_wrappers(
                 let input_value = input
                     .get(&CalculationKey::Primary)
                     .ok_or_else(|| anyhow!("Primary key missing"))?;
-                let calculation_result = home_energy_model_legacy::run_project(RunInput::Json(input_value.input.clone()), &output, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)?;
+                let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
+                let calculation_result = home_energy_model::run_project(finalized, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)?;
                 Ok(HashMap::from([(CalculationKey::Primary, calculation_result)]))
             }
         };
@@ -217,15 +218,15 @@ pub fn run_wrappers(
         // 7. Run wrapper post-processing and capture any output.
         #[instrument(skip_all)]
         fn run_wrapper_postprocessing(
-            output: &impl Output,
-            results: &HashMap<CalculationKey, CalculationResultsWithContext>,
+            output: &impl OutputWriter,
+            results: &HashMap<CalculationKey, CalculationResult>,
             wrapper: &impl HemWrapper,
             flags: &FhsFlags,
         ) -> anyhow::Result<Option<HemResponse>> {
             wrapper.apply_postprocessing(output, results, flags)
         }
 
-        run_wrapper_postprocessing(&output, &contextualised_results?, &wrapper, flags)
+        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
     }))
         .map_err(|e| {

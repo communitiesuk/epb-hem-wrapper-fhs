@@ -3,7 +3,7 @@ use crate::future_homes_standard::input::InputForProcessing;
 use anyhow::{anyhow, bail};
 use csv::Reader;
 use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
-use home_energy_model_legacy::input::WaterHeatingEventType;
+use home_energy_model::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;

@@ -8,10 +8,10 @@ use crate::{CalculationKey, FhsFlags};
 
 use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
-use home_energy_model_legacy::output::Output;
-use home_energy_model_legacy::{
-    CalculationContext, CalculationResultsWithContext, HemResponse, RunResults,
-};
+use home_energy_model::output::{OutputCore, OutputSummary};
+use home_energy_model::output_writer::OutputWriter;
+use home_energy_model::CalculationResult;
+use home_energy_model::HemResponse;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -20,6 +20,7 @@ mod fhs_appliance;
 mod fhs_compliance_response;
 mod fhs_hw_events;
 mod fhs_imev_scheduler;
+mod fhs_part_f_validation;
 pub mod fhs_schema_validation;
 pub(crate) mod fhs_sleeved_dhn_validation;
 mod fhs_storeys_validation;
@@ -32,7 +33,6 @@ pub(crate) mod future_homes_standard_notional;
 pub(crate) mod input;
 pub(crate) mod metrics;
 mod project_lookups;
-mod fhs_part_f_validation;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;
@@ -55,8 +55,8 @@ impl HemWrapper for FhsSingleCalcWrapper {
 
     fn apply_postprocessing(
         &self,
-        output: &impl Output,
-        results: &HashMap<CalculationKey, CalculationResultsWithContext>,
+        output: &impl OutputWriter,
+        results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
     ) -> anyhow::Result<Option<HemResponse>> {
         let results = results
@@ -94,8 +94,8 @@ impl HemWrapper for FhsComplianceWrapper {
 
     fn apply_postprocessing(
         &self,
-        output: &impl Output,
-        results: &HashMap<CalculationKey, CalculationResultsWithContext>,
+        output: &impl OutputWriter,
+        results: &HashMap<CalculationKey, CalculationResult>,
         _flags: &FhsFlags,
     ) -> anyhow::Result<Option<HemResponse>> {
         FHS_COMPLIANCE_CALCULATIONS
@@ -167,18 +167,18 @@ fn do_fhs_preprocessing(
 }
 
 fn do_fhs_postprocessing(
-    output: &impl Output,
-    results: &CalculationResultsWithContext,
+    output_writer: &impl OutputWriter,
+    results: &CalculationResult,
     flags: &FhsFlags,
 ) -> anyhow::Result<Option<HemResponse>> {
-    let input = &results.context.input;
-    let RunResults {
+    let input = &results.input.clone();
+    let OutputCore {
         timestep_array,
         results_end_user,
         energy_import,
         energy_export,
         ..
-    } = &results.results;
+    } = &results.output.core;
 
     if flags.intersects(
         FhsFlags::FHS_ASSUMPTIONS
@@ -189,7 +189,7 @@ fn do_fhs_postprocessing(
             flags.intersects(FhsFlags::FHS_NOT_A_ASSUMPTIONS | FhsFlags::FHS_NOT_B_ASSUMPTIONS);
         apply_fhs_postprocessing(
             input,
-            output,
+            output_writer,
             energy_import,
             energy_export,
             results_end_user,
@@ -201,15 +201,17 @@ fn do_fhs_postprocessing(
             | FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS
             | FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS,
     ) {
-        let CalculationResultsWithContext {
-            results,
-            context: CalculationContext { corpus, .. },
-        } = results;
+        let OutputSummary {
+            space_heat_demand_total,
+            space_cool_demand_total,
+            total_floor_area,
+            ..
+        } = results.output.summary;
         apply_fhs_fee_postprocessing(
-            output,
-            corpus.total_floor_area,
-            results.space_heat_demand_total(),
-            results.space_cool_demand_total(),
+            output_writer,
+            total_floor_area,
+            space_heat_demand_total,
+            space_cool_demand_total,
         )?;
     }
 

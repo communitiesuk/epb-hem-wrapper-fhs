@@ -9,22 +9,23 @@ use crate::future_homes_standard::input::{
 };
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
+use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
 use home_energy_model::core::units::{
-    DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, LITRES_PER_CUBIC_METRE, MINUTES_PER_HOUR,
-    SECONDS_PER_HOUR, WATTS_PER_KILOWATT,
+    Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, LITRES_PER_CUBIC_METRE,
+    MINUTES_PER_HOUR, SECONDS_PER_HOUR, WATTS_PER_KILOWATT,
 };
-use home_energy_model_legacy::core::schedule::{expand_numeric_schedule, reject_nulls};
-use home_energy_model_legacy::corpus::{Corpus, OutputOptions, ResultsEndUser};
-use home_energy_model_legacy::external_conditions::{
+use home_energy_model::corpus::{Corpus, OutputOptions};
+use home_energy_model::hem_core::external_conditions::{
     create_external_conditions, ExternalConditions, WindowShadingObject,
 };
-use home_energy_model_legacy::input::{
-    EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType, Input,
-    MechanicalVentilationForProcessing, MechanicalVentilationJsonValue, SmartApplianceBattery,
-    TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
+use home_energy_model::hem_core::simulation_time::SimulationTime;
+use home_energy_model::input::{
+    BuildingElementHeightWidthInput, EnergySupplyDetails, EnergySupplyType, FuelType,
+    HeatingControlType, Input, MechanicalVentilationForProcessing, MechanicalVentilationJsonValue,
+    SmartApplianceBattery, TransparentBuildingElement, TransparentBuildingElementJsonValue,
+    WaterHeatingEventType,
 };
-use home_energy_model_legacy::output::Output;
-use home_energy_model_legacy::simulation_time::SimulationTime;
+use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -35,7 +36,7 @@ use std::convert::Into;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 const _EMIS_FACTOR_NAME: &str = "Emissions Factor kgCO2e/kWh";
 const _EMIS_OOS_FACTOR_NAME: &str = "Emissions Factor kgCO2e/kWh including out-of-scope emissions";
@@ -268,10 +269,10 @@ fn apply_energy_factor_series(energy_data: &[f64], factors: &Vec<f64>) -> anyhow
 
 pub fn apply_fhs_postprocessing(
     input: &Input,
-    output: &impl Output,
-    energy_import: &IndexMap<String, Vec<f64>>,
-    energy_export: &IndexMap<String, Vec<f64>>,
-    results_end_user: &ResultsEndUser,
+    output_writer: &impl OutputWriter,
+    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
+    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
+    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     timestep_array: &[f64],
     notional: bool,
 ) -> anyhow::Result<()> {
@@ -292,24 +293,24 @@ pub fn apply_fhs_postprocessing(
     )?;
 
     // Write results to output files
-    write_postproc_file(output, "emissions", emis_results, no_of_timesteps)?;
+    write_postproc_file(output_writer, "emissions", emis_results, no_of_timesteps)?;
     write_postproc_file(
-        output,
+        output_writer,
         "emissions_incl_out_of_scope",
         emis_oos_results,
         no_of_timesteps,
     )?;
-    write_postproc_file(output, "primary_energy", pe_results, no_of_timesteps)?;
-    write_postproc_summary_file(output, total_emissions_rate, total_pe_rate, notional)?;
+    write_postproc_file(output_writer, "primary_energy", pe_results, no_of_timesteps)?;
+    write_postproc_summary_file(output_writer, total_emissions_rate, total_pe_rate, notional)?;
 
     Ok(())
 }
 
 pub(super) fn calc_final_rates(
     input: &Input,
-    energy_import: &IndexMap<String, Vec<f64>>,
-    energy_export: &IndexMap<String, Vec<f64>>,
-    results_end_user: &ResultsEndUser,
+    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
+    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
+    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     number_of_timesteps: usize,
 ) -> anyhow::Result<FinalRates> {
     // Add unmet demand to list of EnergySupply objects
@@ -327,7 +328,7 @@ pub(super) fn calc_final_rates(
     let mut pe_results: IndexMap<String, FhsCalculationResult> = Default::default();
 
     for (energy_supply_key, energy_supply_details) in input
-        .energy_supply
+        .energy_supply()
         .iter()
         .map(|(key, value)| (key.clone(), value))
         .chain(
@@ -338,6 +339,7 @@ pub(super) fn calc_final_rates(
             .into_iter(),
         )
     {
+        let energy_supply_key = String::from(energy_supply_key);
         let supply_emis_result = emis_results.entry(energy_supply_key.clone()).or_default();
         let supply_emis_oos_result = emis_oos_results
             .entry(energy_supply_key.clone())
@@ -389,6 +391,8 @@ pub(super) fn calc_final_rates(
                     )
                 }
             };
+
+        let energy_supply_key: Arc<str> = energy_supply_key.as_str().into();
 
         // Calculate energy imported and associated emissions/PE
         if fuel_code == FuelType::Electricity {
@@ -515,7 +519,7 @@ pub(super) fn calc_final_rates(
         let mut energy_unregulated = vec![0.; number_of_timesteps];
         for (end_user_name, end_user_energy) in results_end_user[&energy_supply_key].iter() {
             if [APPL_OBJ_NAME, ELEC_COOK_OBJ_NAME, GAS_COOK_OBJ_NAME]
-                .contains(&end_user_name.as_str())
+                .contains(&end_user_name.as_ref())
             {
                 for (t_idx, energy_unregulated_value) in energy_unregulated.iter_mut().enumerate() {
                     *energy_unregulated_value += end_user_energy[t_idx];
@@ -627,7 +631,7 @@ impl FhsCalculationResult {
 }
 
 fn write_postproc_file(
-    output: &impl Output,
+    output_writer: &impl OutputWriter,
     file_location: &str,
     results: IndexMap<String, FhsCalculationResult>,
     no_of_timesteps: usize,
@@ -654,7 +658,7 @@ fn write_postproc_file(
         rows_results.push(row.iter().flatten().cloned().collect());
     }
 
-    let writer = output.writer_for_location_key(&file_location, "csv")?;
+    let writer = output_writer.writer_for_location_key(&file_location, "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record(row_headers)?;
@@ -668,7 +672,7 @@ fn write_postproc_file(
 }
 
 fn write_postproc_summary_file(
-    output: &impl Output,
+    output_writer: &impl OutputWriter,
     total_emissions_rate: f64,
     total_pe_rate: f64,
     notional: bool,
@@ -679,7 +683,7 @@ fn write_postproc_summary_file(
         ("DER", "DPER")
     };
 
-    let writer = output.writer_for_location_key("postproc_summary", "csv")?;
+    let writer = output_writer.writer_for_location_key("postproc_summary", "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record(["", "", "Total"])?;
@@ -700,7 +704,7 @@ pub(crate) fn calc_tfa(input: &InputForProcessing) -> JsonAccessResult<f64> {
 }
 
 fn calc_tfa_from_finalised_input(input: &Input) -> f64 {
-    input.zone.values().map(|z| z.area).sum::<f64>()
+    input.total_floor_area()
 }
 
 pub(super) fn calc_nbeds(input: &InputForProcessing) -> anyhow::Result<usize> {
@@ -2676,7 +2680,7 @@ fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow:
     };
 
     let corpus = Corpus::from_inputs(
-        &input_24h.as_input()?,
+        input_24h.as_input()?.into(),
         None,
         sim_settings.tariff_data_filename.as_deref(),
         &output_options,
@@ -2687,6 +2691,7 @@ fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow:
 
     // sum results for electricity demand other than appliances to get 24h demand buffer for loadshifting
     let electricity_users = results
+        .core
         .results_end_user
         .get(ENERGY_SUPPLY_NAME_ELECTRICITY)
         .ok_or_else(|| anyhow!("Expected one or more users of mains elec energy supply"))?;
@@ -2713,7 +2718,7 @@ fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow:
 
     let non_appliance_demand_24hr = IndexMap::from([
         (
-            String::from(ENERGY_SUPPLY_NAME_ELECTRICITY),
+            ENERGY_SUPPLY_NAME_ELECTRICITY.into(),
             non_appliance_electricity_demand,
         ),
         (ENERGY_SUPPLY_NAME_GAS.into(), vec![0.; range]),
@@ -2724,25 +2729,29 @@ fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow:
     )?;
 
     let energy_into_battery_from_generation = results
+        .core
         .energy_to_storage
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<String, Vec<f64>>>();
+        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
     let energy_out_of_battery = results
+        .core
         .energy_from_storage
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<String, Vec<f64>>>();
+        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
     let energy_into_battery_from_grid = results
+        .core
         .storage_from_grid
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<String, Vec<f64>>>();
+        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
     let battery_state_of_charge = results
+        .core
         .battery_state_of_charge
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<String, Vec<f64>>>();
+        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
 
     input.set_battery24hr_on_smart_appliance_control(
         SMART_APPLIANCE_CONTROL_NAME,
@@ -3818,23 +3827,21 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
         .all_building_elements()?
         .values()
         .filter_map(|el| match el {
-            home_energy_model_legacy::input::BuildingElement::Transparent {
-                orientation,
+            home_energy_model::input::BuildingElement::Transparent {
+                orientation360: orientation,
                 g_value,
                 frame_area_fraction,
                 base_height,
-                height,
-                width,
+                area_input,
                 shading,
                 ..
             } => {
                 let ff = *frame_area_fraction;
                 let g_val = *g_value;
-                let width = *width;
-                let height = *height;
+                let BuildingElementHeightWidthInput { width, height } = *area_input;
                 let base_height = *base_height;
                 let orientation = *orientation;
-                let w_area = width * height;
+                let w_area = area_input.area();
                 // retrieve half-hourly shading factor
                 let direct_result =
                     shading_factor(input, base_height, height, width, orientation, shading);
@@ -3875,7 +3882,7 @@ fn shading_factor(
     base_height: f64,
     height: f64,
     width: f64,
-    orientation: f64,
+    orientation: Orientation360,
     shading: &[WindowShadingObject],
 ) -> anyhow::Result<Vec<f64>> {
     // there is code in the upstream Python to convert orientations from -180 to +180 (anticlockwise) to 0-360 (clockwise)
@@ -3886,52 +3893,52 @@ fn shading_factor(
     let input_external_conditions = input.external_conditions()?;
 
     let dir_beam_conversion = input_external_conditions
-        .direct_beam_conversion_needed
+        .direct_beam_conversion_needed()
         .is_some_and(|x| x);
 
     let conditions = ExternalConditions::new(
         &time.iter(),
         input_external_conditions
-            .air_temperatures
+            .air_temperatures()
             .as_ref()
             .ok_or_else(|| anyhow!("Air temps were expected in input and not provided."))?
             .to_vec(),
         input_external_conditions
-            .wind_speeds
+            .wind_speeds()
             .as_ref()
             .ok_or_else(|| anyhow!("Wind speeds were expected in input and not provided."))?
             .to_vec(),
         input_external_conditions
-            .wind_directions
+            .wind_directions()
             .as_ref()
             .ok_or_else(|| anyhow!("Wind directions were expected in input and not provided."))?
             .to_vec(),
         input_external_conditions
-            .diffuse_horizontal_radiation
+            .diffuse_horizontal_radiation()
             .as_ref()
             .ok_or_else(|| {
                 anyhow!("Diffuse horizontal radiations were expected in input and not provided.")
             })?
             .to_vec(),
         input_external_conditions
-            .direct_beam_radiation
+            .direct_beam_radiation()
             .as_ref()
             .ok_or_else(|| {
                 anyhow!("Direct beam radiations were expected in input and not provided.")
             })?
             .to_vec(),
         input_external_conditions
-            .solar_reflectivity_of_ground
+            .solar_reflectivity_of_ground()
             .as_ref()
             .ok_or_else(|| {
                 anyhow!("Solar reflectivity of ground was expected in input and not provided.")
             })?
             .to_vec(),
         input_external_conditions
-            .latitude
+            .latitude()
             .ok_or_else(|| anyhow!("Latitude was expected in input and not provided."))?,
         input_external_conditions
-            .longitude
+            .longitude()
             .ok_or_else(|| anyhow!("Longitude was expected in input and not provided."))?,
         0,
         0,
@@ -3941,7 +3948,9 @@ fn shading_factor(
         None,
         false,
         dir_beam_conversion,
-        input_external_conditions.shading_segments.clone(),
+        input_external_conditions
+            .shading_segments()
+            .map(|x| x.to_vec()),
     );
 
     time.iter()
