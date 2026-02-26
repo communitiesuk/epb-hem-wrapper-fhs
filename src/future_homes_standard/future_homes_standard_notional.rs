@@ -109,7 +109,12 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         minimum_air_change_rate(input, total_floor_area, total_volume, bedroom_number);
     // convert to m3/h
     let minimum_air_flow_rate = minimum_air_change_rate * total_volume;
-    edit_infiltration_ventilation(input, is_notional_a, minimum_air_flow_rate)?;
+    edit_infiltration_ventilation(
+        input,
+        minimum_air_flow_rate,
+        Default::default(),
+        Default::default(),
+    )?; // TODO 1.0.0a4 pass in correct arguments
 
     // edit space heating system
     edit_space_heating_system(
@@ -153,20 +158,20 @@ fn edit_lighting_efficacy(input: &mut InputForProcessing) -> anyhow::Result<()> 
 }
 
 /// Apply Notional infiltration specifications
-/// Notional option A pressure test result at 50Pa = 4 m3/h.m2
-/// Notional option B pressure test result at 50Pa = 5 m3/h.m2
+/// Notional pressure test result at 50Pa = 4 m3/h.m2
 /// All passive openings count are set to zero
-/// Mechanical extract fans count follows the Actual dwelling,
-/// with the exception that there must be at least one per wet room
+/// Assigns mechanical ventilation (dMEVs) fans so the count follows the
+/// Actual dwelling for decentralised systems. For centralised systems
+/// there must be one dMEV per wet room with positions assigned to
+/// window or wall building elements
+/// Create background vent for each window
 fn edit_infiltration_ventilation(
     input: &mut InputForProcessing,
-    is_notional_a: bool,
-    minimum_air_flow_rate: f64,
+    _minimum_air_flow_rate: f64,
+    _minimum_vent_area: f64,
+    _minimum_vent_count: f64,
 ) -> anyhow::Result<()> {
-    // pressure test results dependent on Notional option A or B
-    let test_result = if is_notional_a { 4. } else { 5. };
-
-    let number_of_wet_rooms = input.number_of_wet_rooms()?;
+    let test_result = 4.;
 
     let infiltration_ventilation = input.infiltration_ventilation_mut()?;
 
@@ -176,55 +181,53 @@ fn edit_infiltration_ventilation(
             .or_insert(json!({}))
             .as_object_mut()
             .ok_or(anyhow::anyhow!("Leaks was expected to be an object"))?;
-        leaks.insert("test_pressure".into(), json!(50.));
+        leaks.insert("test_pressure".into(), json!("Standard"));
         leaks.insert("test_result".into(), json!(test_result));
     }
 
-    // all openings set to 0
-    infiltration_ventilation.insert("CombustionAppliances".into(), json!({}));
+    // TODO 1.0.0a4 migration - calls a function in new FHS_ventilation module, not yet migrated
 
-    if is_notional_a {
-        // Notional option A uses continuous extract, so no intermittent extract fans
-        // Continuous decentralised mechanical extract ventilation
-
-        infiltration_ventilation.insert(
-            "MechanicalVentilation".into(),
-            json!({
-            "Decentralised_Continuous_MEV_for_notional":{
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "CONST",
-                "vent_type": "Decentralised continuous MEV",
-                "SFP":0.15,
-                "EnergySupply": "mains elec",
-                "design_outdoor_air_flow_rate": minimum_air_flow_rate
-            }}),
-        );
-    } else {
-        // extract_fans follow the same as the actual dwelling
-        // but there must be a minimum of one extract fan
-        // per wet room, as per ADF guidance
-        let wet_rooms_count = number_of_wet_rooms.ok_or_else(|| {
-            anyhow!("missing NumberOfWetRooms - required for FHS notional building")
-        })?;
-        if wet_rooms_count <= 1 {
-            bail!("invalid/missing NumberOfWetRooms ({wet_rooms_count})");
-        }
-        let mut mech_vents: IndexMap<String, Value> = Default::default();
-        for i in 0..wet_rooms_count {
-            let mech_vent = json!(
-                    {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "CONST",
-                    "vent_type": "Intermittent MEV",
-                    "SFP": 0.15,
-                    "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 80
-                }
-            );
-            mech_vents.insert(i.to_string().into(), mech_vent);
-        }
-        infiltration_ventilation.insert("MechanicalVentilation".into(), json!(mech_vents));
-    }
+    // let mechanical_ventilation =
+    //
+    //
+    //     infiltration_ventilation.insert(
+    //         "MechanicalVentilation".into(),
+    //         json!({
+    //         "Decentralised_Continuous_MEV_for_notional":{
+    //             "sup_air_flw_ctrl": "ODA",
+    //             "sup_air_temp_ctrl": "CONST",
+    //             "vent_type": "Decentralised continuous MEV",
+    //             "SFP":0.15,
+    //             "EnergySupply": "mains elec",
+    //             "design_outdoor_air_flow_rate": minimum_air_flow_rate
+    //         }}),
+    //     );
+    // } else {
+    //     // extract_fans follow the same as the actual dwelling
+    //     // but there must be a minimum of one extract fan
+    //     // per wet room, as per ADF guidance
+    //     let wet_rooms_count = number_of_wet_rooms.ok_or_else(|| {
+    //         anyhow!("missing NumberOfWetRooms - required for FHS notional building")
+    //     })?;
+    //     if wet_rooms_count <= 1 {
+    //         bail!("invalid/missing NumberOfWetRooms ({wet_rooms_count})");
+    //     }
+    //     let mut mech_vents: IndexMap<String, Value> = Default::default();
+    //     for i in 0..wet_rooms_count {
+    //         let mech_vent = json!(
+    //                 {
+    //                 "sup_air_flw_ctrl": "ODA",
+    //                 "sup_air_temp_ctrl": "CONST",
+    //                 "vent_type": "Intermittent MEV",
+    //                 "SFP": 0.15,
+    //                 "EnergySupply": "mains elec",
+    //                 "design_outdoor_air_flow_rate": 80
+    //             }
+    //         );
+    //         mech_vents.insert(i.to_string().into(), mech_vent);
+    //     }
+    //     infiltration_ventilation.insert("MechanicalVentilation".into(), json!(mech_vents));
+    // }
 
     Ok(())
 }
@@ -252,23 +255,15 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
             }
             HeatFlowDirection::Horizontal => {
                 building_element.set_u_value(0.18);
-                // exception if external door
+
                 if building_element.is_opaque() {
-                    match building_element.is_external_door() {
-                        None => {
-                            bail!(
-                                "Opaque building element input needed value for is_external_door field."
-                            );
-                        }
-                        Some(true) => {
-                            building_element.set_u_value(1.0);
-                        }
-                        _ => {}
+                    if let Some(true) = building_element.is_external_door() {
+                        building_element.set_u_value(1.0);
                     }
                 }
             }
         }
-        // remove the r_c input if it was there, as engine would prioritise r_c over u_value
+        // remove the r_c input if it was there, as engine would prioritise it over u_value
         building_element.remove_thermal_resistance_construction();
     }
 
