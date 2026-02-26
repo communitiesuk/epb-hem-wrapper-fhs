@@ -128,7 +128,7 @@ pub fn run_wrappers(
             input_for_processing
                 .merge_external_conditions_data(external_conditions_data.map(|x| x.into()))?;
 
-            // TODO 1.0.0a4 migration - are these called in correct place?
+            // specifically validate certain sections of the input
             validate_sleeved_dhn(&input_for_processing)?;
             validate_existence_of_window(&input_for_processing)?;
             validate_window_base_height_within_ventilation_zone(&input_for_processing)?;
