@@ -602,6 +602,25 @@ impl InputForProcessing {
         }))
     }
 
+    pub(crate) fn all_bulbs_mut(&mut self) -> JsonAccessResult<Vec<&mut serde_json::Value>> {
+        Ok(self
+            .zone_node_mut()?
+            .values_mut()
+            .map(|value| {
+                value
+                    .get_mut("Lighting")
+                    .ok_or_else(|| json_error("Lighting not found"))?
+                    .get_mut("bulbs")
+                    .ok_or_else(|| json_error("Bulbs not found"))?
+                    .as_array_mut()
+                    .ok_or_else(|| json_error("Bulbs not an array"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
     pub fn light_bulbs_for_each_zone(
         &self,
     ) -> JsonAccessResult<IndexMap<smartstring::alias::String, Map<std::string::String, JsonValue>>>

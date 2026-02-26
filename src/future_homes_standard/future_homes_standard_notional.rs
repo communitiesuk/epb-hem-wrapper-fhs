@@ -140,9 +140,14 @@ fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option
 
 /// Apply notional lighting efficacy
 /// efficacy = 120 lm/W
-fn edit_lighting_efficacy(input: &mut InputForProcessing) -> JsonAccessResult<()> {
-    let lighting_efficacy = 120.0;
-    input.set_lighting_efficacy_for_all_zones(lighting_efficacy)?;
+fn edit_lighting_efficacy(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let notional_lighting_efficacy = 120.0;
+
+    for bulb in input.all_bulbs_mut()? {
+        bulb.as_object_mut()
+            .ok_or_else(|| json_error("Bulb was not an object"))?
+            .insert("efficacy".into(), notional_lighting_efficacy.into());
+    }
 
     Ok(())
 }
@@ -1606,15 +1611,25 @@ mod tests {
 
     #[rstest]
     fn test_edit_lighting_efficacy(mut test_input: InputForProcessing) {
-        let test_input = test_input.borrow_mut();
-        edit_lighting_efficacy(test_input).unwrap();
+        // Given bulb efficacies not set to 120
+        for zone in test_input.input["Zone"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
+            for bulb in zone["Lighting"]["bulbs"].as_array_mut().unwrap().iter_mut() {
+                bulb["efficacy"] = json!(56);
+            }
+        }
 
-        for zone in test_input.zone_keys().unwrap() {
-            let lighting_efficacy = test_input.lighting_efficacy_for_zone(&zone).unwrap();
-            assert_eq!(
-                lighting_efficacy.expect("expected lighting in zone and efficacy in lighting"),
-                120.
-            )
+        // When the notional's edit_lighting_efficacy() is called
+        edit_lighting_efficacy(&mut test_input).unwrap();
+
+        // Then the efficacy of all bulbs is set to 120
+        for zone in test_input.input["Zone"].as_object().unwrap().values() {
+            for bulb in zone["Lighting"]["bulbs"].as_array().unwrap().iter() {
+                assert_eq!(bulb["efficacy"].as_f64().unwrap(), 120.);
+            }
         }
     }
 
