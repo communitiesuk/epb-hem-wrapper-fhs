@@ -1565,6 +1565,12 @@ impl InputForProcessing {
         self.all_building_elements_mut_of_types(&["BuildingElementGround"])
     }
 
+    pub(crate) fn all_party_wall_building_elements_mut(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
+        self.all_building_elements_mut_of_types(&["BuildingElementPartyWall"])
+    }
+
     pub(crate) fn all_opaque_and_adjztu_building_elements_mut_u_values(
         &mut self,
     ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {

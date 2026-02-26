@@ -270,6 +270,20 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
     Ok(())
 }
 
+/// For any walls of type BuildingElementPartyWall, adjust the party_wall_cavity_type to
+/// filled_sealed. The motivation is to ensure that there is no heat loss through party
+/// walls in the notional. This ultimately means that actual unsealed/unfilled party walls
+/// are penalised in comparison to the notional version of that wall
+fn edit_party_walls(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for building_element in input.all_party_wall_building_elements_mut()? {
+        building_element.insert("party_wall_cavity_type".into(), "filled_sealed".into());
+        building_element.shift_remove("party_wall_lining_type");
+        building_element.shift_remove("thermal_resistance_cavity");
+    }
+
+    Ok(())
+}
+
 /// Apply notional u-value to windows & glazed doors and rooflights
 /// for windows and glazed doors
 /// u-value is 1.2
@@ -1666,6 +1680,66 @@ mod tests {
         };
 
         assert_eq!(whole_dwelling_u_values, expected);
+    }
+
+    #[rstest]
+    fn test_edit_party_walls_removes_party_wall_lining_type(mut test_input: InputForProcessing) {
+        // Given an actual building with an unfilled_sealed party wall
+        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({
+            "type": "BuildingElementPartyWall",
+            "u_value": 0.3,
+            "areal_heat_capacity": "Very light",
+            "mass_distribution_class": "I: Mass concentrated at internal side",
+            "pitch": 90,
+            "area": 15.0,
+            "party_wall_cavity_type": "unfilled_sealed",
+            "party_wall_lining_type": "dry_lined",
+        });
+
+        // When notional building is created
+        edit_party_walls(&mut test_input).unwrap();
+
+        // Then the party wall's party_wall_cavity_type is changed to filled_sealed
+        assert_eq!(
+            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
+                ["party_wall_cavity_type"],
+            "filled_sealed"
+        );
+        // And any properties contingent on party_wall_cavity_type are removed
+        assert!(
+            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
+                .get("party_wall_lining_type")
+                .is_none()
+        );
+    }
+
+    #[rstest]
+    fn test_edit_party_walls_removes_thermal_resistance_cavity(mut test_input: InputForProcessing) {
+        // Given an actual building with a defined_resistance party wall
+        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({"type": "BuildingElementPartyWall",
+            "u_value": 0.3,
+            "areal_heat_capacity": "Very light",
+            "mass_distribution_class": "I: Mass concentrated at internal side",
+            "pitch": 90,
+            "area": 15.0,
+            "party_wall_cavity_type": "defined_resistance",
+            "thermal_resistance_cavity": "1.0",});
+
+        // When notional building is created
+        edit_party_walls(&mut test_input).unwrap();
+
+        // Then the party wall's party_wall_cavity_type is changed to filled_sealed
+        assert_eq!(
+            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
+                ["party_wall_cavity_type"],
+            "filled_sealed"
+        );
+        // And any properties contingent on party_wall_cavity_type are removed
+        assert!(
+            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
+                .get("thermal_resistance_cavity")
+                .is_none()
+        );
     }
 
     #[rstest]
