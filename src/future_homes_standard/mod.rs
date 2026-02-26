@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 mod fhs_appliance;
 mod fhs_compliance_response;
 mod fhs_hw_events;
-mod fhs_part_f_ventilation;
+mod fhs_part_f_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;
 pub(crate) mod future_homes_standard_fee;
