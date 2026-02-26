@@ -289,21 +289,7 @@ fn edit_party_walls(input: &mut InputForProcessing) -> anyhow::Result<()> {
 /// u-value is 1.2
 /// for rooflights
 /// u-value is 1.7
-/// the max rooflight area is exactly defined as:
-/// Max area of glazing if rooflight, as a % of TFA = 25% of TFA - % reduction
-/// where % reduction = area of actual rooflight as a % of TFA * ((actual u-value of rooflight - 1.2)/1.2)
-/// interpret the instruction for max rooflight area as:
-/// max_area_reduction_factor = total_rooflight_area / TFA * ((average_uvalue - 1.2)/1.2)
-/// where
-///     total_rooflight_area = total area of all rooflights combined
-///     average_uvalue = area weighted average actual rooflight u-value
-/// max_rooflight_area = maximum allowed total area of all rooflights combined
-/// max_rooflight_area = TFA*0.25*max_area_reduction_factor
-/// TODO (from Python) - awaiting confirmation from DLUHC/DESNZ that interpretation is correct
 fn edit_transparent_element(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    let mut _total_rooflight_area = 0.;
-    let mut _sum_uval_times_area = 0.;
-
     let mut building_elements = input.all_transparent_building_elements_mut()?;
 
     for mut building_element in building_elements
@@ -314,25 +300,6 @@ fn edit_transparent_element(input: &mut InputForProcessing) -> anyhow::Result<()
         match pitch_class {
             HeatFlowDirection::Upwards => {
                 // rooflight
-                let height = building_element.height().ok_or_else(|| {
-                    anyhow!(
-                        "FHS notional wrapper needs transparent building elements to have a height set."
-                    )
-                })?;
-                let width = building_element.width().ok_or_else(|| {
-                    anyhow!(
-                        "FHS notional wrapper needs transparent building elements to have a width set."
-                    )
-                })?;
-                let rooflight_area = height * width;
-                _total_rooflight_area += rooflight_area;
-
-                let current_u_value = building_element.u_value().ok_or_else(|| {
-                    anyhow!(
-                        "FHS notional wrapper needs transparent building elements to have u values set."
-                    )
-                })?;
-                _sum_uval_times_area += current_u_value * rooflight_area;
                 building_element.set_u_value(1.7);
                 building_element.remove_thermal_resistance_construction();
             }
