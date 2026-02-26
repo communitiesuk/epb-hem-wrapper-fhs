@@ -438,17 +438,20 @@ fn calc_max_glazing_area_fraction(
             height,
             width,
             u_value,
+            thermal_resistance_construction,
             ..
         } = element
         {
-            let u_value = u_value.ok_or_else(|| {
-                anyhow!(
-                    "FHS notional wrapper needs transparent building elements to have u values set."
-                )
-            })?;
             let rooflight_area = height * width;
-
             total_rooflight_area += rooflight_area;
+            let u_value = match u_value {
+                Some(u_value) => *u_value,
+                None => {
+                    let thermal_resistance_construction = thermal_resistance_construction.ok_or_else(|| anyhow!("Expected building element to have either a u_value or thermal_resistance_construction set"))?;
+                    convert_upwards_element_resistance_to_u_value(thermal_resistance_construction)
+                }
+            };
+
             sum_uval_times_area += rooflight_area * u_value;
         }
     }
