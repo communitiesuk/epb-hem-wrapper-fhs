@@ -319,6 +319,16 @@ impl InputForProcessing {
         }
     }
 
+    pub(super) fn number_of_tapped_rooms(&self) -> JsonAccessResult<usize> {
+        match self.input.get("NumberOfTappedRooms") {
+            Some(JsonValue::Number(n)) => Ok(n
+                .as_u64()
+                .ok_or(json_error("NumberOfTappedRooms not a positive integer"))?
+                as usize),
+            _ => Err(json_error("NumberOfTappedRooms not found or not a number")),
+        }
+    }
+
     fn internal_gains_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
         self.root_object_entry_mut("InternalGains")
     }
@@ -1531,6 +1541,26 @@ impl InputForProcessing {
         .map_err(Into::into)
     }
 
+    fn all_building_elements_of_types(
+        &self,
+        types: &[&str],
+    ) -> JsonAccessResult<Vec<&Map<std::string::String, JsonValue>>> {
+        let building_elements = self
+            .zone_node()?
+            .values()
+            .filter_map(|zone| zone.get("BuildingElement")?.as_object())
+            .flat_map(|obj| obj.values());
+        let filtered_building_elements = building_elements.filter_map(|element| {
+            let element_type = element.get("type")?.as_str()?;
+            if types.contains(&element_type) {
+                element.as_object()
+            } else {
+                None
+            }
+        });
+        Ok(filtered_building_elements.collect())
+    }
+
     fn all_building_elements_mut_of_types(
         &mut self,
         types: &[&str],
@@ -1580,6 +1610,24 @@ impl InputForProcessing {
         ])
     }
 
+    pub(super) fn all_opaque_building_elements_except_unheated_pitched_roofs(
+        &self,
+    ) -> JsonAccessResult<Vec<&Map<std::string::String, JsonValue>>> {
+        let opaque_building_elements =
+            self.all_building_elements_of_types(&["BuildingElementOpaque"])?;
+
+        let filtered_building_elements = opaque_building_elements.into_iter().filter(|element| {
+            let is_unheated_pitched_roof = element
+                .get("is_unheated_pitched_roof")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            !is_unheated_pitched_roof
+        });
+        let result = filtered_building_elements.collect();
+
+        Ok(result)
+    }
+
     pub(crate) fn max_base_height_from_building_elements(&self) -> JsonAccessResult<Option<f64>> {
         Ok(self
             .zone_node()?
@@ -1591,6 +1639,47 @@ impl InputForProcessing {
                 building_element.get("base_height").and_then(|h| h.as_f64())
             })
             .max_by(|a, b| a.total_cmp(b)))
+    }
+
+    fn base_height_of_building_element(
+        building_element: &Map<String, JsonValue>,
+    ) -> JsonAccessResult<f64> {
+        building_element
+            .get("base_height")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| {
+                json_error("Base height for opaque building element not found or not a number")
+            })
+    }
+
+    fn height_of_building_element(
+        building_element: &Map<String, JsonValue>,
+    ) -> JsonAccessResult<f64> {
+        building_element
+            .get("height")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| {
+                json_error("Height for opaque building element not found or not a number")
+            })
+    }
+
+    pub(super) fn habitable_building_height(&self) -> JsonAccessResult<f64> {
+        let building_elements =
+            self.all_opaque_building_elements_except_unheated_pitched_roofs()?;
+
+        let mut base_heights: Vec<f64> = Vec::new();
+        let mut total_heights: Vec<f64> = Vec::new();
+        for element in building_elements {
+            let base_height = Self::base_height_of_building_element(element)?;
+            base_heights.push(base_height);
+            let height = Self::height_of_building_element(element)?;
+            total_heights.push(height + base_height);
+        }
+
+        let max_total_height = total_heights.iter().max_by(|a, b| a.total_cmp(b)).ok_or_else(|| json_error("Expected opaque building elements that are not unheated pitched roofs to exist and have heights"));
+        let min_base_height = base_heights.iter().min_by(|a, b| a.total_cmp(b)).ok_or_else(|| json_error("Expected opaque building elements that are not unheated pitched roofs to exist and have base heights"));
+
+        Ok(max_total_height? - min_base_height?)
     }
 
     pub(crate) fn set_numeric_field_for_building_element(
@@ -2034,6 +2123,20 @@ impl InputForProcessing {
             .ok_or(json_error(
                 "storeys_in_dwelling field is not a positive integer",
             ))? as usize)
+    }
+
+    pub(super) fn building_length(&self) -> JsonAccessResult<f64> {
+        self.input
+            .get("BuildingLength")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| json_error("Building length missing or not a number"))
+    }
+
+    pub(super) fn building_width(&self) -> JsonAccessResult<f64> {
+        self.input
+            .get("BuildingWidth")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| json_error("Building width missing or not a number"))
     }
 
     pub(crate) fn build_type(&self) -> JsonAccessResult<smartstring::alias::String> {

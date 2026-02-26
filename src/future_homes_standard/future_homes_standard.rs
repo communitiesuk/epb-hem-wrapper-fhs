@@ -3862,6 +3862,37 @@ fn top_up_lighting(
     Ok(l_topup)
 }
 
+fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let number_of_tapped_rooms = input.number_of_tapped_rooms()?;
+    let non_kitchen_tapped_rooms = number_of_tapped_rooms - 1;
+    let number_of_storeys = input.storeys_in_dwelling()? as f64;
+    let building_length = input.building_length()?;
+    let building_width = input.building_width()?;
+    // Calculate habitable building height
+    let habitable_building_height = input.habitable_building_height()?;
+    // Pipe calculations
+    let lateral_pipe_factor = 0.0625;
+    let vertical_pipe_factor = 0.038;
+    let branch_circuit_factor = 0.0625;
+    let reduction_factor = 2.;
+    let main_distribution_pipe_length =
+        building_length + (lateral_pipe_factor * building_length * building_width);
+    let main_shaft_pipe_length =
+        building_length * building_width * habitable_building_height * vertical_pipe_factor;
+    let branching_pipe_length =
+        building_length * building_width * number_of_storeys * branch_circuit_factor;
+
+    let small_pipe_length = (branching_pipe_length + main_shaft_pipe_length) / reduction_factor;
+    let large_pipe_length =
+        main_distribution_pipe_length * non_kitchen_tapped_rooms as f64 / reduction_factor;
+    let distribution = json!([
+        {"internal_diameter_mm": 13, "length": (small_pipe_length * 100.0).round_ties_even() / 100.0, "location": "internal"},
+        {"internal_diameter_mm": 20, "length": (large_pipe_length * 100.0).round_ties_even() / 100.0, "location": "internal"},
+    ]);
+    input.set_water_distribution(distribution)?;
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub struct HourlyHotWaterEvent {
     pub event_type: WaterHeatingEventType,
@@ -4646,5 +4677,72 @@ mod tests {
         create_zone_area(&mut input).unwrap();
         // Then an area property is added with the expected value
         assert!(input.input["Zone"]["whole dwelling"].get("area").is_some())
+    }
+
+    mod test_create_hot_water_distribution {
+        use super::*;
+        use crate::future_homes_standard::input::InputForProcessing;
+        use rstest::{fixture, rstest};
+        use serde_json::json;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            let input = json!({
+                // Apartment Type 20
+            "NumberOfTappedRooms": 4,
+            "General": {"storeys_in_dwelling": 3},
+            "BuildingLength": 11.23,
+            "BuildingWidth": 4.55,
+            "Zone": {
+                "whole dwelling": {
+                    "BuildingElement": {
+                        // Three valid walls
+                        "wall_1": {
+                            "type": "BuildingElementOpaque",
+                            "base_height": 0,
+                            "height": 2.7,
+                        },
+                        "wall_2": {
+                            "type": "BuildingElementOpaque",
+                            "base_height": 2.7,
+                            "height": 2.7,
+                        },
+                        "wall_3": {
+                            "type": "BuildingElementOpaque",
+                            "base_height": 5.4,
+                            "height": 2.7,
+                        },
+                        // One unheated roof (should be ignored)
+                        "roof": {
+                            "type": "BuildingElementOpaque",
+                            "is_unheated_pitched_roof": true,
+                            "base_height": 8.1,
+                            "height": 3,
+                        },
+                    }
+                }
+            },
+            "HotWaterDemand": {},
+            });
+            InputForProcessing { input }
+        }
+
+        #[rstest]
+        fn test_with_example_dwelling(mut input: InputForProcessing) {
+            // Given the test dwelling defined above
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            // Then the result should contain 2 pipe entries
+            let distribution = &input.input["HotWaterDemand"]["Distribution"]
+                .as_array()
+                .unwrap();
+            assert_eq!(distribution.len(), 2);
+            assert_eq!(distribution[0]["internal_diameter_mm"], 13.);
+            assert_eq!(distribution[1]["internal_diameter_mm"], 20.);
+            assert_eq!(distribution[0]["length"].as_f64().unwrap(), 12.65);
+            assert_eq!(distribution[1]["length"].as_f64().unwrap(), 21.64);
+            assert_eq!(distribution[0]["location"], "internal");
+            assert_eq!(distribution[1]["location"], "internal");
+        }
     }
 }
