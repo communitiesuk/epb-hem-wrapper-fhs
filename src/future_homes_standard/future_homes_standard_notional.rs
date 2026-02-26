@@ -136,12 +136,15 @@ pub(crate) fn apply_fhs_notional_preprocessing(
 }
 
 fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option<HeatNetworkType>> {
-    Ok(input.heat_source_wet()?.values().find_map(|source| {
-        source
-            .get("heat_network_type")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-        // TODO review 1.0.0a4, should this return enum variant or string, if string value doesn't convert to enum - add error?
-    }))
+    Ok(input
+        .heat_source_wet()?
+        .values()
+        .find_map(|source| {
+            source
+                .get("heat_network_type")
+                .map(|v| serde_json::from_value(v.clone()))
+        })
+        .transpose()?)
 }
 
 /// Apply notional lighting efficacy
