@@ -12,6 +12,7 @@ use crate::future_homes_standard::input::{
 };
 use anyhow::{anyhow, bail};
 use home_energy_model::compare_floats::min_of_2;
+use home_energy_model::core::space_heat_demand::building_element::{R_SE, R_SI_UPWARDS};
 use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
 use home_energy_model_legacy::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
 use home_energy_model_legacy::core::schedule::{expand_events, TypedScheduleEvent};
@@ -404,6 +405,17 @@ fn find_walls_roofs_with_same_orientation_and_pitch(
     }
 
     Ok(indices)
+}
+
+/// Return the u-value for an upwards building element, e.g. rooflight, from the
+/// thermal resistance of construction
+fn convert_upwards_element_resistance_to_u_value(thermal_resistance_construction: f64) -> f64 {
+    // Calculate the surface thermal resistance using constants from hem core based on
+    // BS EN ISO 13789:2017, Table 8: Conventional surface heat transfer coefficients
+    let thermal_resistance_surface = R_SI_UPWARDS + R_SE;
+    let thermal_resistance_total = thermal_resistance_construction + thermal_resistance_surface;
+
+    1. / thermal_resistance_total
 }
 
 /// Calculate max glazing area fraction for notional building, adjusted for rooflights
@@ -1909,6 +1921,24 @@ mod tests {
 
             assert_eq!(*heat_source, expected_heat_source)
         }
+    }
+
+    #[test]
+    fn test_convert_upwards_element_resistance_to_u_value() {
+        // Given a thermal_resistance_construction of an upwards facing building element of 0.8
+        let thermal_resistance_construction = 0.8;
+
+        // When the u-value is calculated
+        let u_value =
+            convert_upwards_element_resistance_to_u_value(thermal_resistance_construction);
+
+        // Then the value is based on the heat transfer coefficients taken from hem core
+        // 1 / (thermal_resistance_construction + R_SI_UPWARDS + R_SE)
+        // = 1 / (thermal_resistance_construction + 1 / (H_RI + H_CI_UPWARDS) + 1 / (H_CE + H_RE))
+        // = 1 / (0.8 + 1 / (5.13 + 5.0) + 1 / (20.0 + 4.14))
+        // = 1.0636694403876181
+        let expected_value = 1.0636694403876181;
+        assert_relative_eq!(u_value, expected_value);
     }
 
     #[rstest]

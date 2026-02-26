@@ -1177,7 +1177,7 @@ dependencies = [
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-6"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#8879c5a4d77d6704b2535ad20cb803ce99fe4541"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#57163f03713848621df86cd90b0dc14e395eeb3c"
 dependencies = [
  "anyhow",
  "arc-swap",
