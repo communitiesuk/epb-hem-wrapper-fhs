@@ -1040,13 +1040,13 @@ impl InputForProcessing {
 
         Ok(showers
             .iter()
-            .filter_map(|(name, shower)| {
+            .map(|(name, shower)| {
                 let flowrate = shower.get("flowrate").and_then(|f| f.as_f64());
                 let allow_low_flowrate = shower.get("allow_low_flowrate").and_then(|a| a.as_bool());
-                Some((
+                (
                     smartstring::alias::String::from(name),
                     (flowrate, allow_low_flowrate),
-                ))
+                )
             })
             .collect())
     }
