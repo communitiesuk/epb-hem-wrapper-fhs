@@ -476,6 +476,10 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub(crate) fn remove_preheated_water_sources(&mut self) -> JsonAccessResult<&mut Self> {
+        self.remove_root_key("PreHeatedWaterSource")
+    }
+
     pub fn zone_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
         Ok(self
             .zone_node()?
@@ -736,6 +740,15 @@ impl InputForProcessing {
             system.insert("EnergySupply".into(), json!(energy_supply_name));
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
+        self.root_object_mut("EnergySupply")?
+            .retain(|_, energy_supply| match energy_supply.get("fuel") {
+                Some(fuel) if fuel.is_string() => fuel.as_str().unwrap() != "custom",
+                _ => false,
+            });
         Ok(())
     }
 
@@ -2532,5 +2545,43 @@ mod accessors_tests {
         let mut input = InputForProcessing { input: base_input };
         input.reset_internal_gains().unwrap();
         assert_eq!(input.input, json!({"InternalGains": {}}));
+    }
+
+    #[rstest]
+    fn test_remove_custom_energy_supplies() {
+        let base_input = json!({
+            "EnergySupply": {
+                "mains elec": {
+                    "fuel": "electricity",
+                    "ElectricBattery": {
+                        "capacity": 2,
+                        "charge_discharge_efficiency_round_trip": 0.8,
+                        "minimum_charge_rate_one_way_trip": 0.001,
+                        "maximum_charge_rate_one_way_trip": 1.5,
+                        "maximum_discharge_rate_one_way_trip": 1.25,
+                        "battery_location": "inside"
+                    },
+                    "diverter": {
+                        "HeatSource": "immersion"
+                    }
+                },
+                "mains gas": {
+                    "fuel": "mains_gas"
+                },
+                "custom": {
+                    "fuel": "custom"
+                }
+            }
+        });
+        let mut input = InputForProcessing { input: base_input };
+        input.remove_custom_energy_supplies().unwrap();
+        assert_eq!(
+            input.input["EnergySupply"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect_vec(),
+            vec!["mains elec", "mains gas"]
+        )
     }
 }

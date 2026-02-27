@@ -25,8 +25,9 @@ use home_energy_model_legacy::core::water_heat_demand::dhw_demand::{
 };
 use home_energy_model_legacy::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
 use home_energy_model_legacy::input::{
-    BuildingElement, ColdWaterSourceType, GroundBuildingElement, GroundBuildingElementJsonValue,
-    SpaceHeatSystemHeatSource, WaterPipeContentsType, WaterPipework, WaterPipeworkLocation,
+    BuildingElement, ColdWaterSourceType, CustomEnergySourceFactor, GroundBuildingElement,
+    GroundBuildingElementJsonValue, SpaceHeatSystemHeatSource, WaterPipeContentsType,
+    WaterPipework, WaterPipeworkLocation,
 };
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use home_energy_model_legacy::statistics::{np_interp, percentile};
@@ -46,7 +47,7 @@ const NOTIONAL_WWHRS: &str = "Notional_Inst_WWHRS";
 const NOTIONAL_HIU: &str = "notionalHIU";
 const NOTIONAL_HP: &str = "notional_HP";
 const HEATING_PATTERN: &str = "HeatingPattern_Null";
-const _NOTIONAL_HEAT_NETWORK_NAME: &str = "_notional_heat_network";
+const NOTIONAL_HEAT_NETWORK_NAME: &str = "_notional_heat_network";
 
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
@@ -85,17 +86,18 @@ pub(crate) fn apply_fhs_notional_preprocessing(
 
     edit_lighting_efficacy(input)?;
     edit_opaque_adjztu_elements(input)?;
-    edit_transparent_element(input)?;
     edit_glazing_for_glazing_limit(input, total_floor_area)?;
+    edit_transparent_element(input)?;
     edit_ground_floors(input)?;
     edit_thermal_bridging(input)?;
+    edit_party_walls(input)?;
 
     // modify bath, shower and other dhw characteristics
     edit_bath_shower_other(input)?;
 
     // add WWHRS if needed (and remove any existing systems)
     remove_wwhrs_if_present(input)?;
-    add_wwhrs(input, cold_water_source, is_notional_a, is_fee)?;
+    add_wwhrs(input, cold_water_source, is_fee)?;
 
     // modify hot water distribution
     edit_hot_water_distribution(input, total_floor_area)?;
@@ -123,6 +125,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         cold_water_source,
         total_floor_area,
         heat_network_type,
+        &Default::default(),
         is_fee,
     )?;
 
@@ -645,19 +648,20 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
     cold_water_source: ColdWaterSourceType,
-) -> anyhow::Result<()> {
-    let heat_network_name = "_notional_heat_network";
-
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    is_communal: bool,
+) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
     let notional_heat_network = json!(
      {
         NOTIONAL_HIU: {
             "type": "HIU",
-            "EnergySupply": heat_network_name,
+            "EnergySupply": NOTIONAL_HEAT_NETWORK_NAME,
             "power_max": 45,
             "HIU_daily_loss": 0.8,
             "building_level_distribution_losses": 62,
         }
     });
+    input.set_heat_source_wet(notional_heat_network)?;
 
     let notional_hot_water_source = json!({
         "hw cylinder": {
@@ -666,21 +670,57 @@ fn edit_add_heatnetwork_heating(
             "HeatSourceWet": NOTIONAL_HIU,
             }
     });
+    input.set_hot_water_source(notional_hot_water_source)?;
+
+    // Remove any PreHeatedWaterSource (if present) used by the actual building's
+    // original "hw cylinder" HotWaterSource
+    input.remove_preheated_water_sources()?;
+
+    // condense the custom supply factors down to just a notional heat pump with either:
+    // Communal: A standardised set of factors
+    // Sleeved: The actual set of factors averaged across all actual custom fuels
+    let custom_energy_supply_factors = if is_communal {
+        [(
+            NOTIONAL_HEAT_NETWORK_NAME.into(),
+            CustomEnergySourceFactor {
+                emissions_factor_kg_co2e_k_wh: 0.033,
+                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions: 0.033,
+                primary_energy_factor_k_wh_k_wh_delivered: 0.75,
+            },
+        )]
+    } else {
+        [(
+            NOTIONAL_HEAT_NETWORK_NAME.into(),
+            CustomEnergySourceFactor {
+                emissions_factor_kg_co2e_k_wh: custom_energy_supply_factors
+                    .values()
+                    .map(|f| f.emissions_factor_kg_co2e_k_wh)
+                    .sum::<f64>()
+                    / custom_energy_supply_factors.len() as f64,
+                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions:
+                    custom_energy_supply_factors
+                        .values()
+                        .map(|f| f.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions)
+                        .sum::<f64>()
+                        / custom_energy_supply_factors.len() as f64,
+                primary_energy_factor_k_wh_k_wh_delivered: custom_energy_supply_factors
+                    .values()
+                    .map(|f| f.primary_energy_factor_k_wh_k_wh_delivered)
+                    .sum::<f64>()
+                    / custom_energy_supply_factors.len() as f64,
+            },
+        )]
+    }
+    .into();
 
     let heat_network_fuel_data = json!({
         "fuel": "custom",
-        "factor":{
-            "Emissions Factor kgCO2e/kWh": 0.033,
-            "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.033,
-            "Primary Energy Factor kWh/kWh delivered": 0.75
-            }
+        "is_export_capable": false,
     });
 
-    input.set_heat_source_wet(notional_heat_network)?;
-    input.set_hot_water_source(notional_hot_water_source)?;
-    input.add_energy_supply_for_key(heat_network_name, heat_network_fuel_data)?;
+    input.add_energy_supply_for_key(NOTIONAL_HEAT_NETWORK_NAME, heat_network_fuel_data)?;
 
-    Ok(())
+    Ok(custom_energy_supply_factors)
 }
 
 fn edit_add_default_space_heating_system(
@@ -999,7 +1039,6 @@ fn remove_wwhrs_if_present(input: &mut InputForProcessing) -> anyhow::Result<()>
 fn add_wwhrs(
     input: &mut InputForProcessing,
     cold_water_source_type: ColdWaterSourceType,
-    is_notional_a: bool,
     is_fee: bool,
 ) -> anyhow::Result<()> {
     // TODO (from Python) Storeys in dwelling is not currently collected as an input, so use
@@ -1013,7 +1052,7 @@ fn add_wwhrs(
     };
 
     // add WWHRS if more than 1 storeys in dwelling, notional A and not FEE
-    if storeys_in_dwelling > 1 && is_notional_a && !is_fee {
+    if storeys_in_dwelling > 1 && !is_fee {
         input.register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS)?;
         input.set_wwhrs(json!({
             NOTIONAL_WWHRS: {
@@ -1370,25 +1409,35 @@ fn edit_space_heating_system(
     cold_water_source: ColdWaterSourceType,
     total_floor_area: f64,
     heat_network_type: Option<HeatNetworkType>,
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_fee: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
     // FEE calculation which doesn't need the space heating system at this stage.
-    if !is_fee {
+    let custom_energy_supply_factors = if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
-        if heat_network_type.is_some() {
+        if let Some(heat_network_type) = heat_network_type {
             // TODO 1.0.0a4 update this condition
-            edit_add_heatnetwork_heating(input, cold_water_source)?;
+            let custom_energy_supply_factors = edit_add_heatnetwork_heating(
+                input,
+                cold_water_source,
+                custom_energy_supply_factors,
+                heat_network_type == HeatNetworkType::Communal,
+            )?;
             edit_heatnetwork_space_heating_distribution_system(input)?;
+            custom_energy_supply_factors
         } else {
             let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
             edit_add_default_space_heating_system(input, design_capacity_overall)?;
             edit_default_space_heating_distribution_system(input, &design_capacity_map)?;
             edit_storagetank(input, cold_water_source, total_floor_area)?;
+            custom_energy_supply_factors.clone()
         }
-    }
+    } else {
+        custom_energy_supply_factors.clone()
+    };
 
-    Ok(())
+    Ok(custom_energy_supply_factors)
 }
 
 fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> {
@@ -1795,7 +1844,29 @@ mod tests {
     #[rstest]
     fn test_calc_max_glazing_area_fraction(mut test_input: InputForProcessing) {
         test_input
-            .set_zone(zone_input_for_max_glazing_area_test(1.5, None))
+            .set_zone(json!({
+                "test_zone": {
+                    "BuildingElement": {
+                        "test_rooflight": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 0.0,
+                            "height": 2.0,
+                            "width": 1.0,
+                            "u_value": 1.5, // set field for first assertion
+                            // following are necessary fields not mentioned in python fixture
+                            "orientation360": 0,
+                            "g_value": 1,
+                            "frame_area_fraction": 0.5,
+                            "base_height": 0,
+                            "free_area_height": 2,
+                            "mid_height": 1,
+                            "max_window_open_area": 0,
+                            "window_part_list": [],
+                            "shading": [],
+                        }
+                    }
+                }
+            }))
             .unwrap();
         assert_eq!(
             calc_max_glazing_area_fraction(&test_input, 80.0).unwrap(),
@@ -1847,7 +1918,6 @@ mod tests {
     }
 
     // this test does not exist in Python HEM
-    #[ignore = "TODO 1.0.0a4 migration"]
     #[rstest]
     fn test_edit_add_heatnetwork_heating(mut test_input: InputForProcessing) {
         let heat_network_name = "_notional_heat_network";
@@ -1875,20 +1945,17 @@ mod tests {
         let heat_network_name = "_notional_heat_network";
         let expected_heat_network_fuel_data: EnergySupplyDetails = serde_json::from_value(json!({
             "fuel": "custom",
-            "factor":{
-                "Emissions Factor kgCO2e/kWh": 0.033,
-                "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.033,
-                "Primary Energy Factor kWh/kWh delivered": 0.75
-                }
+            "is_export_capable": false,
         }))
         .unwrap();
 
-        edit_add_heatnetwork_heating(&mut test_input, ColdWaterSourceType::MainsWater).unwrap();
-
-        // assert_eq!(
-        //     test_input.heat_source_wet().unwrap(),
-        //     expected_heat_source_wet
-        // );
+        edit_add_heatnetwork_heating(
+            &mut test_input,
+            ColdWaterSourceType::MainsWater,
+            &Default::default(),
+            true,
+        )
+        .unwrap();
 
         assert_eq!(
             json!(test_input.hot_water_source().unwrap()),
@@ -2133,7 +2200,7 @@ mod tests {
 
         let cold_water_source_type = ColdWaterSourceType::MainsWater;
 
-        add_wwhrs(&mut test_input, cold_water_source_type, true, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
 
         let expected_wwhrs: WasteWaterHeatRecovery = serde_json::from_value(json!({
             "Notional_Inst_WWHRS": {
@@ -2166,7 +2233,7 @@ mod tests {
     fn test_add_no_wwhrs_for_one_storey_buildings(mut test_input: InputForProcessing) {
         let cold_water_source_type = ColdWaterSourceType::MainsWater;
 
-        add_wwhrs(&mut test_input, cold_water_source_type, true, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
 
         assert!(test_input.wwhrs().unwrap().is_none());
 
