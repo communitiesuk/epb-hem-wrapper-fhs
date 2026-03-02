@@ -979,13 +979,13 @@ enum ControlType {
 }
 
 /// water heating pattern - if system is not instantaneous, hold at setpoint
-/// 00:00-02:00 and then reheat as necessary 24/7
+/// 00:00-02:00 every Sunday to allow for sterilisation cycle.
 /// Note: Holding at setpoint for two hours has been chosen because
 /// typical setting is for sterilisation cycle to last one hour, but the
 /// model can only set a maximum and minimum setpoint temperaure, not
 /// guarantee that the temperature is actually reached. Therefore, setting
 /// the minimum to the maximum for two hours allows time for the tank
-/// to heat up to the required temperature before being held there
+/// to heat up to the required temperature before being held there.
 fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     let hw_min_temp = "_HW_min_temp";
     let hw_max_temp = "_HW_max_temp";
@@ -1065,8 +1065,10 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
             "start_day": 0,
             "time_series_step": 0.5,
             "schedule": {
-                "main": [{"value": "day", "repeat": 365}],
-                "day": [{"value": HW_SETPOINT_MAX, "repeat": 4},{"value": HW_TEMPERATURE, "repeat": 44}]
+                "main": [{"value": "week", "repeat": 53}],
+                "week": [{"value": "other_day", "repeat": 6},{"value": "sunday", "repeat": 1}],
+                "other_day": [{"value": HW_TEMPERATURE, "repeat": 48}],
+                "sunday": [{"value": HW_SETPOINT_MAX, "repeat": 4},{"value": HW_TEMPERATURE, "repeat": 44}]
             }
         }),
     )?;
@@ -4872,6 +4874,86 @@ mod tests {
             ]);
             let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
             assert_eq!(actual_distribution, &expected_distribution);
+        }
+    }
+
+    mod test_create_water_heating_pattern {
+        use super::*;
+        use crate::future_homes_standard::input::InputForProcessing;
+        use rstest::{fixture, rstest};
+        use serde_json::json;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            let input = json!({
+                "Control": {},
+                "EnergySupply": {"mains elec": {"fuel": "electricity", "is_export_capable": true}},
+                "HotWaterSource": {
+                    "hw cylinder": {
+                        "type": "StorageTank",
+                        "volume": 80.0,
+                        "daily_losses": 1.68,
+                        "ColdWaterSource": "header tank",
+                        "HeatSource": {
+                            "immersion": {
+                                "type": "ImmersionHeater",
+                                "power": 3.0,
+                                "EnergySupply": "mains elec",
+                                "heater_position": 0.1,
+                                "thermostat_position": 0.33,
+                            }
+                        },
+                    }
+                },
+            });
+
+            InputForProcessing { input }
+        }
+
+        #[rstest]
+        fn test_storage_tank_gets_controls(mut input: InputForProcessing) {
+            // Given a dwelling with an ordinary StorageTank fed by header tank and immersion
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+            // Then the heating pattern reflects:
+            //   * a min of 60C for first 2 hours followed by 52C
+            //   * a max of 60C
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"]
+                    ["Controlmax"],
+                "_HW_max_temp"
+            );
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"]
+                    ["Controlmin"],
+                "_HW_min_temp"
+            );
+            assert_eq!(
+                input.input["Control"]["_HW_min_temp"],
+                json!({
+                    "schedule": {
+                        "main": [{"repeat": 53, "value": "week"}],
+                        "week": [{"repeat": 6, "value": "other_day"}, {"repeat": 1, "value": "sunday"}],
+                        "other_day": [{"repeat": 48, "value": 52.0}],
+                        "sunday": [{"repeat": 4, "value": 60.0}, {"repeat": 44, "value": 52.0}],
+                    },
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "type": "SetpointTimeControl",
+                })
+            );
+            assert_eq!(
+                input.input["Control"]["_HW_max_temp"],
+                json!({
+                    "schedule": {
+                        "day": [{"repeat": 48, "value": 60.0}],
+                        "main": [{"repeat": 365, "value": "day"}],
+                    },
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "type": "SetpointTimeControl",
+                })
+            );
         }
     }
 }
