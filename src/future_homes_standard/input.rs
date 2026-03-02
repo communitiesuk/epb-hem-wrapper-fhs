@@ -1,11 +1,11 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
+use home_energy_model::input::WasteWaterHeatRecovery;
 use home_energy_model_legacy::core::schedule::NumericSchedule;
 use home_energy_model_legacy::input::{
     ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
     HeatingControlType, Input, ReducedInputForCalcHtcHlp, SmartApplianceBattery,
-    SpaceHeatSystemHeatSource, WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent,
-    WaterPipework,
+    SpaceHeatSystemHeatSource, WaterDistribution, WaterHeatingEvent, WaterPipework,
 };
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
@@ -1113,6 +1113,7 @@ impl InputForProcessing {
     pub(crate) fn register_wwhrs_name_on_mixer_shower(
         &mut self,
         wwhrs: &str,
+        wwhrs_configuration: &str,
     ) -> anyhow::Result<()> {
         let mixer_shower = self
             .hot_water_demand_mut()?
@@ -1125,6 +1126,7 @@ impl InputForProcessing {
             .as_object_mut()
             .ok_or(json_error("Mixer shower was not a JSON object"))?;
         mixer_shower.insert("WWHRS".into(), json!(wwhrs));
+        mixer_shower.insert("WWHRS_configuration".into(), json!(wwhrs_configuration));
 
         Ok(())
     }

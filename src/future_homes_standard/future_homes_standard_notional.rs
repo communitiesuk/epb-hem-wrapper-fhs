@@ -14,8 +14,12 @@ use anyhow::{anyhow, bail};
 use home_energy_model::compare_floats::min_of_2;
 use home_energy_model::core::space_heat_demand::building_element::{R_SE, R_SI_UPWARDS};
 use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
-use home_energy_model_legacy::core::heating_systems::wwhrs::{WWHRSInstantaneousSystemB, Wwhrs};
+use home_energy_model::input::EcoDesignController;
+use home_energy_model_legacy::core::heating_systems::wwhrs::Wwhrs;
 use home_energy_model_legacy::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model_legacy::core::space_heat_demand::building_element::{
+    pitch_class, HeatFlowDirection,
+};
 use home_energy_model_legacy::core::units::{
     convert_profile_to_daily, JOULES_PER_KILOJOULE, JOULES_PER_KILOWATT_HOUR, WATTS_PER_KILOWATT,
 };
@@ -31,10 +35,6 @@ use home_energy_model_legacy::input::{
 };
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use home_energy_model_legacy::statistics::{np_interp, percentile};
-use home_energy_model_legacy::{
-    compare_floats::max_of_2,
-    core::space_heat_demand::building_element::{pitch_class, HeatFlowDirection},
-};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -723,7 +723,8 @@ fn edit_add_heatnetwork_heating(
     Ok(custom_energy_supply_factors)
 }
 
-fn edit_add_default_space_heating_system(
+/// Apply heatpump heating to notional building calculation
+fn edit_add_heatpump_heating(
     input: &mut InputForProcessing,
     design_capacity_overall: f64,
 ) -> anyhow::Result<()> {
@@ -886,75 +887,50 @@ fn edit_add_default_space_heating_system(
     Ok(())
 }
 
-/// Apply distribution system details to notional building calculation
-fn edit_default_space_heating_distribution_system(
+fn replace_space_heating_system(
     input: &mut InputForProcessing,
     design_capacity: &IndexMap<String, f64>,
+    design_flow_temp: f64,
+    design_flow_rate: f64,
+    temp_diff_emit_dsgn: f64,
+    heat_source_name: &str,
+    eco_design_controller: &EcoDesignController,
 ) -> anyhow::Result<()> {
-    let setpoint_for_sizing = max_of_2(LIVING_ROOM_SETPOINT_FHS, REST_OF_DWELLING_SETPOINT_FHS);
-
-    let design_flow_temp = 45.;
-    let design_flow_rate = 12.; // TODO (from Python) what value should this be?
-    let n: f64 = 1.34;
+    let n = 1.34;
     let c_per_rad = 1.89 / 50_f64.powf(n);
+    let setpoint_for_sizing = LIVING_ROOM_SETPOINT_FHS.max(REST_OF_DWELLING_SETPOINT_FHS);
     let power_output_per_rad = c_per_rad * (design_flow_temp - setpoint_for_sizing).powf(n);
-
     // thermal mass specified in kJ/K but required in kWh/K
     let thermal_mass_per_rad = 51.8 * JOULES_PER_KILOJOULE as f64 / JOULES_PER_KILOWATT_HOUR as f64;
-
-    // Initialise space heating system in project dict
+    // Initialise space heating system in input
     input.remove_space_heat_systems()?;
 
-    for zone_name in input.zone_keys()? {
-        let system_name = format!("{zone_name}_SpaceHeatSystem_Notional");
-        input.set_space_heat_system_for_zone(&zone_name, &system_name)?;
-        let heatsourcewet_name = input
-            .heat_source_wet()?
-            .first()
-            .ok_or_else(|| {
-                anyhow!("FHS Notional wrapper expected at least one heat source wet to be defined.")
-            })?
-            .0
-            .clone();
-
+    for zone_name in input.zone_keys()?.iter() {
         // Calculate number of radiators
-        let emitter_cap = design_capacity.get(&zone_name).ok_or_else(|| {
-            anyhow!("FHS Notional wrapper expected a design capacity with name: {zone_name}.")
-        })?;
+        let emitter_cap = *design_capacity
+            .get(zone_name)
+            .ok_or_else(|| anyhow!("Zone {} not found in design capacity", zone_name))?;
         let number_of_rads = (emitter_cap / power_output_per_rad).ceil();
-
         // Calculate c and thermal mass
         let c = number_of_rads * c_per_rad;
         let thermal_mass = number_of_rads * thermal_mass_per_rad;
-
-        let space_heat_system_value = json!({
+        // Create notional SpaceHeatSystem for the zone
+        let zone_space_heat_system_name = format!("{zone_name}_SpaceHeatSystem_Notional");
+        input.set_space_heat_system_for_key(&zone_space_heat_system_name, json!({
             "type": "WetDistribution",
-            "advanced_start": 1,
             "thermal_mass": thermal_mass,
-            "emitters": [{"wet_emitter_type": "radiator",
-                          "frac_convective": 0.7,
-                          "c": c,
-                          "n": n}],
-            "temp_diff_emit_dsgn": 5,
-            "HeatSource": {
-                "name": heatsourcewet_name,
-                "temp_flow_limit_upper": 65.0
-            },
-            "ecodesign_controller": {
-                    "ecodesign_control_class": 2,
-                    "max_outdoor_temp": 20,
-                    "min_flow_temp": 21,
-                    "min_outdoor_temp": 0
-                    },
+            "emitters": [{"wet_emitter_type": "radiator", "frac_convective": 0.7, "c": c, "n": n}],
+            "temp_diff_emit_dsgn": temp_diff_emit_dsgn,
+            "variable_flow": false,
+            "HeatSource": {"name": heat_source_name, "temp_flow_limit_upper": 65.0},
+            "ecodesign_controller": eco_design_controller,
             "Control": HEATING_PATTERN,
-            "design_flow_temp": design_flow_temp as i32,
+            "design_flow_temp": design_flow_temp,
             "design_flow_rate": design_flow_rate,
             "Zone": zone_name,
-            "temp_setback" : 18
-        });
-
-        // Create radiator dict for zone
-        input.set_space_heat_system_for_key(&system_name, space_heat_system_value)?;
+            "pipework": [],
+        }))?;
+        input.set_space_heat_system_for_zone(&zone_name, &zone_space_heat_system_name)?;
     }
 
     Ok(())
@@ -978,6 +954,7 @@ fn edit_heatnetwork_space_heating_distribution_system(
 
     Ok(())
 }
+
 fn edit_bath_shower_other(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // Bath - standardize flowrate and size
     let notional_bath_flowrate = 12.0; // l/min
@@ -1032,6 +1009,20 @@ fn remove_wwhrs_if_present(input: &mut InputForProcessing) -> anyhow::Result<()>
     if input.wwhrs()?.is_some() {
         input.remove_wwhrs()?;
     }
+    // Remove WWHRS config from any MixerShowers, if present
+    for shower in input.shower_values_mut()?.iter_mut().flatten() {
+        let shower = shower
+            .as_object_mut()
+            .ok_or_else(|| json_error("Shower was not an object"))?;
+        if shower
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "MixerShower")
+        {
+            shower.remove("WWHRS");
+            shower.remove("WWHRS_configuration");
+        }
+    }
 
     Ok(())
 }
@@ -1041,26 +1032,20 @@ fn add_wwhrs(
     cold_water_source_type: ColdWaterSourceType,
     is_fee: bool,
 ) -> anyhow::Result<()> {
-    // TODO (from Python) Storeys in dwelling is not currently collected as an input, so use
-    //      storeys in building for houses and assume 1 for flats. Note that this
-    //      means that maisonettes cannot be handled at present.
-
-    let storeys_in_dwelling = match input.build_type()?.as_str() {
-        "house" => input.storeys_in_dwelling()?,
-        "flat" => 1,
-        unknown_type => bail!("Encountered unexpected building type '{unknown_type}'"),
-    };
+    let storeys_in_dwelling = input.storeys_in_dwelling()?;
 
     // add WWHRS if more than 1 storeys in dwelling, notional A and not FEE
     if storeys_in_dwelling > 1 && !is_fee {
-        input.register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS)?;
+        input.register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS, "B")?;
         input.set_wwhrs(json!({
             NOTIONAL_WWHRS: {
                 "ColdWaterSource": cold_water_source_type,
-                "efficiencies": [50, 50],
-                "flow_rates": [0, 100],
-                "type": "WWHRS_InstantaneousSystemB",
-                "utilisation_factor": 0.98
+                "system_b_efficiencies": [50, 50],
+                "flow_rates": [0.1, 100],
+                "type": "WWHRS_Instantaneous",
+                "system_b_utilisation_factor": 0.98,
+                "system_a_efficiencies": [50, 50],
+                "system_a_utilisation_factor": 0.98,
             }
         }))?;
     }
@@ -1115,26 +1100,28 @@ fn calc_daily_hw_demand(
     let wwhrs: IndexMap<String, Arc<Mutex<Wwhrs>>> = if let Some(waste_water_heat_recovery) =
         input.wwhrs()?
     {
-        let notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
-        [(
-            String::from(NOTIONAL_WWHRS),
-            Arc::new(Mutex::new(Wwhrs::WWHRSInstantaneousSystemB(
-                WWHRSInstantaneousSystemB::new(
-                    cold_water_sources
-                        .get(&notional_wwhrs.cold_water_source)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "A cold water source could not be found with the type '{:?}'.",
-                                notional_wwhrs.cold_water_source
-                            )
-                        })?
-                        .clone(),
-                    notional_wwhrs.flow_rates.clone(),
-                    notional_wwhrs.efficiencies.clone(),
-                    notional_wwhrs.utilisation_factor,
-                ),
-            ))),
-        )]
+        let _notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
+        [
+        //     (
+        //     String::from(NOTIONAL_WWHRS),
+        //     Arc::new(Mutex::new(Wwhrs::WWHRSInstantaneousSystemB(
+        //         WWHRSInstantaneousSystemB::new(
+        //             cold_water_sources
+        //                 .get(&notional_wwhrs.cold_water_source)
+        //                 .ok_or_else(|| {
+        //                     anyhow!(
+        //                         "A cold water source could not be found with the type '{:?}'.",
+        //                         notional_wwhrs.cold_water_source
+        //                     )
+        //                 })?
+        //                 .clone(),
+        //             notional_wwhrs.flow_rates.clone(),
+        //             notional_wwhrs.efficiencies.clone(),
+        //             notional_wwhrs.utilisation_factor,
+        //         ),
+        //     ))),
+        // )
+        ]
         .into()
     } else {
         Default::default()
@@ -1416,6 +1403,8 @@ fn edit_space_heating_system(
     let custom_energy_supply_factors = if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
+        let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
+
         if let Some(heat_network_type) = heat_network_type {
             // TODO 1.0.0a4 update this condition
             let custom_energy_supply_factors = edit_add_heatnetwork_heating(
@@ -1424,12 +1413,21 @@ fn edit_space_heating_system(
                 custom_energy_supply_factors,
                 heat_network_type == HeatNetworkType::Communal,
             )?;
-            edit_heatnetwork_space_heating_distribution_system(input)?;
+            let ecodesign_controller: EcoDesignController =
+                serde_json::from_value(json!({"ecodesign_control_class": 1}))?;
+            replace_space_heating_system(
+                input,
+                &design_capacity_map,
+                55.,
+                8.,
+                20.,
+                NOTIONAL_HIU,
+                &ecodesign_controller,
+            )?;
             custom_energy_supply_factors
         } else {
-            let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
-            edit_add_default_space_heating_system(input, design_capacity_overall)?;
-            edit_default_space_heating_distribution_system(input, &design_capacity_map)?;
+            edit_add_heatpump_heating(input, design_capacity_overall)?;
+            edit_heatnetwork_space_heating_distribution_system(input)?;
             edit_storagetank(input, cold_water_source, total_floor_area)?;
             custom_energy_supply_factors.clone()
         }
@@ -1613,10 +1611,10 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use home_energy_model_legacy::input::{
-        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails,
+    use home_energy_model::input::WasteWaterHeatRecovery;
+    use home_energy_model::input::{
+        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, HotWaterSource,
     };
-    use home_energy_model_legacy::input::{HotWaterSource, WasteWaterHeatRecovery};
     use indexmap::indexmap;
     use rstest::{fixture, rstest};
     use serde_json::json;
@@ -1968,34 +1966,6 @@ mod tests {
         );
     }
 
-    // this test does not exist in Python HEM
-    #[ignore = "TODO 1.0.0a4 migration"]
-    #[rstest]
-    fn test_edit_heatnetwork_space_heating_distribution_system(mut test_input: InputForProcessing) {
-        edit_heatnetwork_space_heating_distribution_system(&mut test_input).unwrap();
-
-        for system in test_input.space_heat_system_keys().unwrap() {
-            let advanced_start = test_input
-                .advanced_start_for_space_heat_system(&system)
-                .unwrap();
-            assert_eq!(advanced_start, Some(1.));
-
-            let temp_setback = test_input
-                .temperature_setback_for_space_heat_system(&system)
-                .unwrap();
-            assert_eq!(temp_setback, None);
-
-            let heat_source = test_input
-                .heat_source_for_space_heat_system(&system)
-                .unwrap()
-                .unwrap();
-
-            let expected_heat_source = json!({"name": NOTIONAL_HIU});
-
-            assert_eq!(*heat_source, expected_heat_source)
-        }
-    }
-
     #[test]
     fn test_convert_upwards_element_resistance_to_u_value() {
         // Given a thermal_resistance_construction of an upwards facing building element of 0.8
@@ -2177,17 +2147,19 @@ mod tests {
     #[rstest]
     fn test_remove_wwhrs_if_present(mut test_input: InputForProcessing) {
         test_input
-            .register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS)
+            .register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS, "B")
             .unwrap();
         test_input
             .set_wwhrs(json!({
-                NOTIONAL_WWHRS: {
-                    "ColdWaterSource": ColdWaterSourceType::MainsWater,
-                    "efficiencies": [50, 50],
-                    "flow_rates": [0, 100],
-                    "type": "WWHRS_InstantaneousSystemB",
-                    "utilisation_factor": 0.98
-                }
+            NOTIONAL_WWHRS: {
+                "ColdWaterSource": ColdWaterSourceType::MainsWater,
+                "system_b_efficiencies": [50, 50],
+                "flow_rates": [0.1, 100],
+                "type": "WWHRS_Instantaneous",
+                "system_b_utilisation_factor": 0.98,
+                "system_a_efficiencies": [50, 50],
+                "system_a_utilisation_factor": 0.98,
+            }
             }))
             .unwrap();
         remove_wwhrs_if_present(&mut test_input).unwrap();
@@ -2205,10 +2177,12 @@ mod tests {
         let expected_wwhrs: WasteWaterHeatRecovery = serde_json::from_value(json!({
             "Notional_Inst_WWHRS": {
                "ColdWaterSource": cold_water_source_type,
-               "efficiencies": [50, 50],
-               "flow_rates": [0, 100],
-               "type": "WWHRS_InstantaneousSystemB",
-               "utilisation_factor": 0.98
+               "system_b_efficiencies": [50, 50],
+               "flow_rates": [0.1, 100],
+               "type": "WWHRS_Instantaneous",
+               "system_b_utilisation_factor": 0.98,
+               "system_a_efficiencies": [50, 50],
+               "system_a_utilisation_factor": 0.98,
            }
         }))
         .unwrap();
@@ -2979,7 +2953,7 @@ mod tests {
         .unwrap();
 
         let design_capacity_overall = 7.4;
-        edit_add_default_space_heating_system(&mut test_input, design_capacity_overall).unwrap();
+        edit_add_heatpump_heating(&mut test_input, design_capacity_overall).unwrap();
 
         // TODO currently because of a custom impl PartialEq for HeatPumpTestDatum
         // this test passes when test data does not match exactly
