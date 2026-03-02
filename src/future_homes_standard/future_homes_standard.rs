@@ -3886,8 +3886,8 @@ fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Resu
     let large_pipe_length =
         main_distribution_pipe_length * non_kitchen_tapped_rooms as f64 / reduction_factor;
     let distribution = json!([
-        {"internal_diameter_mm": 13, "length": (small_pipe_length * 100.0).round_ties_even() / 100.0, "location": "internal"},
-        {"internal_diameter_mm": 20, "length": (large_pipe_length * 100.0).round_ties_even() / 100.0, "location": "internal"},
+        {"internal_diameter_mm": 13, "length": (small_pipe_length * 100.).round_ties_even() / 100., "location": "internal"},
+        {"internal_diameter_mm": 20, "length": (large_pipe_length * 100.).round_ties_even() / 100., "location": "internal"},
     ]);
     input.set_water_distribution(distribution)?;
     Ok(())
@@ -4739,8 +4739,8 @@ mod tests {
             assert_eq!(distribution.len(), 2);
             assert_eq!(distribution[0]["internal_diameter_mm"], 13.);
             assert_eq!(distribution[1]["internal_diameter_mm"], 20.);
-            assert_eq!(distribution[0]["length"].as_f64().unwrap(), 12.65);
-            assert_eq!(distribution[1]["length"].as_f64().unwrap(), 21.64);
+            assert_eq!(distribution[0]["length"], 12.65);
+            assert_eq!(distribution[1]["length"], 21.64);
             assert_eq!(distribution[0]["location"], "internal");
             assert_eq!(distribution[1]["location"], "internal");
         }
