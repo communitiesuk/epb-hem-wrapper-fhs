@@ -2,7 +2,10 @@ use crate::future_homes_standard::fhs_appliance::FhsAppliance;
 use crate::future_homes_standard::fhs_hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
-use crate::future_homes_standard::input::{json_error, InputForProcessing, JsonAccessResult};
+use crate::future_homes_standard::input::{
+    json_error, HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap,
+    InputForProcessing, JsonAccessResult,
+};
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::units::{
@@ -15,8 +18,7 @@ use home_energy_model_legacy::external_conditions::{
     create_external_conditions, ExternalConditions, WindowShadingObject,
 };
 use home_energy_model_legacy::input::{
-    EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType,
-    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, Input,
+    EnergySupplyDetails, EnergySupplyType, FuelType, HeatingControlType, Input,
     MechanicalVentilationForProcessing, MechanicalVentilationJsonValue, SmartApplianceBattery,
     TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
