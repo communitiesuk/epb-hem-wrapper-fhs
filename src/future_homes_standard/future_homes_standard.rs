@@ -3864,6 +3864,15 @@ fn top_up_lighting(
 
 fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Result<()> {
     let number_of_tapped_rooms = input.number_of_tapped_rooms()?;
+    // Note: equivalent to Python `non_kitchen_tapped_rooms <= 0` to avoid `attempt to subtract with overflow` panic
+    if number_of_tapped_rooms <= 1 {
+        let distribution = json!([
+            {"internal_diameter_mm": 13, "length": 0, "location": "internal"},
+            {"internal_diameter_mm": 20, "length": 0, "location": "internal"},
+        ]);
+        input.set_water_distribution(distribution)?;
+        return Ok(());
+    }
     let non_kitchen_tapped_rooms = number_of_tapped_rooms - 1;
     let number_of_storeys = input.storeys_in_dwelling()? as f64;
     let building_length = input.building_length()?;
@@ -4743,6 +4752,126 @@ mod tests {
             assert_eq!(distribution[1]["length"], 21.64);
             assert_eq!(distribution[0]["location"], "internal");
             assert_eq!(distribution[1]["location"], "internal");
+        }
+
+        #[rstest]
+        fn test_with_desnz_h_det_01_de_c_mev(mut input: InputForProcessing) {
+            // Given a two storey facsimile input corresponding to a JSON sent by QA
+            // "DESN-H-Det-01-DE-cMEV.json"
+            input.input["NumberOfTappedRooms"] = 2.into();
+            input.input["BuildingLength"] = 7.2.into();
+            input.input["BuildingWidth"] = 5.9.into();
+            input.input["General"]["storeys_in_dwelling"] = 2.into();
+            input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall_1"] = json!({
+                "type": "BuildingElementOpaque",
+                "base_height": 0,
+                "height": 2.5,
+            });
+            input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall_2"] = json!({
+                "type": "BuildingElementOpaque",
+                "base_height": 2.5,
+                "height": 2.68,
+            });
+            input.input["Zone"]["whole dwelling"]["BuildingElement"]
+                .as_object_mut()
+                .unwrap()
+                .remove("wall_3");
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            let distribution = input.input["HotWaterDemand"]["Distribution"]
+                .as_array()
+                .unwrap();
+
+            for pipe in distribution {
+                if pipe["internal_diameter_mm"] == 13 {
+                    // branching 0.0625 * LL * LW * Nlev  / f (2) = 2.655
+                    // shaft 0.038 * LL * LW * building height * (Nwr - 1) / f (2) = 4.1808816
+                    assert_eq!(pipe["length"], 6.84);
+                } else if pipe["internal_diameter_mm"] == 20 {
+                    // main distribution LL + 0.0625 * LL * LW * (Nwr - 1) / f (2) = 8.5275
+                    assert_eq!(pipe["length"], 4.93);
+                } else {
+                    assert!(false)
+                }
+            }
+        }
+
+        #[rstest]
+        fn test_non_zero_base_height(mut input: InputForProcessing) {
+            // Given all walls have non-zero base_height
+            input.input["Zone"]["whole dwelling"]["BuildingElement"] = json!({
+                "wall_1": {"type": "BuildingElementOpaque", "base_height": 2.8, "height": 2.5},
+                "wall_2": {"type": "BuildingElementOpaque", "base_height": 2.8, "height": 2.4},
+                "wall_3": {"type": "BuildingElementOpaque", "base_height": 6, "height": 2.6},
+            });
+
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            // Then the calculated pipe lengths are as expected
+            let expected_distribution = json!([
+                {"internal_diameter_mm": 13, "length": 10.42, "location": "internal"},
+                {"internal_diameter_mm": 20, "length": 21.64, "location": "internal"},
+            ]);
+            let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
+            assert_eq!(actual_distribution, &expected_distribution);
+        }
+
+        #[rstest]
+        fn test_valid_roof_is_included(mut input: InputForProcessing) {
+            // Given two valid walls and one valid roof (not unheated)
+            input.input["Zone"]["whole dwelling"]["BuildingElement"] = json!({
+                "wall_1": {"type": "BuildingElementOpaque", "base_height": 0, "height": 2.8},
+                "wall_2": {"type": "BuildingElementOpaque", "base_height": 0, "height": 2.8},
+                "roof_1": {
+                    "type": "BuildingElementOpaque",
+                    "base_height": 3.0,
+                    "height": 3.0,
+                    "is_unheated_pitched_roof": false,
+                },
+            });
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            // Then the roof element should be used to calculate pipe lengths
+            let expected_distribution = json!([
+                {"internal_diameter_mm": 13, "length": 10.62, "location": "internal"},
+                {"internal_diameter_mm": 20, "length": 21.64, "location": "internal"},
+            ]);
+            let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
+            assert_eq!(actual_distribution, &expected_distribution);
+        }
+
+        #[rstest]
+        fn test_different_main_dwelling_properties(mut input: InputForProcessing) {
+            // Given modified general dwelling information
+            input.input["General"]["storeys_in_dwelling"] = 3.into();
+            input.input["BuildingLength"] = 12.0.into();
+            input.input["BuildingWidth"] = 9.0.into();
+            input.input["NumberOfTappedRooms"] = 5.into();
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            // Then all pipe lengths have changed to expected results
+            let expected_distribution = json!([
+                {"internal_diameter_mm": 13, "length": 26.75, "location": "internal"},
+                // 22mm pipes have a different length with new general dwelling information
+                {"internal_diameter_mm": 20, "length": 37.5, "location": "internal"},
+            ]);
+            let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
+            assert_eq!(actual_distribution, &expected_distribution);
+        }
+
+        #[rstest]
+        fn test_zero_wet_rooms(mut input: InputForProcessing) {
+            // Given a dwelling with zero wet rooms
+            input.input["NumberOfTappedRooms"] = 0.into();
+            // When distribution is created
+            create_hot_water_distribution(&mut input).unwrap();
+            // Then all pipelengths are zero
+            let expected_distribution = json!([
+               {"internal_diameter_mm": 13, "length": 0, "location": "internal"},
+                {"internal_diameter_mm": 20, "length": 0, "location": "internal"},
+            ]);
+            let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
+            assert_eq!(actual_distribution, &expected_distribution);
         }
     }
 }
