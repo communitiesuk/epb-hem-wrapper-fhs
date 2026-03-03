@@ -37,8 +37,7 @@ use home_energy_model_legacy::core::units::{
 use home_energy_model_legacy::corpus::{calc_htc_hlp, HtcHlpCalculation};
 use home_energy_model_legacy::input::{
     BuildingElement, ColdWaterSourceType, CustomEnergySourceFactor, GroundBuildingElement,
-    GroundBuildingElementJsonValue, SpaceHeatSystemHeatSource, WaterPipeContentsType,
-    WaterPipework,
+    GroundBuildingElementJsonValue, WaterPipeContentsType, WaterPipework,
 };
 use home_energy_model_legacy::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
@@ -968,25 +967,6 @@ fn replace_space_heating_system(
     Ok(())
 }
 
-/// Edit distribution system details to notional building heat network
-fn edit_heatnetwork_space_heating_distribution_system(
-    input: &mut InputForProcessing,
-) -> anyhow::Result<()> {
-    let space_heat_system_keys: Vec<String> = input.space_heat_system_keys()?;
-
-    for system in space_heat_system_keys {
-        input.set_advance_start_for_space_heat_system(&system, 1.)?;
-    }
-
-    input.set_temperature_setback_for_space_heat_systems(None)?;
-
-    let notional_heat_source: SpaceHeatSystemHeatSource =
-        serde_json::from_value(json!({"name": NOTIONAL_HIU}))?;
-    input.set_heat_source_for_all_space_heat_systems(notional_heat_source)?;
-
-    Ok(())
-}
-
 fn edit_bath_shower_other(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // Bath - standardize flowrate and size
     let notional_bath_flowrate = 12.0; // l/min
@@ -1483,7 +1463,6 @@ fn edit_space_heating_system(
         let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
 
         if let Some(heat_network_type) = heat_network_type {
-            // TODO 1.0.0a4 update this condition
             let custom_energy_supply_factors = edit_add_heatnetwork_heating(
                 input,
                 cold_water_source,
@@ -1504,7 +1483,21 @@ fn edit_space_heating_system(
             custom_energy_supply_factors
         } else {
             edit_add_heatpump_heating(input, design_capacity_overall)?;
-            edit_heatnetwork_space_heating_distribution_system(input)?;
+            let ecodesign_controller: EcoDesignController = serde_json::from_value(json!({
+                "ecodesign_control_class": 2,
+                "max_outdoor_temp": 20,
+                "min_flow_temp": 21,
+                "min_outdoor_temp": 0,
+            }))?;
+            replace_space_heating_system(
+                input,
+                &design_capacity_map,
+                45.,
+                12.,
+                5.,
+                NOTIONAL_HP,
+                &ecodesign_controller,
+            )?;
             edit_storagetank(input, cold_water_source, total_floor_area)?;
             custom_energy_supply_factors.clone()
         }
