@@ -12,31 +12,37 @@ use crate::future_homes_standard::input::{
 };
 use anyhow::{anyhow, bail};
 use home_energy_model::compare_floats::min_of_2;
+use home_energy_model::core::common::WaterSupply;
+use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
+use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
+use home_energy_model::core::heating_systems::storage_tank::HotWaterStorageTank;
+use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
+use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
 use home_energy_model::core::space_heat_demand::building_element::{R_SE, R_SI_UPWARDS};
-use home_energy_model::core::water_heat_demand::misc::water_demand_to_kwh;
-use home_energy_model::input::EcoDesignController;
-use home_energy_model_legacy::core::heating_systems::wwhrs::Wwhrs;
-use home_energy_model_legacy::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model::core::water_heat_demand::cold_water_source::ColdWaterSource;
+use home_energy_model::core::water_heat_demand::dhw_demand::{
+    DomesticHotWaterDemand, HotWaterDemandResult,
+};
+use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
+use home_energy_model::corpus::{ColdWaterSources, HotWaterSourceBehaviour};
+use home_energy_model::hem_core::simulation_time::SimulationTime;
+use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
+use home_energy_model::input::{EcoDesignController, WaterDistribution, WaterPipeworkLocation};
 use home_energy_model_legacy::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
 use home_energy_model_legacy::core::units::{
     convert_profile_to_daily, JOULES_PER_KILOJOULE, JOULES_PER_KILOWATT_HOUR, WATTS_PER_KILOWATT,
 };
-use home_energy_model_legacy::core::water_heat_demand::cold_water_source::ColdWaterSource;
-use home_energy_model_legacy::core::water_heat_demand::dhw_demand::{
-    DomesticHotWaterDemand, DomesticHotWaterDemandData,
-};
-use home_energy_model_legacy::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
+use home_energy_model_legacy::corpus::{calc_htc_hlp, HtcHlpCalculation};
 use home_energy_model_legacy::input::{
     BuildingElement, ColdWaterSourceType, CustomEnergySourceFactor, GroundBuildingElement,
     GroundBuildingElementJsonValue, SpaceHeatSystemHeatSource, WaterPipeContentsType,
-    WaterPipework, WaterPipeworkLocation,
+    WaterPipework,
 };
-use home_energy_model_legacy::simulation_time::SimulationTime;
 use home_energy_model_legacy::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use smartstring::alias::String;
 use std::collections::HashMap;
@@ -48,6 +54,32 @@ const NOTIONAL_HIU: &str = "notionalHIU";
 const NOTIONAL_HP: &str = "notional_HP";
 const HEATING_PATTERN: &str = "HeatingPattern_Null";
 const NOTIONAL_HEAT_NETWORK_NAME: &str = "_notional_heat_network";
+
+#[derive(Clone, Debug)]
+struct MockHotWaterSource;
+
+impl HotWaterSourceBehaviour for MockHotWaterSource {
+    fn get_cold_water_source(&self) -> WaterSupply {
+        unreachable!()
+    }
+
+    fn demand_hot_water(
+        &self,
+        _usage_events: Vec<WaterEventResult>,
+        _simtime: SimulationTimeIteration,
+    ) -> anyhow::Result<f64> {
+        unreachable!()
+    }
+
+    fn get_temp_hot_water(
+        &self,
+        volume_required: f64,
+        _volume_required_already: f64,
+        _simtime: SimulationTimeIteration,
+    ) -> anyhow::Result<Vec<(f64, f64)>> {
+        Ok(vec![(HW_TEMPERATURE, volume_required)])
+    }
+}
 
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
@@ -72,7 +104,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     let cold_water_source = {
         let first_cold_water_source = cold_water_source.first();
         let (cold_water_source, _) = first_cold_water_source.as_ref().unwrap();
-        **cold_water_source
+        cold_water_source.to_owned().to_owned()
     };
 
     // Retrieve the number of bedrooms and total volume
@@ -97,7 +129,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
 
     // add WWHRS if needed (and remove any existing systems)
     remove_wwhrs_if_present(input)?;
-    add_wwhrs(input, cold_water_source, is_fee)?;
+    add_wwhrs(input, &cold_water_source, is_fee)?;
 
     // modify hot water distribution
     edit_hot_water_distribution(input, total_floor_area)?;
@@ -122,7 +154,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     // edit space heating system
     edit_space_heating_system(
         input,
-        cold_water_source,
+        &cold_water_source,
         total_floor_area,
         heat_network_type,
         &Default::default(),
@@ -647,7 +679,7 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
 ///  Apply heat network settings to notional building calculation in project_dict.
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
-    cold_water_source: ColdWaterSourceType,
+    cold_water_source: &str,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_communal: bool,
 ) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
@@ -1029,7 +1061,7 @@ fn remove_wwhrs_if_present(input: &mut InputForProcessing) -> anyhow::Result<()>
 
 fn add_wwhrs(
     input: &mut InputForProcessing,
-    cold_water_source_type: ColdWaterSourceType,
+    cold_water_source_type: &str,
     is_fee: bool,
 ) -> anyhow::Result<()> {
     let storeys_in_dwelling = input.storeys_in_dwelling()?;
@@ -1075,7 +1107,7 @@ fn calculate_daily_losses(cylinder_vol: f64) -> f64 {
 fn calc_daily_hw_demand(
     input: &mut InputForProcessing,
     total_floor_area: f64,
-    cold_water_source_type: ColdWaterSourceType,
+    cold_water_source_type: &str,
 ) -> anyhow::Result<Vec<f64>> {
     // create SimulationTime
     let simtime = SimulationTime::new(SIMTIME_START, SIMTIME_END, SIMTIME_STEP);
@@ -1086,8 +1118,9 @@ fn calc_daily_hw_demand(
         .cold_water_source()?
         .iter()
         .map(|(key, source)| {
+            let key: Arc<str> = Arc::from(key.to_owned());
             (
-                *key,
+                key,
                 Arc::from(ColdWaterSource::new(
                     source.temperatures.clone(),
                     source.start_day,
@@ -1097,31 +1130,35 @@ fn calc_daily_hw_demand(
         })
         .collect();
 
-    let wwhrs: IndexMap<String, Arc<Mutex<Wwhrs>>> = if let Some(waste_water_heat_recovery) =
+    let wwhrs: IndexMap<std::string::String, Arc<Mutex<WwhrsInstantaneous>>> = if let Some(
+        waste_water_heat_recovery,
+    ) =
         input.wwhrs()?
     {
-        let _notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
-        [
-        //     (
-        //     String::from(NOTIONAL_WWHRS),
-        //     Arc::new(Mutex::new(Wwhrs::WWHRSInstantaneousSystemB(
-        //         WWHRSInstantaneousSystemB::new(
-        //             cold_water_sources
-        //                 .get(&notional_wwhrs.cold_water_source)
-        //                 .ok_or_else(|| {
-        //                     anyhow!(
-        //                         "A cold water source could not be found with the type '{:?}'.",
-        //                         notional_wwhrs.cold_water_source
-        //                     )
-        //                 })?
-        //                 .clone(),
-        //             notional_wwhrs.flow_rates.clone(),
-        //             notional_wwhrs.efficiencies.clone(),
-        //             notional_wwhrs.utilisation_factor,
-        //         ),
-        //     ))),
-        // )
-        ]
+        let notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
+        [(
+            NOTIONAL_WWHRS.to_string(),
+            Arc::new(Mutex::new(WwhrsInstantaneous::new(
+                notional_wwhrs.flow_rates.clone(),
+                notional_wwhrs.system_a_efficiencies.clone(),
+                cold_water_sources
+                    .get(notional_wwhrs.cold_water_source.as_str())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "A cold water source could not be found with the type '{:?}'.",
+                            notional_wwhrs.cold_water_source
+                        )
+                    })?
+                    .clone(),
+                notional_wwhrs.system_a_utilisation_factor,
+                notional_wwhrs.system_b_efficiencies.clone(),
+                notional_wwhrs.system_b_utilisation_factor,
+                None,
+                None,
+                None,
+                None,
+            )?)),
+        )]
         .into()
     } else {
         Default::default()
@@ -1132,7 +1169,18 @@ fn calc_daily_hw_demand(
     create_hot_water_use_pattern(input, number_of_occupants, &cold_water_feed_temps)?;
     let sim_timestep = simtime.step;
     let total_timesteps = simtime.total_steps();
-    let event_types_names_list = [("Shower", "TODO"), ("Bath", "TODO"), ("Other", "TODO")];
+    let event_types_names_list: Vec<(&str, &str)> = ["Shower", "Bath", "Other"]
+        .into_iter()
+        .filter_map(|event_type| {
+            input
+                .hot_water_demand()
+                .ok()
+                .and_then(|demand| demand.get(event_type))
+                .and_then(|events| events.as_object())
+                .map(move |events| events.keys().map(move |key| (event_type, key.as_str())))
+        })
+        .flatten()
+        .collect();
 
     // Initialize a single schedule dictionary
     let mut event_schedules: Vec<Option<Vec<TypedScheduleEvent>>> = vec![None; total_timesteps];
@@ -1150,40 +1198,61 @@ fn calc_daily_hw_demand(
         )?;
     }
 
-    let dhw_demand = DomesticHotWaterDemand::new(
-        input
+    // Mock hot water source which returns the same temperature at every timestep
+    let mock_hw_source: IndexMap<_, _> =
+        IndexMap::from_iter([("hw cylinder".into(), MockHotWaterSource)]);
+    let energy_supply: Arc<RwLock<EnergySupply>> = {
+        let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
+        Arc::new(RwLock::new(EnergySupplyBuilder::new(
+            serde_json::from_value(electricity_supply.and_then(|map| map.get("fuel")).ok_or_else(|| anyhow!("FHS Notional wrapper expected existence of energy supply with key '{ENERGY_SUPPLY_NAME_ELECTRICITY}'"))?.to_owned())?,
+            simtime.total_steps(),
+        ).with_export_capable(electricity_supply.is_some_and(|map| map.get("is_export_capable").and_then(|v| v.as_bool()).unwrap_or(true))).build()))
+    };
+
+    let dhw_demand = DomesticHotWaterDemand::<_, HotWaterStorageTank>::new(
+        &input
             .showers()?
             .map(|showers| serde_json::from_value(json!(showers)))
             .transpose()?
             .unwrap_or_default(),
-        input
+        &input
             .baths()?
             .map(|baths| serde_json::from_value(json!(baths)))
             .transpose()?
             .unwrap_or_default(),
-        input
+        &input
             .other_water_uses()?
             .map(|other_water_uses| serde_json::from_value(json!(other_water_uses)))
             .transpose()?
             .unwrap_or_default(),
-        input.water_distribution()?.clone(),
+        &input
+            .water_distribution()?
+            .unwrap_or(WaterDistribution::List(vec![])),
         &cold_water_sources,
-        &wwhrs,
-        &Default::default(),
+        &wwhrs
+            .iter()
+            .map(|(key, value)| (key.into(), value.clone()))
+            .collect(),
+        &IndexMap::from([(String::from("_unmet_demand"), energy_supply)]),
         event_schedules,
+        mock_hw_source,
+        Default::default(),
     )?;
 
     // For each timestep, calculate HW draw
     let total_steps = simtime.total_steps();
     let mut hw_energy_demand = vec![0.0; total_steps];
     for (t_idx, t_it) in simtime.iter().enumerate() {
-        let DomesticHotWaterDemandData { hw_demand_vol, .. } =
-            dhw_demand.hot_water_demand(t_it, HW_TEMPERATURE)?;
+        let HotWaterDemandResult { hw_demand_vol, .. } = dhw_demand.hot_water_demand(t_it)?;
 
         // Convert from litres to kWh
-        let cold_water_temperature = cold_water_sources[&cold_water_source_type].temperature(t_it);
-        hw_energy_demand[t_idx] =
-            water_demand_to_kwh(hw_demand_vol, HW_TEMPERATURE, cold_water_temperature);
+        let cold_water_temperature =
+            cold_water_sources[cold_water_source_type].get_temp_cold_water(0.0, t_it)?;
+        hw_energy_demand[t_idx] = water_demand_to_kwh(
+            hw_demand_vol["hw cylinder"],
+            HW_TEMPERATURE,
+            cold_water_temperature[0].0,
+        );
     }
 
     Ok(convert_profile_to_daily(&hw_energy_demand, simtime.step))
@@ -1191,7 +1260,7 @@ fn calc_daily_hw_demand(
 
 fn edit_storagetank(
     input: &mut InputForProcessing,
-    cold_water_source_type: ColdWaterSourceType,
+    cold_water_source_type: &str,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
     let cylinder_vol = match input.hot_water_cylinder_volume()? {
@@ -1311,7 +1380,11 @@ fn edit_hot_water_distribution(
     // hot water dictionary
     let mut hot_water_distribution_inner_list = vec![];
 
-    for item in input.water_distribution()?.into_iter().flatten() {
+    for item in input
+        .water_distribution()?
+        .map(|water_distribution| water_distribution.items())
+        .unwrap_or_default()
+    {
         // only include internal pipework in notional buildings
         if item.location == WaterPipeworkLocation::Internal {
             hot_water_distribution_inner_list.push(item);
@@ -1393,7 +1466,7 @@ fn remove_electric_battery_if_present(
 
 fn edit_space_heating_system(
     input: &mut InputForProcessing,
-    cold_water_source: ColdWaterSourceType,
+    cold_water_source: &str,
     total_floor_area: f64,
     heat_network_type: Option<HeatNetworkType>,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -1610,10 +1683,12 @@ fn round_by_precision(src: f64, precision: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::future_homes_standard::future_homes_standard::create_zone_area;
     use approx::assert_relative_eq;
     use home_energy_model::input::WasteWaterHeatRecovery;
     use home_energy_model::input::{
-        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails, HotWaterSource,
+        EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails,
+        HotWaterSource as HotWaterSourceInput,
     };
     use indexmap::indexmap;
     use rstest::{fixture, rstest};
@@ -1626,9 +1701,18 @@ mod tests {
         let reader = BufReader::new(Cursor::new(include_str!(
             "./test_future_homes_standard_notional_input_data.json"
         )));
-        InputForProcessing::init_with_json_skip_validation(reader).expect(
+        let mut input = InputForProcessing::init_with_json_skip_validation(reader).expect(
             "expected valid test_future_homes_standard_notional_input_data.json to be present",
-        )
+        );
+
+        create_zone_area(&mut input).unwrap();
+
+        input
+    }
+
+    #[fixture]
+    fn tfa(test_input: InputForProcessing) -> f64 {
+        calc_tfa(&test_input).unwrap()
     }
 
     #[ignore = "currently failing as calc_design_capacity is failing (our test data is missing some expected fields on external conditions)"]
@@ -1931,7 +2015,7 @@ mod tests {
         }))
         .unwrap();
 
-        let expected_hot_water_source: HotWaterSource = serde_json::from_value(json!({
+        let expected_hot_water_source: HotWaterSourceInput = serde_json::from_value(json!({
         "hw cylinder": {
             "type": "HIU",
             "ColdWaterSource": "mains water",
@@ -1947,13 +2031,8 @@ mod tests {
         }))
         .unwrap();
 
-        edit_add_heatnetwork_heating(
-            &mut test_input,
-            ColdWaterSourceType::MainsWater,
-            &Default::default(),
-            true,
-        )
-        .unwrap();
+        edit_add_heatnetwork_heating(&mut test_input, "mains water", &Default::default(), true)
+            .unwrap();
 
         assert_eq!(
             json!(test_input.hot_water_source().unwrap()),
@@ -2170,7 +2249,7 @@ mod tests {
     fn test_add_wwhrs(mut test_input: InputForProcessing) {
         test_input.set_storeys_in_dwelling(2).unwrap();
 
-        let cold_water_source_type = ColdWaterSourceType::MainsWater;
+        let cold_water_source_type = "mains water";
 
         add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
 
@@ -2205,7 +2284,7 @@ mod tests {
 
     #[rstest]
     fn test_add_no_wwhrs_for_one_storey_buildings(mut test_input: InputForProcessing) {
-        let cold_water_source_type = ColdWaterSourceType::MainsWater;
+        let cold_water_source_type = "mains water";
 
         add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
 
@@ -2237,7 +2316,7 @@ mod tests {
     #[ignore = "TODO 1.0.0a4 migration"]
     #[rstest]
     fn test_edit_storagetank(mut test_input: InputForProcessing) {
-        let cold_water_source_type = ColdWaterSourceType::MainsWater;
+        let cold_water_source_type = "mains water";
         let total_floor_area = calc_tfa(&test_input).unwrap();
 
         edit_storagetank(&mut test_input, cold_water_source_type, total_floor_area).unwrap();
@@ -2283,17 +2362,15 @@ mod tests {
         );
     }
 
-    #[ignore = "Below test used to fail due to randomisation issue, now numbers are even further apart"]
     #[rstest]
-    fn test_calc_daily_hw_demand(mut test_input: InputForProcessing) {
-        let cold_water_source_type = ColdWaterSourceType::MainsWater;
-        let total_floor_area = calc_tfa(&test_input).unwrap();
+    #[ignore = "differs as hot water event generation is different due to inability to replicate random seed from Python"]
+    fn test_calc_daily_hw_demand(mut test_input: InputForProcessing, tfa: f64) {
+        let cold_water_source_type = "mains water";
 
         // Add notional objects that affect HW demand calc
         edit_bath_shower_other(&mut test_input).unwrap();
 
-        let daily_hwd =
-            calc_daily_hw_demand(&mut test_input, total_floor_area, cold_water_source_type);
+        let daily_hwd = calc_daily_hw_demand(&mut test_input, tfa, cold_water_source_type);
 
         let expected_result = [
             4.494866624219392,

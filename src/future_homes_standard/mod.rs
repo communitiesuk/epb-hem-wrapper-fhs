@@ -28,7 +28,7 @@ pub(crate) mod fhs_window_validation;
 pub mod future_homes_standard;
 pub(crate) mod future_homes_standard_fee;
 pub(crate) mod future_homes_standard_notional;
-pub mod input;
+pub(crate) mod input;
 pub(crate) mod metrics;
 mod project_lookups;
 

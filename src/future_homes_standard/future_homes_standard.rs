@@ -57,7 +57,7 @@ fn simtime() -> SimulationTime {
 }
 
 // Central point for hot water temperature (temp_hot_water) across the code
-pub(super) const HW_TEMPERATURE: f64 = 52.0;
+pub(crate) const HW_TEMPERATURE: f64 = 52.0;
 const HW_SETPOINT_MAX: f64 = 60.0;
 
 // Occupant sleep+wake hours as per Part O

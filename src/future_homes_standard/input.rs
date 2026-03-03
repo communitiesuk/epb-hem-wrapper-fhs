@@ -1,11 +1,12 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
-use home_energy_model::input::WasteWaterHeatRecovery;
+use home_energy_model::input::{
+    ColdWaterSourceInput, WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent,
+};
 use home_energy_model_legacy::core::schedule::NumericSchedule;
 use home_energy_model_legacy::input::{
-    ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
-    HeatingControlType, Input, ReducedInputForCalcHtcHlp, SmartApplianceBattery,
-    SpaceHeatSystemHeatSource, WaterDistribution, WaterHeatingEvent, WaterPipework,
+    ApplianceGainsEvent, BuildingElement, ExternalConditionsInput, HeatingControlType, Input,
+    ReducedInputForCalcHtcHlp, SmartApplianceBattery, SpaceHeatSystemHeatSource, WaterPipework,
 };
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
@@ -1355,11 +1356,11 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    fn hot_water_demand(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
+    pub fn hot_water_demand(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root_object("HotWaterDemand")
     }
 
-    fn hot_water_demand_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
+    pub fn hot_water_demand_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("HotWaterDemand")
     }
 
