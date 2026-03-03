@@ -1701,13 +1701,49 @@ mod tests {
     #[fixture]
     fn test_input() -> InputForProcessing {
         let reader = BufReader::new(Cursor::new(include_str!(
-            "./test_future_homes_standard_notional_input_data.json"
+            "./test_assets/fixtures/test_future_homes_standard_notional_input_data.json"
         )));
         let mut input = InputForProcessing::init_with_json_skip_validation(reader).expect(
             "expected valid test_future_homes_standard_notional_input_data.json to be present",
         );
 
         create_zone_area(&mut input).unwrap();
+
+        // following corrections are because test input data from upstream doesn't match schema
+        // remove number field from shading segments
+        input.input["ExternalConditions"]["shading_segments"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(|segment| {
+                segment.as_object_mut().unwrap().remove("number");
+            });
+
+        // add is_export_capable: false for all energy supplies
+        input.input["EnergySupply"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+            .for_each(|supply| {
+                supply["is_export_capable"] = json!(false);
+            });
+
+        // add valid Leaks node to InfiltrationVentilation
+        input.input["InfiltrationVentilation"]["Leaks"] = json!({
+            "ventilation_zone_height": 6,
+            "test_pressure": 50,
+            "test_result": 1.2,
+            "env_area": 220
+        });
+
+        // add valid Vents node to InfiltrationVentilation
+        input.input["InfiltrationVentilation"]["Vents"] = json!({});
+
+        // add other missing InfiltrationVentilation nodes
+        input.input["InfiltrationVentilation"]["altitude"] = json!(30);
+        input.input["InfiltrationVentilation"]["cross_vent_possible"] = json!(true);
+        input.input["InfiltrationVentilation"]["shield_class"] = json!("Normal");
+        input.input["InfiltrationVentilation"]["terrain_class"] = json!("OpenField");
 
         input
     }
@@ -2828,8 +2864,12 @@ mod tests {
 
     // this test does not exist in Python HEM
     #[rstest]
-    #[ignore = "This currently fails because our test data does not have all expected fields on ExternalConditions."]
+    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_design_capacity(test_input: InputForProcessing) {
+        // attempts to coerce the input into something correct
+        // test_input.remove_fhs_only_fields().unwrap();
+        // create_thermal_penetration(&mut test_input).unwrap();
+
         let actual_design_capacity = calc_design_capacity(&test_input).unwrap();
         assert_eq!(
             actual_design_capacity.0.get("zone 1").unwrap(),

@@ -48,7 +48,14 @@ impl InputForProcessing {
     }
 
     pub(crate) fn as_input_for_calc_htc_hlp(&self) -> anyhow::Result<ReducedInputForCalcHtcHlp> {
-        serde_json::from_value(self.input.to_owned()).map_err(|err| anyhow!(err))
+        let mut input_to_reduce = InputForProcessing {
+            input: self.input.clone(),
+        };
+
+        // remove FHS specific fields
+        input_to_reduce.remove_fhs_only_fields()?;
+
+        serde_json::from_value(input_to_reduce.input).map_err(|err| anyhow!(err))
     }
 
     pub fn finalize(self) -> anyhow::Result<Input> {
