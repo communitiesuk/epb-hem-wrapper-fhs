@@ -1,17 +1,18 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
 use home_energy_model::input::{
-    ColdWaterSourceInput, WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent,
+    ColdWaterSourceInput, ReducedInputForCalcHtcHlp, WasteWaterHeatRecovery, WaterDistribution,
+    WaterHeatingEvent,
 };
 use home_energy_model_legacy::core::schedule::NumericSchedule;
 use home_energy_model_legacy::input::{
     ApplianceGainsEvent, BuildingElement, ExternalConditionsInput, HeatingControlType, Input,
-    ReducedInputForCalcHtcHlp, SmartApplianceBattery, SpaceHeatSystemHeatSource, WaterPipework,
+    SmartApplianceBattery, SpaceHeatSystemHeatSource, WaterPipework,
 };
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use serde_json::{json, Map, Value as JsonValue, Value};
+use serde_json::{json, Map, Value as JsonValue};
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use thiserror::Error;

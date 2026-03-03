@@ -24,6 +24,7 @@ use home_energy_model::core::water_heat_demand::dhw_demand::{
     DomesticHotWaterDemand, HotWaterDemandResult,
 };
 use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
+use home_energy_model::corpus::{calc_htc_hlp, HtcHlpCalculation};
 use home_energy_model::corpus::{ColdWaterSources, HotWaterSourceBehaviour};
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
@@ -34,7 +35,6 @@ use home_energy_model_legacy::core::space_heat_demand::building_element::{
 use home_energy_model_legacy::core::units::{
     convert_profile_to_daily, JOULES_PER_KILOJOULE, JOULES_PER_KILOWATT_HOUR, WATTS_PER_KILOWATT,
 };
-use home_energy_model_legacy::corpus::{calc_htc_hlp, HtcHlpCalculation};
 use home_energy_model_legacy::input::{
     BuildingElement, ColdWaterSourceType, CustomEnergySourceFactor, GroundBuildingElement,
     GroundBuildingElementJsonValue, WaterPipeContentsType, WaterPipework,
@@ -1536,7 +1536,7 @@ fn calc_design_capacity(
     // Calculate heat transfer coefficients and heat loss parameters
     set_temp_internal_static_calcs(&mut clone)?;
     let HtcHlpCalculation {
-        _htc_map: htc_dict, ..
+        htc_map: htc_dict, ..
     } = calc_htc_hlp(&clone.as_input_for_calc_htc_hlp()?)?;
 
     // Calculate design capacity
