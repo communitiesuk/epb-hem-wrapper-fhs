@@ -1512,9 +1512,14 @@ fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> 
     let part_o_active_cooling_required = input.part_o_active_cooling_required()?.unwrap_or(false);
 
     if part_o_active_cooling_required {
+        // Update SpaceCoolSystems to have notional values
         input.set_efficiency_for_all_space_cool_systems(5.1)?;
         input.set_frac_convective_for_all_space_cool_systems(0.95)?;
         input.set_energy_supply_for_all_space_cool_systems(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
+    } else {
+        // Remove all SpaceCoolSystems and all references to them
+        input.remove_space_cool_systems()?;
+        input.remove_space_cool_systems_for_all_zones()?;
     }
 
     Ok(())

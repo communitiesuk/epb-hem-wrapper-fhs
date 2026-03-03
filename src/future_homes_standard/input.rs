@@ -11,7 +11,7 @@ use home_energy_model_legacy::input::{
 use home_energy_model_legacy::simulation_time::SimulationTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use serde_json::{json, Map, Value as JsonValue};
+use serde_json::{json, Map, Value as JsonValue, Value};
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use thiserror::Error;
@@ -1441,6 +1441,17 @@ impl InputForProcessing {
 
     pub fn remove_space_cool_systems(&mut self) -> JsonAccessResult<&mut Self> {
         self.remove_root_key("SpaceCoolSystem")
+    }
+
+    pub fn remove_space_cool_systems_for_all_zones(&mut self) -> JsonAccessResult<&mut Self> {
+        self.zone_node_mut()?.values_mut().for_each(|zone| {
+            let zone = match zone.as_object_mut() {
+                None => return,
+                Some(zone) => zone,
+            };
+            zone.remove("SpaceCoolSystem");
+        });
+        Ok(self)
     }
 
     pub fn set_space_cool_system_for_key(
