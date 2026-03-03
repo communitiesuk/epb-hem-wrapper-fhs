@@ -1297,6 +1297,10 @@ fn edit_storagetank(
             "primary_pipework": primary_pipework
     }))?;
 
+    // Remove any PreHeatedWaterSource (if present) used by the actual building's
+    // original "hw cylinder" HotWaterSource
+    input.remove_preheated_water_sources()?;
+
     Ok(())
 }
 
