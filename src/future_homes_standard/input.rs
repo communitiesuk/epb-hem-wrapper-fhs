@@ -2264,6 +2264,111 @@ impl InputForProcessing {
     pub(crate) fn set_zone(&mut self, zone: JsonValue) -> JsonAccessResult<&mut Self> {
         self.set_on_root_key("Zone", zone)
     }
+
+    pub fn remove_fhs_only_fields(&mut self) -> JsonAccessResult<&mut Self> {
+        // this tracks logic from future_homes_standard.py (remove_fhs_only_inputs function)
+        let top_level_keys_to_remove = [
+            "Appliances",
+            "General",
+            "GroundFloorArea",
+            "HeatingControlType",
+            "NumberOfBedrooms",
+            "NumberOfHabitableRooms",
+            "NumberOfWetRooms",
+            "NumberOfUtilityRooms",
+            "NumberOfBathrooms",
+            "NumberOfSanitaryAccommodations",
+            "PartGcompliance",
+            "PartO_active_cooling_required",
+            "BuildingLength",
+            "BuildingWidth",
+            "NumberOfTappedRooms",
+            "KitchenExtractorHoodExternal",
+        ];
+        {
+            let root = self.root_mut()?;
+            for key in top_level_keys_to_remove {
+                root.remove(key);
+            }
+        }
+
+        if let Ok(infiltration) = self.infiltration_ventilation_node_mut() {
+            infiltration.remove("noise_nuisance");
+        }
+        if let Ok(vents) = self.mechanical_ventilations_for_processing() {
+            for vent in vents {
+                vent.remove("measured_fan_power");
+                vent.remove("measured_air_flow_rate");
+            }
+        }
+        if let Ok(heat_source_wet) = self.root_object_mut("HeatSourceWet") {
+            for heat_source in heat_source_wet
+                .values_mut()
+                .filter_map(|v| v.as_object_mut())
+            {
+                heat_source.remove("is_heat_network");
+                heat_source.remove("heat_network_type");
+            }
+        }
+        if let Ok(space_heat_systems) = self.root_object_mut("SpaceHeatSystem") {
+            for heat_system in space_heat_systems
+                .values_mut()
+                .filter_map(|v| v.as_object_mut())
+            {
+                heat_system.remove("advanced_start");
+                heat_system.remove("temp_setback");
+            }
+        }
+        if let Ok(space_cool_systems) = self.root_object_mut("SpaceCoolSystem") {
+            for cool_system in space_cool_systems
+                .values_mut()
+                .filter_map(|v| v.as_object_mut())
+            {
+                cool_system.remove("advanced_start");
+                cool_system.remove("temp_setback");
+            }
+        }
+        if let Ok(Some(ref mut showers)) = self.shower_values_mut() {
+            for shower in showers.iter_mut().filter_map(|v| v.as_object_mut()) {
+                shower.remove("advanced_start");
+                shower.remove("temp_setback");
+            }
+        }
+        if let Ok(ref mut zones) = self.zone_node_mut() {
+            for zone in zones.values_mut().filter_map(|v| v.as_object_mut()) {
+                zone.remove("Lighting");
+                zone.remove("livingroom_area");
+                zone.remove("restofdwelling_area");
+                if let Some(building_elements) = zone
+                    .get_mut("BuildingElement")
+                    .and_then(|be| be.as_object_mut())
+                {
+                    for building_element in building_elements
+                        .values_mut()
+                        .map(|v| v.as_object_mut())
+                        .flatten()
+                    {
+                        building_element.remove("security_risk");
+                        building_element.remove("is_external_door");
+                    }
+                }
+                if let Some(building_elements) = zone
+                    .get_mut("ThermalBridging")
+                    .and_then(|be| be.as_object_mut())
+                {
+                    for building_element in building_elements
+                        .values_mut()
+                        .map(|v| v.as_object_mut())
+                        .flatten()
+                    {
+                        building_element.remove("junction_type");
+                    }
+                }
+            }
+        }
+
+        Ok(self)
+    }
 }
 
 pub trait UValueEditableBuildingElement {

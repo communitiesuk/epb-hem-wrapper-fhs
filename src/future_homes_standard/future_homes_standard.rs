@@ -3919,6 +3919,14 @@ fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Resu
     Ok(())
 }
 
+#[allow(dead_code)] // for now!! TODO remove dead_code annotation during 1.0.0a4 migration once function is referenced
+pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    // detail of removal of FHS fields is delegated to input here
+    input.remove_fhs_only_fields()?;
+
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub struct HourlyHotWaterEvent {
     pub event_type: WaterHeatingEventType,
