@@ -1504,7 +1504,6 @@ impl InputForProcessing {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn energy_supply_by_key(
         &self,
         energy_supply_key: &str,
