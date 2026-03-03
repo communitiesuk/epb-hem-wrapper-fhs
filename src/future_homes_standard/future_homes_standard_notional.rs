@@ -83,12 +83,11 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
     input: &mut InputForProcessing,
-    fhs_notional_a_assumptions: bool,
+    _fhs_notional_a_assumptions: bool,
     _fhs_notional_b_assumptions: bool,
     fhs_fee_notional_a_assumptions: bool,
     fhs_fee_notional_b_assumptions: bool,
 ) -> anyhow::Result<()> {
-    let is_notional_a = fhs_notional_a_assumptions || fhs_fee_notional_a_assumptions;
     let is_fee = fhs_fee_notional_a_assumptions || fhs_fee_notional_b_assumptions;
     // Check if a heat network is present
     let heat_network_type = check_heatnetwork_status(input)?;
@@ -133,8 +132,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     // modify hot water distribution
     edit_hot_water_distribution(input, total_floor_area)?;
 
-    // remove on-site generation, pv diverter or electric battery if present
-    remove_onsite_generation_if_present(input)?;
+    // remove pv diverter or electric battery if present
     remove_pv_diverter_if_present(input)?;
     remove_electric_battery_if_present(input)?;
 
@@ -164,7 +162,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     edit_space_cool_system(input)?;
 
     // add solar pv
-    add_solar_pv(input, is_notional_a, is_fee, total_floor_area)?;
+    add_solar_pv(input, is_fee, total_floor_area)?;
 
     Ok(())
 }
@@ -1571,14 +1569,8 @@ fn initialise_temperature_setpoints(input: &mut InputForProcessing) -> anyhow::R
     Ok(())
 }
 
-fn remove_onsite_generation_if_present(input: &mut InputForProcessing) -> JsonAccessResult<()> {
-    input.remove_on_site_generation()?;
-    Ok(())
-}
-
 fn add_solar_pv(
     input: &mut InputForProcessing,
-    is_notional_a: bool,
     is_fee: bool,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
@@ -1594,7 +1586,7 @@ fn add_solar_pv(
 
     // PV is included in the notional if the building contains 15 stories or
     // less that contain dwellings.
-    if storeys_in_building <= 15 && is_notional_a && !is_fee {
+    if storeys_in_building <= 15 && !is_fee {
         let ground_floor_area = input
             .ground_floor_area()?
             .ok_or_else(|| anyhow!("Notional wrapped expected ground floor area to be set"))?;
@@ -1617,33 +1609,70 @@ fn add_solar_pv(
             unknown_type => bail!("Unexpected building type '{unknown_type}' encountered"),
         };
 
-        // PV array area
-        let pv_area = 4.5 * peak_kw;
+        // If actual has no solar panels then notional will also have nothing
+        if let Some(on_site_generation) = input.on_site_generation()? {
+            let total_peak_power: f64 = on_site_generation
+                .values()
+                .map(|panel| panel.get("peak_power").and_then(|power| power.as_f64()))
+                .flatten()
+                .sum();
 
-        // PV width and height based on 2:1 aspect ratio
-        let pv_height = (pv_area / 2.).powf(0.5);
-        let pv_width = 2. * pv_height;
+            // If the calculated peak_kW is less than the actual total power,
+            // scale the actual values down to match the peak by applying a scaling factor.
+            // The scaling factor is capped at a minimum of 1.0 to avoid scaling up.
+            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power);
+            let min_inverter_peak_power_kw: f64 = 3.68; // Fixed lower limit on inverter power in kW
 
-        let solar_pv = json!({
-            "PV1": {
-                "EnergySupply": "mains elec",
-                "orientation360": 180.,
-                "peak_power": peak_kw,
-                "inverter_peak_power_ac": peak_kw,
-                "inverter_peak_power_dc": peak_kw,
-                "inverter_is_inside": false,
-                "inverter_type": "optimised_inverter",
-                "pitch": 45.,
-                "type": "PhotovoltaicSystem",
-                "ventilation_strategy": "moderately_ventilated",
-                "base_height": base_height_pv,
-                "height":pv_height,
-                "width":pv_width,
-                "shading": [],
-                }
-        });
+            let notional_panels: IndexMap<String, Value> = on_site_generation
+                .iter()
+                .filter_map(|(name, panel)| {
+                    let pv_peak_power = panel
+                        .get("peak_power")
+                        .and_then(|power| power.as_f64())
+                        .unwrap_or(0.0)
+                        * scaling_factor;
+                    let pv_area = 4.5 * pv_peak_power;
+                    // PV width and height based on 2:1 aspect ratio
+                    let pv_height = (pv_area / 2.).powf(0.5);
+                    let pv_width = 2. * pv_height;
+                    let mut updated_panel = panel.clone();
+                    let updated_panel = match updated_panel.as_object_mut() {
+                        Some(panel) => panel,
+                        None => return None,
+                    };
+                    updated_panel.insert("peak_power".to_string(), json!(pv_peak_power));
+                    updated_panel.insert(
+                        "inverter_peak_power_ac".to_string(),
+                        min_inverter_peak_power_kw
+                            .max(
+                                panel
+                                    .get("inverter_peak_power_ac")
+                                    .and_then(|power| power.as_f64())
+                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
+                            )
+                            .into(),
+                    ); // default to smaller value than min so always beaten
+                    updated_panel.insert(
+                        "inverter_peak_power_dc".to_string(),
+                        min_inverter_peak_power_kw
+                            .max(
+                                panel
+                                    .get("inverter_peak_power_dc")
+                                    .and_then(|power| power.as_f64())
+                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
+                            )
+                            .into(),
+                    ); // default to smaller value than min so always beaten
+                    updated_panel.insert("base_height".to_string(), json!(base_height_pv));
+                    updated_panel.insert("height".to_string(), json!(pv_height));
+                    updated_panel.insert("width".to_string(), json!(pv_width));
 
-        input.set_on_site_generation(solar_pv)?;
+                    Some((String::from(name), json!(updated_panel)))
+                })
+                .collect();
+
+            input.set_on_site_generation(json!(notional_panels))?;
+        }
     }
 
     Ok(())
@@ -1687,11 +1716,11 @@ mod tests {
     use super::*;
     use crate::future_homes_standard::future_homes_standard::create_zone_area;
     use approx::assert_relative_eq;
-    use home_energy_model::input::WasteWaterHeatRecovery;
     use home_energy_model::input::{
         EnergySupplyDetails, HeatSourceWet, HeatSourceWetDetails,
         HotWaterSource as HotWaterSourceInput,
     };
+    use home_energy_model::input::{PhotovoltaicSystem, WasteWaterHeatRecovery};
     use indexmap::indexmap;
     use rstest::{fixture, rstest};
     use serde_json::json;
@@ -1751,6 +1780,11 @@ mod tests {
     #[fixture]
     fn tfa(test_input: InputForProcessing) -> f64 {
         calc_tfa(&test_input).unwrap()
+    }
+
+    #[fixture]
+    fn is_fee() -> bool {
+        false
     }
 
     #[ignore = "currently failing as calc_design_capacity is failing (our test data is missing some expected fields on external conditions)"]
@@ -2894,35 +2928,8 @@ mod tests {
         }
     }
 
-    // this test does not exist in Python HEM
     #[rstest]
-    fn test_remove_onsite_generation_if_present(mut test_input: InputForProcessing) {
-        test_input
-            .set_on_site_generation(json!({
-                    "PV 1": {
-                        "type": "PhotovoltaicSystem",
-                        "peak_power": 2.5,
-                        "ventilation_strategy": "moderately_ventilated",
-                        "pitch": 30,
-                        "orientation360": 180,
-                        "base_height":10,
-                        "height":1,
-                        "width":1,
-                        "EnergySupply": "mains elec",
-                        "shading": [],
-                        "inverter_peak_power": 2,
-                        "inverter_is_inside": false
-                    }
-            }))
-            .unwrap();
-
-        remove_onsite_generation_if_present(&mut test_input).unwrap();
-        assert!(test_input.on_site_generation().unwrap().is_none());
-    }
-
-    #[ignore = "TODO 1.0.0a4 migration"]
-    #[rstest]
-    fn test_add_solar_pv_house_only(mut test_input: InputForProcessing) {
+    fn test_add_solar_pv_house_only(mut test_input: InputForProcessing, is_fee: bool, tfa: f64) {
         let expected_result = json!({"PV1": {
                 "EnergySupply": "mains elec",
                 "orientation360": 180.,
@@ -2939,21 +2946,210 @@ mod tests {
                 "width": 6.324555320336759,
                 "height": 3.1622776601683795
                 }
-        })
-        .as_object()
-        .cloned()
-        .unwrap();
+        });
 
-        let is_notional_a = true;
-        let is_fee = false;
-        let total_floor_area = calc_tfa(&test_input).unwrap();
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
 
-        add_solar_pv(&mut test_input, is_notional_a, is_fee, total_floor_area).unwrap();
+        let actual_result: IndexMap<String, PhotovoltaicSystem> =
+            serde_json::from_value(json!(test_input.on_site_generation().unwrap().unwrap()))
+                .unwrap();
+        let expected_result: IndexMap<String, PhotovoltaicSystem> =
+            serde_json::from_value(expected_result).unwrap();
 
+        assert_eq!(actual_result, expected_result);
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_house_only_with_multiple_panels(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        test_input.input["OnSiteGeneration"] = json!({
+            "PV1": {
+                "EnergySupply": "mains elec",
+                "orientation360": 180,
+                "peak_power": 5.5,
+                "inverter_peak_power_ac": 3.5,
+                "inverter_peak_power_dc": 3.5,
+                "inverter_type": "optimised_inverter",
+                "inverter_is_inside": false,
+                "pitch": 45,
+                "type": "PhotovoltaicSystem",
+                "ventilation_strategy": "moderately_ventilated",
+                "shading": [],
+                "base_height": 10,
+                "width": 1,
+                "height": 1,
+            },
+            "PV2": {
+                "EnergySupply": "mains elec",
+                "orientation360": 180,
+                "peak_power": 7.5,
+                "inverter_peak_power_ac": 5.5,
+                "inverter_peak_power_dc": 5.5,
+                "inverter_type": "optimised_inverter",
+                "inverter_is_inside": false,
+                "pitch": 45,
+                "type": "PhotovoltaicSystem",
+                "ventilation_strategy": "moderately_ventilated",
+                "shading": [],
+                "base_height": 10,
+                "width": 1,
+                "height": 1,
+            },
+        });
+
+        let expected_result = json!({
+            "PV1": {
+                "EnergySupply": "mains elec",
+                "orientation360": 180,
+                "peak_power": 1.8803418803418803,
+                "inverter_peak_power_ac": 3.68,
+                "inverter_peak_power_dc": 3.68,
+                "inverter_type": "optimised_inverter",
+                "inverter_is_inside": false,
+                "pitch": 45,
+                "type": "PhotovoltaicSystem",
+                "ventilation_strategy": "moderately_ventilated",
+                "shading": [],
+                "base_height": 1,
+                "width": 4.1137667560372115,
+                "height": 2.0568833780186058,
+            },
+            "PV2": {
+                "EnergySupply": "mains elec",
+                "orientation360": 180,
+                "peak_power": 2.5641025641025643,
+                "inverter_peak_power_ac": 5.5,
+                "inverter_peak_power_dc": 5.5,
+                "inverter_type": "optimised_inverter",
+                "inverter_is_inside": false,
+                "pitch": 45,
+                "type": "PhotovoltaicSystem",
+                "ventilation_strategy": "moderately_ventilated",
+                "shading": [],
+                "base_height": 1,
+                "width": 4.803844614152615,
+                "height": 2.4019223070763074,
+            },
+        });
+
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        let actual_result: IndexMap<String, PhotovoltaicSystem> =
+            serde_json::from_value(json!(test_input.on_site_generation().unwrap().unwrap()))
+                .unwrap();
+        let expected_result: IndexMap<String, PhotovoltaicSystem> =
+            serde_json::from_value(expected_result).unwrap();
+
+        assert_eq!(actual_result, expected_result);
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_house_only_with_inverter_peak_power_greater_than_min(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a house with inverter peak power values in excess of 3.68 kW
+        test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_ac"] = json!(4.0);
+        test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_dc"] = json!(4.0);
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        // Then the inverter peak power values are not modified
         assert_eq!(
-            test_input.on_site_generation().unwrap().unwrap().to_owned(),
-            expected_result
+            test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_ac"],
+            json!(4.0)
         );
+        assert_eq!(
+            test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_dc"],
+            json!(4.0)
+        );
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_house_only_with_inverter_peak_power_less_than_min(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a house with inverter peak power values in excess of 3.68 kW
+        test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_ac"] = json!(3.0);
+        test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_dc"] = json!(3.0);
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        // Then the inverter peak power values are not modified
+        assert_eq!(
+            test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_ac"],
+            json!(3.68)
+        );
+        assert_eq!(
+            test_input.input["OnSiteGeneration"]["PV1"]["inverter_peak_power_dc"],
+            json!(3.68)
+        );
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_does_not_modify_flats_in_tall_buildings(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
+        test_input.input["General"] = json!({
+            "build_type": "flat",
+            "storey_of_dwelling": 3,
+            "storeys_in_building": 16,
+            "storeys_in_dwelling": 1,
+        });
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        assert_eq!(
+            previous_on_site_generation,
+            json!(test_input.on_site_generation().unwrap().unwrap())
+        );
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_does_modify_flats_in_short_buildings(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
+
+        // Given a building with 15 storeys
+        test_input.input["General"] = json!({
+            "build_type": "flat",
+            "storey_of_dwelling": 3,
+            "storeys_in_building": 15,
+            "storeys_in_dwelling": 1,
+        });
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        // Then it differs from the actual
+        let actual_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
+        assert_ne!(previous_on_site_generation, actual_on_site_generation);
+
+        let expected_on_site_generation = json!({
+            "PV1": {
+                "EnergySupply": "mains elec",
+                "orientation360": 180,
+                "peak_power": 0.9481481481481482,
+                "inverter_peak_power_ac": 3.68,
+                "inverter_peak_power_dc": 3.68,
+                "inverter_type": "optimised_inverter",
+                "inverter_is_inside": false,
+                "pitch": 45,
+                "type": "PhotovoltaicSystem",
+                "ventilation_strategy": "moderately_ventilated",
+                "shading": [],
+                "base_height": 51.375,
+                "width": 2.9211869733608857,
+                "height": 1.4605934866804429,
+            }
+        });
+        assert_eq!(expected_on_site_generation, actual_on_site_generation);
     }
 
     #[rstest]
