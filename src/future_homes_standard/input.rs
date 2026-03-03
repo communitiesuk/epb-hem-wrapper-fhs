@@ -64,7 +64,7 @@ impl InputForProcessing {
         serde_json::from_value(self.input).map_err(|err| anyhow!(err))
     }
 
-    fn root(&self) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
+    pub fn root(&self) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
         self.input
             .as_object()
             .ok_or(json_error("Root document is not an object"))

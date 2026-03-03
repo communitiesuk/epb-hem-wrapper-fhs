@@ -2791,7 +2791,9 @@ mod tests {
     }
 
     #[rstest]
-    fn test_edit_space_cool_system(mut test_input: InputForProcessing) {
+    fn test_edit_spacecoolsystem_updates_cooling_if_parto_active_cooling_required_is_true(
+        mut test_input: InputForProcessing,
+    ) {
         test_input.set_part_o_active_cooling_required(true).unwrap();
         let _ = edit_space_cool_system(&mut test_input);
         let space_cool_system = test_input.space_cool_system().unwrap().unwrap();
@@ -2807,6 +2809,21 @@ mod tests {
                 Some(ENERGY_SUPPLY_NAME_ELECTRICITY)
             );
         }
+    }
+
+    #[rstest]
+    fn test_edit_spacecoolsystem_removes_cooling_if_parto_active_cooling_required_is_false(
+        mut test_input: InputForProcessing,
+    ) {
+        test_input
+            .set_part_o_active_cooling_required(false)
+            .unwrap();
+        let _ = edit_space_cool_system(&mut test_input);
+        assert!(!test_input.root().unwrap().contains_key("SpaceCoolSystem"));
+        assert!(!test_input.zone_node().unwrap()["whole dwelling"]
+            .as_object()
+            .unwrap()
+            .contains_key("SpaceCoolSystem"));
     }
 
     // this test does not exist in Python HEM
