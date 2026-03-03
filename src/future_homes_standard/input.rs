@@ -2322,20 +2322,35 @@ impl UValueEditableBuildingElement for UValueEditableBuildingElementJsonValue<'_
     }
 }
 
+pub(super) fn set_control_min_name_for_storage_tank_heat_source(
+    heat_source: &mut JsonValue,
+    control_name: &str,
+) -> JsonAccessResult<()> {
+    heat_source
+        .as_object_mut()
+        .ok_or(json_error("Heat source is not an object"))?
+        .insert("Controlmin".into(), json!(control_name));
+    Ok(())
+}
+
+pub(super) fn set_control_max_name_for_storage_tank_heat_source(
+    heat_source: &mut JsonValue,
+    control_name: &str,
+) -> JsonAccessResult<()> {
+    heat_source
+        .as_object_mut()
+        .ok_or(json_error("Heat source is not an object"))?
+        .insert("Controlmax".into(), json!(control_name));
+    Ok(())
+}
+
 pub trait HotWaterSourceDetailsForProcessing {
+    fn all_storage_tank_heat_sources(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;
     fn is_storage_tank(&self) -> bool;
     fn is_combi_boiler(&self) -> bool;
     fn is_hiu(&self) -> bool;
     fn is_point_of_use(&self) -> bool;
     fn is_smart_hot_water_tank(&self) -> bool;
-    fn set_control_min_name_for_storage_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()>;
-    fn set_control_max_name_for_storage_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()>;
     fn set_control_min_name_for_smart_hot_water_tank_heat_sources(
         &mut self,
         control_name: &str,
@@ -2353,6 +2368,21 @@ pub trait HotWaterSourceDetailsForProcessing {
 pub struct HotWaterSourceDetailsJsonMap<'a>(pub &'a mut Map<std::string::String, JsonValue>);
 
 impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
+    fn all_storage_tank_heat_sources(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>> {
+        if !self.is_storage_tank() {
+            return Err(json_error("Only StorageTank hw cylinders have HeatSources"));
+        }
+
+        let heat_sources = self
+            .0
+            .get_mut("HeatSource")
+            .ok_or(json_error("HeatSource field not found"))?
+            .as_object_mut()
+            .ok_or(json_error("HeatSource field is not an object"))?;
+
+        Ok(heat_sources.values_mut().collect_vec())
+    }
+
     fn is_storage_tank(&self) -> bool {
         self.0
             .get("type")
@@ -2386,40 +2416,6 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
             .get("type")
             .and_then(|source_type| source_type.as_str())
             .is_some_and(|source_type| source_type == "SmartHotWaterTank")
-    }
-
-    fn set_control_min_name_for_storage_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()> {
-        if !self.is_storage_tank() {
-            return Ok(());
-        }
-
-        if let Some(heat_sources) = self.0.get_mut("HeatSource").and_then(|v| v.as_object_mut()) {
-            for heat_source in heat_sources.values_mut().flat_map(|v| v.as_object_mut()) {
-                heat_source.insert("Controlmin".into(), json!(control_name));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn set_control_max_name_for_storage_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()> {
-        if !self.is_storage_tank() {
-            return Ok(());
-        }
-
-        if let Some(heat_sources) = self.0.get_mut("HeatSource").and_then(|v| v.as_object_mut()) {
-            for heat_source in heat_sources.values_mut().flat_map(|v| v.as_object_mut()) {
-                heat_source.insert("Controlmax".into(), json!(control_name));
-            }
-        }
-
-        Ok(())
     }
 
     fn set_control_min_name_for_smart_hot_water_tank_heat_sources(

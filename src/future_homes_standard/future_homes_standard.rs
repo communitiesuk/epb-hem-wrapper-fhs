@@ -3,8 +3,9 @@ use crate::future_homes_standard::fhs_hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
 use crate::future_homes_standard::input::{
-    json_error, HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap,
-    InputForProcessing, JsonAccessResult,
+    json_error, set_control_max_name_for_storage_tank_heat_source,
+    set_control_min_name_for_storage_tank_heat_source, HotWaterSourceDetailsForProcessing,
+    HotWaterSourceDetailsJsonMap, InputForProcessing, JsonAccessResult,
 };
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
@@ -1138,26 +1139,38 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         }),
     )?;
 
-    for mut source in input
+    for mut hw_source in input
         .hot_water_source_mut()?
         .values_mut()
         .flat_map(|value| value.as_object_mut())
         .map(HotWaterSourceDetailsJsonMap)
     {
-        if source.is_storage_tank() {
-            source.set_control_min_name_for_storage_tank_heat_sources(hw_min_temp)?;
-            source.set_control_max_name_for_storage_tank_heat_sources(hw_max_temp)?;
-        } else if source.is_smart_hot_water_tank() {
-            source.set_control_max_name_for_smart_hot_water_tank_heat_sources(
+        if hw_source.is_storage_tank() {
+            for heat_source in hw_source.all_storage_tank_heat_sources()? {
+                let is_solar_thermal_system = heat_source
+                    .as_object()
+                    .and_then(|v| v.get("type"))
+                    .and_then(|v| v.as_str())
+                    .map(|heat_source_type|heat_source_type == "SolarThermalSystem")
+                    .ok_or_else(|| json_error("Heat source type missing or not a string"))?;
+
+                set_control_max_name_for_storage_tank_heat_source(heat_source, hw_max_temp)?;
+
+                if !is_solar_thermal_system {
+                    set_control_min_name_for_storage_tank_heat_source(heat_source, hw_min_temp)?;
+                }
+            }
+        } else if hw_source.is_smart_hot_water_tank() {
+            hw_source.set_control_max_name_for_smart_hot_water_tank_heat_sources(
                 hw_smart_hot_water_tank_max_soc_name,
             )?;
-            source.set_control_min_name_for_smart_hot_water_tank_heat_sources(
+            hw_source.set_control_min_name_for_smart_hot_water_tank_heat_sources(
                 hw_smart_hot_water_tank_min_soc_name,
             )?;
-            source.set_temp_setpoint_max_for_smart_hot_water_tank_heat_sources(
+            hw_source.set_temp_setpoint_max_for_smart_hot_water_tank_heat_sources(
                 hw_smart_hot_water_tank_temp_max_name,
             )?;
-        } else if source.is_combi_boiler() || source.is_point_of_use() || source.is_hiu() {
+        } else if hw_source.is_combi_boiler() || hw_source.is_point_of_use() || hw_source.is_hiu() {
             // Instantaneous water heating systems must be available 24 hours a day
             // so do nothing
         } else {
@@ -4955,6 +4968,44 @@ mod tests {
                     "time_series_step": 0.5,
                     "type": "SetpointTimeControl",
                 })
+            );
+        }
+
+        #[rstest]
+        fn test_solar_thermal_has_no_min(mut input: InputForProcessing) {
+            // Given a dwelling with an ordinary StorageTank fed by header tank heated by solar thermal
+            input.input["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({
+                "SolarThermalSystem": {
+                    "type": "SolarThermalSystem",
+                    "sol_loc": "OUT",
+                    "area_module": 3,
+                    "modules": 1,
+                    "peak_collector_efficiency": 0.8,
+                    "incidence_angle_modifier": 0.9,
+                    "first_order_hlc": 3.5,
+                    "second_order_hlc": 0,
+                    "collector_mass_flow_rate": 1,
+                    "power_pump": 0.1,
+                    "power_pump_control": 0.01,
+                    "EnergySupply": "mains elec",
+                    "tilt": 30,
+                    "orientation360": 180,
+                    "solar_loop_piping_hlc": 0.5,
+                    "heater_position": 0.08,
+                    "thermostat_position": 0.33,
+                }
+            });
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+            // Then only Controlmax is set
+            assert!(input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]
+                ["SolarThermalSystem"]
+                .get("Controlmin")
+                .is_none());
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["SolarThermalSystem"]
+                    ["Controlmax"],
+                "_HW_max_temp"
             );
         }
     }
