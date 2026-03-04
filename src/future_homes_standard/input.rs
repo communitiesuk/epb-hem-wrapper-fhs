@@ -1610,6 +1610,21 @@ impl InputForProcessing {
             .collect())
     }
 
+    pub(crate) fn all_building_elements_mut(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+        Ok(self
+            .zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|building_element_node| building_element_node.as_object_mut())
+            })
+            .flat_map(|building_elements| building_elements.values_mut())
+            .filter_map(|element| element.as_object_mut())
+            .collect())
+    }
+
     pub fn all_transparent_building_elements_mut(
         &mut self,
     ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {

@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use smartstring::alias::String;
 use std::collections::HashMap;
+use std::convert::Into;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
@@ -157,6 +158,7 @@ pub(crate) fn apply_fhs_preprocessing(
     create_window_opening_schedule(input)?;
     create_vent_opening_schedule(input)?;
     window_treatment(input)?;
+    create_thermal_penetration(input)?;
     if !is_fee {
         calc_sfp_mech_vent(input)?;
     }
@@ -3083,6 +3085,106 @@ fn window_treatment(input: &mut InputForProcessing) -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+static COLOUR_TO_SOLAR_ABSORPTION_MAP: LazyLock<IndexMap<&'static str, f64>> =
+    LazyLock::new(|| [("Light", 0.3), ("Intermediate", 0.6), ("Dark", 0.9)].into());
+static AREAL_HEAT_MAP: LazyLock<IndexMap<&'static str, usize>> = LazyLock::new(|| {
+    [
+        ("Very light", 50000),
+        ("Light", 75000),
+        ("Medium", 110000),
+        ("Heavy", 175000),
+        ("Very heavy", 250000),
+    ]
+    .into()
+});
+static MASS_DISTRIBUTION_MAP: LazyLock<IndexMap<&'static str, &'static str>> =
+    LazyLock::new(|| {
+        [
+            ("I: Mass concentrated at internal side", "I"),
+            ("E: Mass concentrated at external side", "E"),
+            ("IE: Mass divided over internal and external side", "IE"),
+            ("D: Mass equally distributed", "D"),
+            ("M: Mass concentrated inside", "M"),
+        ]
+        .into()
+    });
+
+pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for building_element in input.all_building_elements_mut()? {
+        let element_type = building_element
+            .get("type")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| anyhow!("Building element type not found"))?
+            .to_owned();
+        if element_type == "BuildingElementOpaque" {
+            let solar_absorption_value = *COLOUR_TO_SOLAR_ABSORPTION_MAP
+                .get(
+                    building_element
+                        .get("colour")
+                        .and_then(|c| c.as_str())
+                        .ok_or_else(|| anyhow!("Building element colour was not a string."))?,
+                )
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Unrecognised building element colour '{}' passed.",
+                        building_element["colour"]
+                    )
+                })?;
+            building_element.insert(
+                "solar_absorption_coeff".into(),
+                json!(solar_absorption_value),
+            );
+            building_element.remove("colour");
+        }
+        if [
+            "BuildingElementOpaque",
+            "BuildingElementGround",
+            "BuildingElementAdjacentConditionedSpace",
+            "BuildingElementAdjacentUnconditionedSpace_Simple",
+            "BuildingElementPartyWall",
+        ]
+        .contains(&element_type.as_str())
+        {
+            let areal_heat_value = *AREAL_HEAT_MAP
+                .get(
+                    building_element
+                        .get("areal_heat_capacity")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow!("Building element areal heat capacity was not a string.")
+                        })?,
+                )
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Building element areal heat capacity had unexpected value '{}'.",
+                        building_element["areal_heat_capacity"]
+                    )
+                })?;
+            building_element["areal_heat_capacity"] = json!(areal_heat_value);
+            let mass_distribution_value = MASS_DISTRIBUTION_MAP
+                .get(
+                    building_element
+                        .get("mass_distribution_class")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Building element mass distribution class value was not a string."
+                            )
+                        })?,
+                )
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Building element mass distribution value '{}' was not recognised.",
+                        building_element["mass_distribution_class"]
+                    )
+                })?;
+            building_element["mass_distribution_class"] = json!(mass_distribution_value);
         }
     }
 
