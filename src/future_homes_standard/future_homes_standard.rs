@@ -1151,7 +1151,7 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
                     .as_object()
                     .and_then(|v| v.get("type"))
                     .and_then(|v| v.as_str())
-                    .map(|heat_source_type|heat_source_type == "SolarThermalSystem")
+                    .map(|heat_source_type| heat_source_type == "SolarThermalSystem")
                     .ok_or_else(|| json_error("Heat source type missing or not a string"))?;
 
                 set_control_max_name_for_storage_tank_heat_source(heat_source, hw_max_temp)?;
