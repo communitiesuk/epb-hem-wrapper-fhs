@@ -23,6 +23,7 @@ mod fhs_imev_scheduler;
 pub mod fhs_schema_validation;
 pub(crate) mod fhs_sleeved_dhn_validation;
 mod fhs_storeys_validation;
+pub(crate) mod fhs_ventilation;
 pub(crate) mod fhs_window_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;

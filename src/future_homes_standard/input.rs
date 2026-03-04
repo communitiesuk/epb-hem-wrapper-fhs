@@ -1766,6 +1766,16 @@ impl InputForProcessing {
             .collect()
     }
 
+    pub(crate) fn all_building_element_values(&self) -> JsonAccessResult<Vec<&JsonValue>> {
+        Ok(self
+            .zone_node()?
+            .values()
+            .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
+            .flatten()
+            .map(|(_, el)| el)
+            .collect())
+    }
+
     #[cfg(test)]
     pub(crate) fn building_element_by_key(
         &self,
