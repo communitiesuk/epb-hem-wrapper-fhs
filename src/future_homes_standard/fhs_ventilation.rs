@@ -397,4 +397,53 @@ mod test {
 
         assert_eq!(json!(results), expected);
     }
+
+    #[rstest]
+    fn test_vent_not_assigned_to_rooflight(mut input: InputForProcessing) {
+        // Given an input with a dwelling with two wet rooms, a rooflight, two walls
+        // and a part f minimum air flow rate of 100
+        input.input["Zone"]["whole dwelling"]["BuildingElement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("window 1");
+        input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]["pitch"] = json!(180);
+        input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]["orientation360"] =
+            json!(180);
+
+        let minimum_air_flow_rate = 100.;
+
+        // When the mechanical vents are created
+        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+
+        // Then there are two dMEVs created: one for each wet room
+        // the total air flow rate of the dMEVs is equal to the part f minimum
+        // the positions of the two vents are correctly taken from the two
+        // walls because dMEVs are not placed in rooflights
+        let expected = json!({
+            "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 270.,
+                "pitch": 90.,
+            },
+            "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0.,
+                "pitch": 90.,
+            },
+        });
+
+        assert_eq!(json!(results), expected);
+    }
 }
