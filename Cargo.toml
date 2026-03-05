@@ -10,7 +10,7 @@ bitflags = "2.10.0"
 clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "main" }
-indexmap = { version = "2.12.1", features = ["serde", "arbitrary"] }
+indexmap = { version = "2.12.1", features = ["serde"] }
 itertools = "0.14.0"
 jsonschema = "0.42.1"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
