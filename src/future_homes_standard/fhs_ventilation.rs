@@ -7,6 +7,72 @@ use indexmap::IndexMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// Returns a Value of vents that provide background ventilation
+/// Each vent's height, pitch and orientation is based on it being
+/// located in one of the building's windows or walls.
+pub(crate) fn create_background_vents(
+    input: InputForProcessing,
+    minimum_vent_area: f64,
+    minimum_vent_count: usize,
+) -> anyhow::Result<Value> {
+    let building_elements = input.all_building_element_values()?;
+    let window_vent_placements = sorted_windows_by_area(&building_elements)?;
+    let mut num_remaining_vents = minimum_vent_count - window_vent_placements.len();
+    let mut wall_vent_placements = Vec::new();
+
+    // Place any remaining vents in walls in order of decreasing wall area,
+    // i.e.starting with the wall with the largest area
+    if num_remaining_vents > 0 {
+        let mut walls = sorted_walls_by_area(&building_elements)?;
+
+        if walls.is_empty() {
+            bail!("Unable to place {num_remaining_vents} remaining background vent(s). Dwelling lacks suitable walls.");
+        }
+
+        walls.reverse();
+
+        let mut wall_index = 0;
+        // keep looping through the walls until all vents are placed
+        while num_remaining_vents > 0 {
+            wall_vent_placements.push(walls[wall_index].clone());
+            num_remaining_vents -= 1;
+            wall_index = (wall_index + 1) % walls.len();
+        }
+    }
+
+    let vent_placements = [window_vent_placements, wall_vent_placements].concat();
+    let mut background_vents = IndexMap::new();
+    let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
+    let vent_area = minimum_vent_area / vent_placements.len() as f64;
+
+    for (i, vent_placement) in vent_placements.iter().enumerate() {
+        let vent_key = format!("vent_{i}");
+        let vent_value =
+            create_background_vent(ventilation_zone_base_height, vent_area, vent_placement)?;
+
+        background_vents.insert(vent_key, vent_value);
+    }
+
+    Ok(json!(background_vents))
+}
+
+fn create_background_vent(
+    ventilation_zone_base_height: f64,
+    vent_area: f64,
+    building_element: &Value,
+) -> anyhow::Result<Value> {
+    let mid_height_air_flow_path =
+        calc_vent_mid_height_airflow_path(ventilation_zone_base_height, building_element)?;
+
+    Ok(json!({
+        "area_cm2": vent_area,
+        "pitch": building_element["pitch"],
+        "orientation360": building_element["orientation360"],
+        "mid_height_air_flow_path": mid_height_air_flow_path,
+        "pressure_difference_ref": 20,
+    }))
+}
+
 /// Returns an indexmap of mechanical ventilation objects with vent_type
 /// "Decentralised continuous MEV", according to the following rules:
 ///     - Create one dMEV per wet room
@@ -209,11 +275,12 @@ fn sorted_walls_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Valu
 #[cfg(test)]
 mod test {
     use super::*;
+    use approx::assert_relative_eq;
     use rstest::*;
     use serde_json::json;
 
     #[fixture]
-    fn input() -> InputForProcessing {
+    fn mech_vent_input() -> InputForProcessing {
         let input_json = json!({
             "NumberOfWetRooms": 2,
             "InfiltrationVentilation": {
@@ -314,13 +381,14 @@ mod test {
     }
 
     #[rstest]
-    fn test_two_vents_assigned_to_windows(input: InputForProcessing) {
+    fn test_two_vents_assigned_to_windows(mech_vent_input: InputForProcessing) {
         // Given an input with a dwelling with two wet rooms, two windows
         // and a part f minimum air flow rate of 100
         let minimum_air_flow_rate = 100.;
 
         // When the new mechanical vents are created
-        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+        let results =
+            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -354,17 +422,18 @@ mod test {
     }
 
     #[rstest]
-    fn test_two_vents_assigned_to_window_and_wall(mut input: InputForProcessing) {
+    fn test_two_vents_assigned_to_window_and_wall(mut mech_vent_input: InputForProcessing) {
         // Given an input with a dwelling with two wet rooms, one window, two walls
         // and a part f minimum air flow rate of 100
-        input.input["Zone"]["whole dwelling"]["BuildingElement"]
+        mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]
             .as_object_mut()
             .unwrap()
             .remove("window 1");
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
-        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+        let results =
+            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -399,21 +468,23 @@ mod test {
     }
 
     #[rstest]
-    fn test_vent_not_assigned_to_rooflight(mut input: InputForProcessing) {
+    fn test_vent_not_assigned_to_rooflight(mut mech_vent_input: InputForProcessing) {
         // Given an input with a dwelling with two wet rooms, a rooflight, two walls
         // and a part f minimum air flow rate of 100
-        input.input["Zone"]["whole dwelling"]["BuildingElement"]
+        mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]
             .as_object_mut()
             .unwrap()
             .remove("window 1");
-        input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]["pitch"] = json!(180);
-        input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]["orientation360"] =
+        mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]["pitch"] =
             json!(180);
+        mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]
+            ["orientation360"] = json!(180);
 
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
-        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+        let results =
+            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -448,19 +519,22 @@ mod test {
     }
 
     #[rstest]
-    fn test_five_vents_assigned_to_window_and_walls_recursively(mut input: InputForProcessing) {
+    fn test_five_vents_assigned_to_window_and_walls_recursively(
+        mut mech_vent_input: InputForProcessing,
+    ) {
         // Given an input with a dwelling with 5 wet rooms, one window, two walls
         // and a part f minimum air flow rate of 100
-        input.input["NumberOfWetRooms"] = json!(5);
+        mech_vent_input.input["NumberOfWetRooms"] = json!(5);
 
-        input.input["Zone"]["whole dwelling"]["BuildingElement"]
+        mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]
             .as_object_mut()
             .unwrap()
             .remove("window 1");
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
-        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+        let results =
+            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are ten dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -530,10 +604,10 @@ mod test {
     }
 
     #[rstest]
-    fn test_raises_error_when_insufficient_walls(mut input: InputForProcessing) {
+    fn test_raises_error_when_insufficient_walls(mut mech_vent_input: InputForProcessing) {
         // Given an input with a dwelling with five wet rooms, two windows but no walls
-        input.input["NumberOfWetRooms"] = json!(5);
-        let building_element = input.input["Zone"]["whole dwelling"]["BuildingElement"]
+        mech_vent_input.input["NumberOfWetRooms"] = json!(5);
+        let building_element = mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]
             .as_object_mut()
             .unwrap();
         building_element.remove("wall 0");
@@ -542,12 +616,97 @@ mod test {
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
-        let results = create_mechanical_ventilation(input, minimum_air_flow_rate);
+        let results = create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate);
 
         // Then an error is raised describing the lack of walls
         assert_eq!(
             results.unwrap_err().to_string(),
             "Unable to place 3 remaining vent(s). Dwelling lacks suitable walls."
         );
+    }
+
+    #[fixture]
+    fn background_vents_input() -> InputForProcessing {
+        let input_json = json!({
+            "NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 1.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 1": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 70,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 7.0,
+                        },
+                        "wall 1": {
+                            "type": "BuildingElementOpaque",
+                            "colour": "Intermediate",
+                            "thermal_resistance_construction": 0.72,
+                            "areal_heat_capacity": "Very light",
+                            "mass_distribution_class": "E: Mass concentrated at external side",
+                            "pitch": 80,
+                            "is_external_door": false,
+                            "orientation360": 0,
+                            "base_height": 0.2,
+                            "height": 2.5,
+                            "width": 8,
+                            "area": 20.0,
+                        },
+                    }
+                }
+            },
+
+        });
+
+        InputForProcessing { input: input_json }
+    }
+
+    #[rstest]
+    fn test_mid_height_air_flow_path_uses_base_height_and_zone_base_height(
+        background_vents_input: InputForProcessing,
+    ) {
+        // Given a dwelling with a ventilation zone base height and one window and one wall,
+        // and a requirement for at least two vents
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When the background vents are generated
+        let vents = create_background_vents(
+            background_vents_input,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then the mid_height_air_flow_path for the window vent has the expected value of
+        // height * sin(pitch) + base_height - ventilation_zone_height
+        // = 1.2 * sin(radians(70)) + 7.0 - 1.0
+        // = 7.1276311449430896
+        #[allow(clippy::excessive_precision)]
+        let expected_window = 7.1276311449430896;
+
+        assert_relative_eq!(
+            vents["vent_0"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window
+        );
+
+        // And the mid_height_air_flow_path for the wall vent has the expected value of
+        // (height * sin(pitch)) / 2 + base_height - ventilation_zone_height
+        // = 2.5 * sin(radians(80)) * 0.5 + 0.2 - 1.0
+        // = 0.4310096912652599
+        let expected_wall = 0.4310096912652599;
+
+        assert_relative_eq!(
+            vents["vent_1"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_wall
+        )
     }
 }
