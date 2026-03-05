@@ -1483,7 +1483,6 @@ impl InputForProcessing {
         self.remove_root_key("OnSiteGeneration")
     }
 
-    #[cfg(test)]
     pub(crate) fn on_site_generation(
         &self,
     ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
