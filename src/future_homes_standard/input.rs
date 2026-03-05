@@ -1871,6 +1871,12 @@ impl InputForProcessing {
         self.root_object_entry_mut("InfiltrationVentilation")
     }
 
+    pub(crate) fn infiltration_ventilation(
+        &self,
+    ) -> Result<&Map<String, JsonValue>, JsonAccessError> {
+        self.root_object("InfiltrationVentilation")
+    }
+
     pub(crate) fn set_heat_source_wet(
         &mut self,
         heat_source_wet: JsonValue,
