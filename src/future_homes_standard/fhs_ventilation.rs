@@ -477,7 +477,6 @@ mod test {
             json!(180);
         mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]["window 2"]
             ["orientation360"] = json!(180);
-
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
@@ -523,7 +522,6 @@ mod test {
         // Given an input with a dwelling with 5 wet rooms, one window, two walls
         // and a part f minimum air flow rate of 100
         mech_vent_input.input["NumberOfWetRooms"] = json!(5);
-
         mech_vent_input.input["Zone"]["whole dwelling"]["BuildingElement"]
             .as_object_mut()
             .unwrap()
@@ -542,7 +540,8 @@ mod test {
         // the single window has an orientation 90
         // the smallest wall has an orientation 0
         // the largest wall has an orientation 270
-        let expected = json!({"Decentralised_Continuous_MEV_0": {
+        let expected = json!({
+            "Decentralised_Continuous_MEV_0": {
                 "sup_air_flw_ctrl": "ODA",
                 "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
@@ -596,7 +595,8 @@ mod test {
                 "mid_height_air_flow_path": 1.25,
                 "orientation360": 0.,  // next vent assigned to smallest wall
                 "pitch": 90.,
-            },});
+            },
+        });
 
         assert_eq!(results, expected);
     }
@@ -657,7 +657,6 @@ mod test {
                     }
                 }
             },
-
         });
 
         InputForProcessing { input: input_json }
@@ -787,7 +786,8 @@ mod test {
     fn test_places_vents_in_windows_and_walls_if_there_are_not_enough_windows() {
         // Given a dwelling with one window and two walls, and a requirement at least two vents
         let input = InputForProcessing {
-            input: json!({"NumberOfBedrooms": 0,
+            input: json!({
+            "NumberOfBedrooms": 0,
             "NumberOfHabitableRooms": 1,
             "InfiltrationVentilation": {"ventilation_zone_base_height": 0.0},
             "Zone": {
@@ -835,6 +835,7 @@ mod test {
         };
         let minimum_vent_area = 40.;
         let minimum_vent_count = 2;
+
         // When background vents are generated
         let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count).unwrap();
 
@@ -867,7 +868,8 @@ mod test {
     fn test_places_vents_in_all_windows() {
         // Given a dwelling with three windows and a minimum requirement for at least two vents
         let input = InputForProcessing {
-            input: json!({"NumberOfBedrooms": 0,
+            input: json!({
+            "NumberOfBedrooms": 0,
             "NumberOfHabitableRooms": 1,
             "InfiltrationVentilation": {"ventilation_zone_base_height": 0.0},
             "Zone": {
@@ -1042,13 +1044,11 @@ mod test {
         // And the mid_height_air_flow_path of the rooflight vent with 180 deg pitch is as expected
         // height * sin(pitch) + base_height - ventilation_zone_height
         // = 0.2 * 0 + 1.5 - 1.0 = 0.5  (rooflight 0)
-        let expected = 0.5;
-
         assert_relative_eq!(
             vents["vent_0"]["mid_height_air_flow_path"]
                 .as_f64()
                 .unwrap(),
-            expected
+            0.5
         );
     }
 
