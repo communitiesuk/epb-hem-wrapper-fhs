@@ -1,4 +1,5 @@
 use crate::future_homes_standard::input::{json_error, InputForProcessing};
+use anyhow::bail;
 use home_energy_model_legacy::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
@@ -36,15 +37,29 @@ pub(crate) fn create_mechanical_ventilation(
     let number_of_wet_rooms = input
         .number_of_wet_rooms()?
         .ok_or_else(|| json_error("Expected NumberOfWetRooms to be provided"))?;
-    let vent_placements: Vec<&Value> = windows_excluding_rooflights
-        .iter()
+    let mut vent_placements: Vec<Value> = windows_excluding_rooflights
+        .into_iter()
         .take(number_of_wet_rooms)
         .collect();
     // If needed, position remaining vents in largest walls
-    let num_remaining_vent_placements = number_of_wet_rooms - vent_placements.len();
+    let mut num_remaining_vent_placements = number_of_wet_rooms - vent_placements.len();
 
     if num_remaining_vent_placements > 0 {
-        // TODO wall section
+        let mut walls = sorted_walls_by_area(&building_elements)?;
+
+        if walls.is_empty() {
+            bail!("Unable to place {num_remaining_vent_placements} remaining vent(s). Dwelling lacks suitable walls.");
+        }
+
+        walls.reverse();
+
+        let mut wall_index = 0;
+        // keep looping through the walls until all vents are placed
+        while num_remaining_vent_placements > 0 {
+            vent_placements.push(walls[wall_index].clone());
+            num_remaining_vent_placements -= 1;
+            wall_index = (wall_index + 1) % walls.len();
+        }
     }
 
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
@@ -124,8 +139,8 @@ fn calc_vent_mid_height_airflow_path(
 fn sorted_windows_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Value>> {
     let mut windows = Vec::new();
 
-    for element in building_elements {
-        let el_type = element
+    for building_element in building_elements {
+        let el_type = building_element
             .as_object()
             .ok_or_else(|| json_error("Building element was not an object"))?
             .get("type")
@@ -133,21 +148,62 @@ fn sorted_windows_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Va
             .ok_or_else(|| json_error("Building element type missing or not a string"))?;
 
         if el_type == "BuildingElementTransparent" {
-            let width = element
+            let width = building_element
                 .get("width")
                 .and_then(|width| width.as_f64())
                 .ok_or_else(|| json_error("Building element width missing or invalid"))?;
-            let height = element
+            let height = building_element
                 .get("height")
                 .and_then(|height| height.as_f64())
                 .ok_or_else(|| json_error("Building element height missing or invalid"))?;
-            windows.push((width * height, (*element).clone()));
+            windows.push((width * height, (*building_element).clone()));
         }
     }
 
     windows.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     Ok(windows.into_iter().map(|(_, element)| element).collect())
+}
+
+fn sorted_walls_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Value>> {
+    let mut walls = Vec::new();
+
+    for building_element in building_elements {
+        let element = building_element
+            .as_object()
+            .ok_or_else(|| json_error("Building element was not an object"))?;
+        let el_type = element
+            .get("type")
+            .and_then(|el_type| el_type.as_str())
+            .ok_or_else(|| json_error("Building element type missing or not a string"))?;
+
+        if el_type == "BuildingElementOpaque" {
+            let pitch = element
+                .get("pitch")
+                .and_then(|pitch| pitch.as_f64())
+                .ok_or_else(|| json_error("Building element pitch missing or invalid"))?;
+
+            if pitch_class(pitch) == HeatFlowDirection::Horizontal {
+                let is_external_door = element
+                    .get("is_external_door")
+                    .and_then(|v| v.as_bool())
+                    .ok_or_else(|| {
+                        json_error("Building element is_external_door missing or invalid")
+                    })?;
+                let area = element
+                    .get("area")
+                    .and_then(|area| area.as_f64())
+                    .ok_or_else(|| json_error("Building element area missing or invalid"))?;
+
+                if !is_external_door {
+                    walls.push((area, (*building_element).clone()));
+                }
+            }
+        }
+    }
+    walls.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    Ok(walls.into_iter().map(|(_, element)| element).collect())
 }
 
 #[cfg(test)]
@@ -289,6 +345,51 @@ mod test {
                 "EnergySupply": "mains elec",
                 "design_outdoor_air_flow_rate": 50.,
                 "mid_height_air_flow_path": 2.25,
+                "orientation360": 270.,
+                "pitch": 90.,
+            },
+        });
+
+        assert_eq!(json!(results), expected);
+    }
+
+    #[rstest]
+    fn test_two_vents_assigned_to_window_and_wall(mut input: InputForProcessing) {
+        // Given an input with a dwelling with two wet rooms, one window, two walls
+        // and a part f minimum air flow rate of 100
+        input.input["Zone"]["whole dwelling"]["BuildingElement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("window 1");
+        let minimum_air_flow_rate = 100.;
+
+        // When the mechanical vents are created
+        let results = create_mechanical_ventilation(input, minimum_air_flow_rate).unwrap();
+
+        // Then there are two dMEVs created: one for each wet room
+        // the total air flow rate of the dMEVs is equal to the part f minimum
+        // the positions of the two vents are correctly taken from the window
+        // and the largest wall
+        let expected = json!({
+            "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 2.25,
+                "orientation360": 90.,
+                "pitch": 90.,
+            },
+            "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
                 "orientation360": 270.,
                 "pitch": 90.,
             },
