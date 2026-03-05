@@ -4,7 +4,7 @@ use home_energy_model_legacy::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
 use indexmap::IndexMap;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 /// Returns a Value of vents that provide background ventilation
@@ -41,7 +41,7 @@ pub(crate) fn create_background_vents(
     }
 
     let vent_placements = [window_vent_placements, wall_vent_placements].concat();
-    let mut background_vents = IndexMap::new();
+    let mut background_vents = Map::new();
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
     let vent_area = minimum_vent_area / vent_placements.len() as f64;
 
@@ -53,7 +53,7 @@ pub(crate) fn create_background_vents(
         background_vents.insert(vent_key, vent_value);
     }
 
-    Ok(json!(background_vents))
+    Ok(Value::from(background_vents))
 }
 
 fn create_background_vent(
