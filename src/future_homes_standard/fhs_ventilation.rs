@@ -953,7 +953,7 @@ mod test {
 
         // When the background vents are generated
         let vents = create_background_vents(
-            background_vents_input,
+            &background_vents_input,
             minimum_vent_area,
             minimum_vent_count,
         )
@@ -975,7 +975,7 @@ mod test {
 
         // When the background vents are generated
         let vents = create_background_vents(
-            background_vents_input,
+            &background_vents_input,
             minimum_vent_area,
             minimum_vent_count,
         )
@@ -1032,7 +1032,7 @@ mod test {
         let minimum_vent_count = 2;
 
         // When background vents are generated
-        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+        let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count).unwrap();
 
         // Then a vent is placed in the rooflight and the other windows
         let expected_num_vents = 3; // max(number_of_windows, minimum_vent_count)
@@ -1080,7 +1080,7 @@ mod test {
         let minimum_vent_count = 2;
 
         // When background vents are generated
-        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count);
+        let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count);
 
         // Then an error is raised describing the lack of walls
         assert_eq!(
@@ -1130,7 +1130,7 @@ mod test {
 
         // When background vents are generated
         let vents =
-            create_background_vents(no_windows_input, minimum_vent_area, minimum_vent_count);
+            create_background_vents(&no_windows_input, minimum_vent_area, minimum_vent_count);
 
         // Then an error is raised describing the lack of windows and/or walls
         assert_eq!(
@@ -1150,7 +1150,7 @@ mod test {
 
         // When background vents are generated
         let vents =
-            create_background_vents(no_windows_input, minimum_vent_area, minimum_vent_count)
+            create_background_vents(&no_windows_input, minimum_vent_area, minimum_vent_count)
                 .unwrap();
 
         // Then no vents are returned
