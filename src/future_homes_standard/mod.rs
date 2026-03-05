@@ -32,6 +32,7 @@ pub(crate) mod future_homes_standard_notional;
 pub(crate) mod input;
 pub(crate) mod metrics;
 mod project_lookups;
+mod fhs_part_f_validation;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;
