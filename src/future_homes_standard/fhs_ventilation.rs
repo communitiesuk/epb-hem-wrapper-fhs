@@ -3,11 +3,9 @@ use anyhow::bail;
 use home_energy_model_legacy::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
-use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
-use std::sync::Arc;
 
-/// Returns a Value of vents that provide background ventilation
+/// Returns a JSON Value containing vents that provide background ventilation
 /// Each vent's height, pitch and orientation is based on it being
 /// located in one of the building's windows or walls.
 pub(crate) fn create_background_vents(
@@ -73,7 +71,7 @@ fn create_background_vent(
     }))
 }
 
-/// Returns an indexmap of mechanical ventilation objects with vent_type
+/// Returns a JSON Value containing mechanical ventilation objects with vent_type
 /// "Decentralised continuous MEV", according to the following rules:
 ///     - Create one dMEV per wet room
 ///     - Assign dMEVs first to the smallest windows, then to the largest walls if needed
@@ -81,7 +79,7 @@ fn create_background_vent(
 pub(crate) fn create_mechanical_ventilation(
     input: InputForProcessing,
     minimum_air_flow_rate: f64,
-) -> anyhow::Result<IndexMap<Arc<str>, Value>> {
+) -> anyhow::Result<Value> {
     let building_elements = input.all_building_element_values()?;
 
     // Position vents in smallest windows that aren't rooflights
@@ -131,7 +129,7 @@ pub(crate) fn create_mechanical_ventilation(
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
     let airflow_rate_per_vent = minimum_air_flow_rate / number_of_wet_rooms as f64;
 
-    let mut dmevs = IndexMap::new();
+    let mut dmevs = Map::new();
     for (i, vent_placement) in vent_placements.iter().enumerate() {
         let vent_mid_height_airflow_path =
             calc_vent_mid_height_airflow_path(ventilation_zone_base_height, vent_placement)?;
@@ -152,10 +150,10 @@ pub(crate) fn create_mechanical_ventilation(
             orientation,
             pitch,
         );
-        dmevs.insert(dmev_key.into(), dmev_value);
+        dmevs.insert(dmev_key, dmev_value);
     }
 
-    Ok(dmevs) // todo return json value?
+    Ok(Value::from(dmevs))
 }
 
 fn create_dmev(
@@ -418,7 +416,7 @@ mod test {
             },
         });
 
-        assert_eq!(json!(results), expected);
+        assert_eq!(results, expected);
     }
 
     #[rstest]
@@ -464,7 +462,7 @@ mod test {
             },
         });
 
-        assert_eq!(json!(results), expected);
+        assert_eq!(results, expected);
     }
 
     #[rstest]
@@ -515,7 +513,7 @@ mod test {
             },
         });
 
-        assert_eq!(json!(results), expected);
+        assert_eq!(results, expected);
     }
 
     #[rstest]
@@ -600,7 +598,7 @@ mod test {
                 "pitch": 90.,
             },});
 
-        assert_eq!(json!(results), expected);
+        assert_eq!(results, expected);
     }
 
     #[rstest]
