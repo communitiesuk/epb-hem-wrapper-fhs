@@ -97,7 +97,6 @@ pub(crate) fn create_mechanical_ventilation(
         }
     }
 
-    // TODO review against the python - number of wet rooms optional but treated as expected here
     let number_of_wet_rooms = input
         .number_of_wet_rooms()?
         .ok_or_else(|| json_error("Expected NumberOfWetRooms to be provided"))?;
@@ -106,7 +105,8 @@ pub(crate) fn create_mechanical_ventilation(
         .take(number_of_wet_rooms)
         .collect();
     // If needed, position remaining vents in largest walls
-    let mut num_remaining_vent_placements = number_of_wet_rooms - vent_placements.len();
+    let mut num_remaining_vent_placements =
+        number_of_wet_rooms as isize - vent_placements.len() as isize;
 
     if num_remaining_vent_placements > 0 {
         let mut walls = sorted_walls_by_area(&building_elements)?;
