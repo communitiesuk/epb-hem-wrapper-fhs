@@ -2,7 +2,7 @@ use crate::future_homes_standard::input::{json_error, InputForProcessing};
 use home_energy_model_legacy::core::space_heat_demand::building_element::{
     pitch_class, HeatFlowDirection,
 };
-use indexmap::{indexmap, IndexMap};
+use indexmap::IndexMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -47,12 +47,34 @@ pub(crate) fn create_mechanical_ventilation(
         // TODO wall section
     }
 
-    let _ventilation_zone_base_height = input.ventilation_zone_base_height()?;
-    let _airflow_rate_per_vent = minimum_air_flow_rate / number_of_wet_rooms as f64;
+    let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
+    let airflow_rate_per_vent = minimum_air_flow_rate / number_of_wet_rooms as f64;
 
-    // TODO finish section
+    let mut dmevs = IndexMap::new();
+    for (i, vent_placement) in vent_placements.iter().enumerate() {
+        let vent_mid_height_airflow_path =
+            calc_vent_mid_height_airflow_path(ventilation_zone_base_height, vent_placement)?;
+        let (orientation, pitch) = vent_placement
+            .as_object()
+            .and_then(|el| {
+                let orientation = el.get("orientation360")?.as_f64()?;
+                let pitch = el.get("pitch")?.as_f64()?;
 
-    Ok(indexmap! {"todo".into() => json!({})})
+                Some((orientation, pitch))
+            })
+            .ok_or_else(|| json_error("Building element fields missing or invalid"))?;
+
+        let dmev_key = format!("Decentralised_Continuous_MEV_{i}");
+        let dmev_value = create_dmev(
+            airflow_rate_per_vent,
+            vent_mid_height_airflow_path,
+            orientation,
+            pitch,
+        );
+        dmevs.insert(dmev_key.into(), dmev_value);
+    }
+
+    Ok(dmevs) // todo return json value?
 }
 
 fn create_dmev(
@@ -76,11 +98,11 @@ fn create_dmev(
     })
 }
 
-fn _calc_vent_mid_height_airflow_path(
-    _ventilation_zone_base_height: f64,
-    building_element: Value,
+fn calc_vent_mid_height_airflow_path(
+    ventilation_zone_base_height: f64,
+    building_element: &Value,
 ) -> anyhow::Result<f64> {
-    let (el_type, _base_height, _height, _pitch) = building_element
+    let (el_type, base_height, height, pitch) = building_element
         .as_object()
         .and_then(|el| {
             let el_type = el.get("type")?.as_str()?;
@@ -91,10 +113,12 @@ fn _calc_vent_mid_height_airflow_path(
             Some((el_type, base_height, height, pitch))
         })
         .ok_or_else(|| json_error("Building element fields missing or invalid"))?;
-    if el_type == "BuildingElementOpaque" {
-        // base_height + height
-    };
-    todo!()
+
+    Ok(if el_type == "BuildingElementOpaque" {
+        base_height + (height * pitch.to_radians().sin() / 2.) - ventilation_zone_base_height
+    } else {
+        base_height + height * pitch.to_radians().sin() - ventilation_zone_base_height
+    })
 }
 
 fn sorted_windows_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Value>> {
@@ -234,7 +258,6 @@ mod test {
     }
 
     #[rstest]
-    #[ignore]
     fn test_two_vents_assigned_to_windows(input: InputForProcessing) {
         // Given an input with a dwelling with two wet rooms, two windows
         // and a part f minimum air flow rate of 100
@@ -253,10 +276,10 @@ mod test {
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
-                "design_outdoor_air_flow_rate": 50,
+                "design_outdoor_air_flow_rate": 50.,
                 "mid_height_air_flow_path": 2.25,
-                "orientation360": 90,
-                "pitch": 90,
+                "orientation360": 90.,
+                "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
                 "sup_air_flw_ctrl": "ODA",
@@ -264,10 +287,10 @@ mod test {
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
-                "design_outdoor_air_flow_rate": 50,
+                "design_outdoor_air_flow_rate": 50.,
                 "mid_height_air_flow_path": 2.25,
-                "orientation360": 270,
-                "pitch": 90,
+                "orientation360": 270.,
+                "pitch": 90.,
             },
         });
 
