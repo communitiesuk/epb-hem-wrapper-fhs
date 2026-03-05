@@ -143,10 +143,8 @@ fn do_fhs_preprocessing(
     ) {
         apply_fhs_notional_preprocessing(
             input_for_processing,
-            flags.contains(FhsFlags::FHS_NOT_A_ASSUMPTIONS),
-            flags.contains(FhsFlags::FHS_NOT_B_ASSUMPTIONS),
-            flags.contains(FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS),
-            flags.contains(FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS),
+            &Default::default(),
+            false, // TODO correct arguments for migration to 1.0.0a4
         )?;
     }
     if flags.intersects(

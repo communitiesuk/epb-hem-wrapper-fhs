@@ -1,7 +1,6 @@
 use super::future_homes_standard::{apply_fhs_preprocessing, calc_tfa, minimum_air_change_rate};
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::input::InputForProcessing;
-use anyhow::anyhow;
 use csv::WriterBuilder;
 use home_energy_model::output_writer::OutputWriter;
 use serde_json::json;
@@ -33,9 +32,7 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
     //  - flueless gas fires
 
     // Retrieve the number of bedrooms and total volume
-    let number_of_bedrooms = input
-        .number_of_bedrooms()?
-        .ok_or_else(|| anyhow!("Expected number of bedrooms to be indicated."))?;
+    let number_of_bedrooms = input.number_of_bedrooms()?;
     let total_volume = input.total_zone_volume()?;
 
     let total_floor_area = calc_tfa(input)?;

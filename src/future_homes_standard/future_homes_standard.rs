@@ -708,10 +708,7 @@ fn calc_tfa_from_finalised_input(input: &Input) -> f64 {
 }
 
 pub(super) fn calc_nbeds(input: &InputForProcessing) -> anyhow::Result<usize> {
-    match input.number_of_bedrooms()? {
-        Some(bedrooms) => Ok(bedrooms),
-        None => bail!("missing NumberOfBedrooms - required for FHS calculation"),
-    }
+    Ok(input.number_of_bedrooms()?)
 }
 
 pub(super) fn calc_n_occupants(

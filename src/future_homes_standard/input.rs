@@ -307,16 +307,22 @@ impl InputForProcessing {
         Ok(result)
     }
 
-    pub fn number_of_bedrooms(&self) -> JsonAccessResult<Option<usize>> {
-        match self.input.get("NumberOfBedrooms") {
-            None => Ok(None),
-            Some(JsonValue::Number(n)) => Ok(Some(
-                n.as_u64()
-                    .ok_or(json_error("NumberOfBedrooms not a positive integer"))?
-                    as usize,
-            )),
-            Some(_) => Err(json_error("NumberOfBedrooms not a number")),
-        }
+    pub fn number_of_bedrooms(&self) -> JsonAccessResult<usize> {
+        Ok(self
+            .input
+            .get("NumberOfBedrooms")
+            .and_then(|n| n.as_u64())
+            .ok_or_else(|| json_error("NumberOfBedrooms not available as non-negative integer"))?
+            as usize)
+    }
+
+    pub fn number_of_habitable_rooms(&self) -> JsonAccessResult<usize> {
+        Ok(self
+            .input
+            .get("NumberOfHabitableRooms")
+            .and_then(|n| n.as_u64())
+            .ok_or_else(|| json_error("NumberOfHabitableRooms not available as positive integer"))?
+            as usize)
     }
 
     pub(crate) fn number_of_wet_rooms(&self) -> JsonAccessResult<Option<usize>> {

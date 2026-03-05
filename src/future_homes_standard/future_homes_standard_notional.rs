@@ -1,10 +1,14 @@
 use super::future_homes_standard::{
     calc_n_occupants, calc_nbeds, calc_tfa, create_cold_water_feed_temps,
-    create_hot_water_use_pattern, minimum_air_change_rate, set_temp_internal_static_calcs,
-    ENERGY_SUPPLY_NAME_ELECTRICITY, HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS,
-    REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END, SIMTIME_START, SIMTIME_STEP,
+    create_hot_water_use_pattern, set_temp_internal_static_calcs, ENERGY_SUPPLY_NAME_ELECTRICITY,
+    HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS, REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END,
+    SIMTIME_START, SIMTIME_STEP,
 };
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
+use crate::future_homes_standard::fhs_part_f_validation::part_f::{
+    minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
+    minimum_whole_dwelling_ventilation_rate_continuous,
+};
 use crate::future_homes_standard::fhs_sleeved_dhn_validation::HeatNetworkType;
 use crate::future_homes_standard::fhs_ventilation::{
     create_background_vents, create_mechanical_ventilation,
@@ -14,7 +18,6 @@ use crate::future_homes_standard::input::{
     UValueEditableBuildingElementJsonValue,
 };
 use anyhow::{anyhow, bail};
-use home_energy_model::compare_floats::min_of_2;
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
@@ -39,7 +42,7 @@ use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
     BuildingElement, BuildingElementHeightWidthInput, CustomEnergySourceFactor,
     EcoDesignController, GroundBuildingElement, GroundBuildingElementJsonValue, UValueInput,
-    WaterDistribution, WaterPipework, WaterPipeworkLocation,
+    WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
@@ -85,18 +88,15 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
     input: &mut InputForProcessing,
-    _fhs_notional_a_assumptions: bool,
-    _fhs_notional_b_assumptions: bool,
-    fhs_fee_notional_a_assumptions: bool,
-    fhs_fee_notional_b_assumptions: bool,
-) -> anyhow::Result<()> {
-    let is_fee = fhs_fee_notional_a_assumptions || fhs_fee_notional_b_assumptions;
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    fhs_fee_assumptions: bool,
+) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+    let is_fee = fhs_fee_assumptions;
     // Check if a heat network is present
     let heat_network_type = check_heatnetwork_status(input)?;
 
     // Determine cold water source
     let cold_water_source = input.cold_water_source()?;
-
     if cold_water_source.len() != 1 {
         bail!("The FHS Notional wrapper expects exactly one cold water type to be set.");
     }
@@ -106,12 +106,6 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         let (cold_water_source, _) = first_cold_water_source.as_ref().unwrap();
         cold_water_source.to_owned().to_owned()
     };
-
-    // Retrieve the number of bedrooms and total volume
-    let bedroom_number = input.number_of_bedrooms()?.ok_or_else(|| {
-        anyhow!("FHS Notional wrapper expects number of bedrooms to be provided.")
-    })?;
-    let total_volume = input.total_zone_volume()?;
 
     // Determine the TFA
     let total_floor_area = calc_tfa(input)?;
@@ -131,32 +125,32 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     remove_wwhrs_if_present(input)?;
     add_wwhrs(input, &cold_water_source, is_fee)?;
 
-    // modify hot water distribution
-    edit_hot_water_distribution(input, total_floor_area)?;
-
     // remove pv diverter or electric battery if present
     remove_pv_diverter_if_present(input)?;
     remove_electric_battery_if_present(input)?;
 
     // modify ventilation
-    let minimum_air_change_rate =
-        minimum_air_change_rate(input, total_floor_area, total_volume, bedroom_number);
-    // convert to m3/h
-    let minimum_air_flow_rate = minimum_air_change_rate * total_volume;
+    let minimum_air_flow_rate = minimum_whole_dwelling_ventilation_rate_continuous(
+        total_floor_area,
+        input.number_of_bedrooms()?,
+    );
+    let minimum_vent_area =
+        minimum_background_ventilation_area_continuous(input.number_of_habitable_rooms()?);
+    let minimum_vent_count = minimum_background_vent_count_continuous(input.number_of_bedrooms()?);
     edit_infiltration_ventilation(
         input,
         minimum_air_flow_rate,
-        Default::default(),
-        Default::default(),
-    )?; // TODO 1.0.0a4 pass in correct arguments
+        minimum_vent_area,
+        minimum_vent_count as isize,
+    )?;
 
     // edit space heating system
-    edit_space_heating_system(
+    let custom_energy_supply_factors = edit_space_heating_system(
         input,
         &cold_water_source,
         total_floor_area,
         heat_network_type,
-        &Default::default(),
+        custom_energy_supply_factors,
         is_fee,
     )?;
 
@@ -166,7 +160,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     // add solar pv
     add_solar_pv(input, is_fee, total_floor_area)?;
 
-    Ok(())
+    Ok(custom_energy_supply_factors)
 }
 
 fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option<HeatNetworkType>> {
@@ -1321,85 +1315,6 @@ fn edit_primary_pipework(
     Ok(primary_pipework.unwrap())
 }
 
-fn edit_hot_water_distribution(
-    input: &mut InputForProcessing,
-    total_floor_area: f64,
-) -> anyhow::Result<()> {
-    // hot water dictionary
-    let mut hot_water_distribution_inner_list = vec![];
-
-    for item in input
-        .water_distribution()?
-        .map(|water_distribution| water_distribution.items())
-        .unwrap_or_default()
-    {
-        // only include internal pipework in notional buildings
-        if item.location == WaterPipeworkLocation::Internal {
-            hot_water_distribution_inner_list.push(item);
-        }
-    }
-
-    // Create an empty list to store updated dictionaries
-    let mut updated_hot_water_distribution_inner_list = vec![];
-
-    // Defaults
-    let internal_diameter_mm_min = 13.;
-    let external_diameter_mm_min = 15.;
-    let insulation_thickness_mm = 20.;
-
-    let length_max = match input.build_type()?.as_str() {
-        "flat" => 0.2 * total_floor_area,
-        "house" => {
-            0.2 * input
-                .ground_floor_area()?
-                .ok_or_else(|| anyhow!("Notional wrapper expected a ground floor area to be set"))?
-        }
-        unknown_type => bail!("Encountered unexpected building type '{unknown_type}'"),
-    };
-
-    // Iterate over hot_water_distribution_inner_list
-    for hot_water_distribution_inner in hot_water_distribution_inner_list {
-        // hot water distribution (inner) length should not be greater than maximum length
-
-        let length_actual = hot_water_distribution_inner.length;
-        let length = min_of_2(length_actual, length_max);
-
-        // Update internal diameter to minimum if not present and should not be lower than the minimum
-        let internal_diameter_mm = hot_water_distribution_inner.internal_diameter_mm;
-        let internal_diameter_mm = internal_diameter_mm.max(internal_diameter_mm_min);
-
-        // Update external diameter to minimum if not present and should not be lower than the minimum
-        let external_diameter_mm = hot_water_distribution_inner
-            .external_diameter_mm
-            .unwrap_or(external_diameter_mm_min);
-        let external_diameter_mm = external_diameter_mm.max(external_diameter_mm_min);
-
-        // Update insulation thickness based on internal diameter
-        let adjusted_insulation_thickness_mm = if internal_diameter_mm > 25. {
-            24.
-        } else {
-            insulation_thickness_mm
-        };
-
-        let pipework_to_update = json!({
-            "location": "internal",
-            "external_diameter_mm": external_diameter_mm,
-            "insulation_thermal_conductivity": 0.035,
-            "insulation_thickness_mm": adjusted_insulation_thickness_mm,
-            "internal_diameter_mm": internal_diameter_mm,
-            "length": length,
-            "pipe_contents": "water",
-            "surface_reflectivity": false
-        });
-
-        updated_hot_water_distribution_inner_list.push(pipework_to_update);
-    }
-
-    input.set_water_distribution(Value::Array(updated_hot_water_distribution_inner_list))?;
-
-    Ok(())
-}
-
 fn remove_pv_diverter_if_present(
     input: &mut InputForProcessing,
 ) -> JsonAccessResult<&mut InputForProcessing> {
@@ -1757,17 +1672,12 @@ mod tests {
     #[rstest]
     // this test does not exist in Python HEM
     fn test_apply_fhs_notional_preprocessing(mut test_input: InputForProcessing) {
-        let fhs_notional_a_assumptions = true;
-        let _fhs_notional_b_assumptions = false;
-        let fhs_fee_notional_a_assumptions = false;
-        let fhs_fee_notional_b_assumptions = false;
+        let fhs_fee_assumptions = false;
 
         let actual = apply_fhs_notional_preprocessing(
             &mut test_input,
-            fhs_notional_a_assumptions,
-            _fhs_notional_b_assumptions,
-            fhs_fee_notional_a_assumptions,
-            fhs_fee_notional_b_assumptions,
+            &Default::default(),
+            fhs_fee_assumptions,
         );
         assert!(actual.is_ok())
     }
@@ -2351,7 +2261,6 @@ mod tests {
         );
     }
 
-    #[ignore = "TODO 1.0.0a4 migration"]
     #[rstest]
     fn test_edit_storagetank(mut test_input: InputForProcessing) {
         let cold_water_source_type = "mains water";

@@ -1,4 +1,4 @@
-mod part_f {
+pub(crate) mod part_f {
 
     use home_energy_model::{
         compare_floats::max_of_2,
@@ -13,7 +13,7 @@ mod part_f {
 
     pub fn minimum_whole_dwelling_ventilation_rate_continuous(
         total_floor_area: f64,
-        bedrooms: u32,
+        bedrooms: usize,
     ) -> f64 {
         let ventilation_per_m2_floor_area = 0.3; // l/s.m2
         let ventilation_rate_floor_area = total_floor_area * ventilation_per_m2_floor_area;
@@ -40,9 +40,9 @@ mod part_f {
     }
 
     pub fn minimum_whole_dwelling_ventilation_rate_intermittent(
-        bathrooms: u32,
-        utility_rooms: u32,
-        sanitary_accommodations: u32,
+        bathrooms: usize,
+        utility_rooms: usize,
+        sanitary_accommodations: usize,
         is_kitchen_vent_external: bool,
     ) -> f64 {
         let minimum_rate_per_kitchen = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l/s
@@ -56,15 +56,15 @@ mod part_f {
         litres_per_second_to_cubic_metres_per_hour(minimum_rate) // m3/hr
     }
 
-    pub fn minimum_background_ventilation_area_continuous(habitable_rooms: u32) -> f64 {
+    pub fn minimum_background_ventilation_area_continuous(habitable_rooms: usize) -> f64 {
         let minimum_equivalent_area_per_habitable_room = 40f64; // cm2
         habitable_rooms as f64 * minimum_equivalent_area_per_habitable_room
     }
 
     pub fn minimum_background_ventilation_area_intermittent(
-        habitable_rooms: u32,
-        bathrooms: u32,
-        storeys: u32,
+        habitable_rooms: usize,
+        bathrooms: usize,
+        storeys: usize,
     ) -> f64 {
         let minimum_area_per_bathroom = 40f64; // cm2
                                                // Different requirements for single-storey dwellings
@@ -79,14 +79,14 @@ mod part_f {
             + minimum_area_per_kitchen as f64; // Assume all dwellings have one kitchen
     }
 
-    pub fn minimum_background_vent_count_continuous(bedrooms: u32) -> u32 {
+    pub fn minimum_background_vent_count_continuous(bedrooms: usize) -> usize {
         bedrooms + 2 //As per part F section 1.64
     }
 
     pub fn sufficient_whole_dwelling_ventilation_rate_continuous(
         vents: Vec<&JsonValue>,
         total_floor_area: f64,
-        bedrooms: u32,
+        bedrooms: usize,
     ) -> bool {
         let total_design_flow: f64 = vents
             .iter()
@@ -105,9 +105,9 @@ mod part_f {
 
     pub fn sufficient_whole_dwelling_ventilation_rate_intermittent(
         vents: &[&JsonValue],
-        bathrooms: u32,
-        utility_rooms: u32,
-        sanitary_accommodations: u32,
+        bathrooms: usize,
+        utility_rooms: usize,
+        sanitary_accommodations: usize,
         is_kitchen_vent_external: bool,
     ) -> bool {
         let total_design_flow: f64 = vents
@@ -130,7 +130,7 @@ mod part_f {
 
     pub fn sufficient_background_ventilation_area_continuous(
         vents: &Vec<&JsonValue>,
-        habitable_rooms: u32,
+        habitable_rooms: usize,
     ) -> bool {
         let total_vent_area: f64 = vents
             .iter()
@@ -142,9 +142,9 @@ mod part_f {
 
     pub fn sufficient_background_ventilation_area_intermittent(
         vents: &Vec<&JsonValue>,
-        habitable_rooms: u32,
-        bathrooms: u32,
-        storeys: u32,
+        habitable_rooms: usize,
+        bathrooms: usize,
+        storeys: usize,
     ) -> bool {
         let total_vent_area: f64 = vents
             .iter()
@@ -175,13 +175,13 @@ mod part_f {
     pub(crate) fn validate_dwelling_ventilation(
         ventilation: JsonValue,
         total_floor_area: f64,
-        bedrooms: u32,
-        habitable_rooms: u32,
-        wet_rooms: u32,
-        bathrooms: u32,
-        utility_rooms: u32,
-        sanitary_accommodations: u32,
-        storeys: u32,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+        bathrooms: usize,
+        utility_rooms: usize,
+        sanitary_accommodations: usize,
+        storeys: usize,
         is_kitchen_vent_external: bool,
     ) -> Result<(), String> {
         let mech_vents = ventilation
@@ -291,9 +291,9 @@ mod part_f {
         decentralised_mev_vents: &Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
         total_floor_area: f64,
-        bedrooms: u32,
-        habitable_rooms: u32,
-        wet_rooms: u32,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
     ) -> Vec<String> {
         let mut errors: Vec<String> = Default::default();
 
@@ -335,9 +335,9 @@ mod part_f {
         centralised_mev_vents: &Vec<&JsonValue>,
         decentralised_mev_vents: &Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
-        bedrooms: u32,
-        habitable_rooms: u32,
-        wet_rooms: u32,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
     ) -> Vec<String> {
         let background_area_compliant =
             sufficient_background_ventilation_area_continuous(&background_vents, habitable_rooms);
@@ -377,27 +377,27 @@ mod part_f {
         results
     }
 
-    fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: u32) -> bool {
-        vents.len() as u32 >= wet_rooms
+    fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: usize) -> bool {
+        vents.len() >= wet_rooms
     }
 
     // TODO move
-    fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: u32) -> bool {
-        vents.len() as u32 >= minimum_background_vent_count_continuous(bedrooms)
+    fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: usize) -> bool {
+        vents.len() >= minimum_background_vent_count_continuous(bedrooms)
     }
 
     // TODO move
     fn validate_intermittent_vents(
         intermittent_mev_vents: Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
-        habitable_rooms: u32,
-        wet_rooms: u32,
-        bathrooms: u32,
-        utility_rooms: u32,
-        sanitary_accommodations: u32,
-        storeys: u32,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+        bathrooms: usize,
+        utility_rooms: usize,
+        sanitary_accommodations: usize,
+        storeys: usize,
         is_kitchen_vent_external: bool,
-        bedrooms: u32,
+        bedrooms: usize,
     ) -> Vec<String> {
         let background_compliant = sufficient_background_ventilation_area_intermittent(
             background_vents,
@@ -445,7 +445,7 @@ mod part_f {
 
     fn sufficient_background_vent_count_intermittent(
         background_vents: &[&JsonValue],
-        bedrooms: u32,
+        bedrooms: usize,
     ) -> bool {
         // As per part F section 1.57
         let background_vents_required = if bedrooms < 2 { 4 } else { 5 };
