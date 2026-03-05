@@ -528,4 +528,26 @@ mod test {
 
         assert_eq!(json!(results), expected);
     }
+
+    #[rstest]
+    fn test_raises_error_when_insufficient_walls(mut input: InputForProcessing) {
+        // Given an input with a dwelling with five wet rooms, two windows but no walls
+        input.input["NumberOfWetRooms"] = json!(5);
+        let building_element = input.input["Zone"]["whole dwelling"]["BuildingElement"]
+            .as_object_mut()
+            .unwrap();
+        building_element.remove("wall 0");
+        building_element.remove("wall 1");
+
+        let minimum_air_flow_rate = 100.;
+
+        // When the mechanical vents are created
+        let results = create_mechanical_ventilation(input, minimum_air_flow_rate);
+
+        // Then an error is raised describing the lack of walls
+        assert_eq!(
+            results.unwrap_err().to_string(),
+            "Unable to place 3 remaining vent(s). Dwelling lacks suitable walls."
+        );
+    }
 }
