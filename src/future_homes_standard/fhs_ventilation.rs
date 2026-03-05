@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 /// Each vent's height, pitch and orientation is based on it being
 /// located in one of the building's windows or walls.
 pub(crate) fn create_background_vents(
-    input: InputForProcessing,
+    input: &InputForProcessing,
     minimum_vent_area: f64,
     minimum_vent_count: isize,
 ) -> anyhow::Result<Value> {
@@ -77,7 +77,7 @@ fn create_background_vent(
 ///     - Assign dMEVs first to the smallest windows, then to the largest walls if needed
 ///     - Ensure total summed air flow rate equals the specified minimum
 pub(crate) fn create_mechanical_ventilation(
-    input: InputForProcessing,
+    input: &InputForProcessing,
     minimum_air_flow_rate: f64,
 ) -> anyhow::Result<Value> {
     let building_elements = input.all_building_element_values()?;
@@ -386,7 +386,7 @@ mod test {
 
         // When the new mechanical vents are created
         let results =
-            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
+            create_mechanical_ventilation(&mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -431,7 +431,7 @@ mod test {
 
         // When the mechanical vents are created
         let results =
-            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
+            create_mechanical_ventilation(&mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -482,7 +482,7 @@ mod test {
 
         // When the mechanical vents are created
         let results =
-            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
+            create_mechanical_ventilation(&mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are two dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -532,7 +532,7 @@ mod test {
 
         // When the mechanical vents are created
         let results =
-            create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate).unwrap();
+            create_mechanical_ventilation(&mech_vent_input, minimum_air_flow_rate).unwrap();
 
         // Then there are ten dMEVs created: one for each wet room
         // the total air flow rate of the dMEVs is equal to the part f minimum
@@ -614,7 +614,7 @@ mod test {
         let minimum_air_flow_rate = 100.;
 
         // When the mechanical vents are created
-        let results = create_mechanical_ventilation(mech_vent_input, minimum_air_flow_rate);
+        let results = create_mechanical_ventilation(&mech_vent_input, minimum_air_flow_rate);
 
         // Then an error is raised describing the lack of walls
         assert_eq!(
@@ -674,7 +674,7 @@ mod test {
 
         // When the background vents are generated
         let vents = create_background_vents(
-            background_vents_input,
+            &background_vents_input,
             minimum_vent_area,
             minimum_vent_count,
         )
@@ -757,7 +757,7 @@ mod test {
         let minimum_vent_count = 2;
 
         // When background vents are generated
-        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+        let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count).unwrap();
 
         // Then the mid_height_air_flow_path for the vents correspond to them being placed
         // at the top of the two windows (not the wall)
@@ -836,7 +836,7 @@ mod test {
         let minimum_vent_area = 40.;
         let minimum_vent_count = 2;
         // When background vents are generated
-        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+        let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count).unwrap();
 
         // Then the mid_height_air_flow_path for the vents correspond to them being placed
         // at the top of the window and the middle of the wall with the greatest area
@@ -905,7 +905,7 @@ mod test {
         let minimum_vent_count = 2;
 
         // When background vents are generated
-        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+        let vents = create_background_vents(&input, minimum_vent_area, minimum_vent_count).unwrap();
 
         // Then the mid_height_air_flow_path for the vents correspond to them being placed
         // at the top of all three windows

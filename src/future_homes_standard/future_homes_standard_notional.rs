@@ -6,6 +6,9 @@ use super::future_homes_standard::{
 };
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::fhs_sleeved_dhn_validation::HeatNetworkType;
+use crate::future_homes_standard::fhs_ventilation::{
+    create_background_vents, create_mechanical_ventilation,
+};
 use crate::future_homes_standard::input::{
     json_error, InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
     UValueEditableBuildingElementJsonValue,
@@ -202,67 +205,26 @@ fn edit_lighting_efficacy(input: &mut InputForProcessing) -> anyhow::Result<()> 
 /// Create background vent for each window
 fn edit_infiltration_ventilation(
     input: &mut InputForProcessing,
-    _minimum_air_flow_rate: f64,
-    _minimum_vent_area: f64,
-    _minimum_vent_count: f64,
+    minimum_air_flow_rate: f64,
+    minimum_vent_area: f64,
+    minimum_vent_count: isize,
 ) -> anyhow::Result<()> {
     let test_result = 4.;
 
+    let mechanical_ventilation = create_mechanical_ventilation(input, minimum_air_flow_rate)?;
+    let background_vents = create_background_vents(input, minimum_vent_area, minimum_vent_count)?;
+
     let infiltration_ventilation = input.infiltration_ventilation_mut()?;
 
-    {
-        let leaks = infiltration_ventilation
-            .entry("Leaks")
-            .or_insert(json!({}))
-            .as_object_mut()
-            .ok_or(anyhow::anyhow!("Leaks was expected to be an object"))?;
-        leaks.insert("test_pressure".into(), json!("Standard"));
-        leaks.insert("test_result".into(), json!(test_result));
-    }
-
-    // TODO 1.0.0a4 migration - calls a function in new FHS_ventilation module, not yet migrated
-
-    // let mechanical_ventilation =
-    //
-    //
-    //     infiltration_ventilation.insert(
-    //         "MechanicalVentilation".into(),
-    //         json!({
-    //         "Decentralised_Continuous_MEV_for_notional":{
-    //             "sup_air_flw_ctrl": "ODA",
-    //             "sup_air_temp_ctrl": "CONST",
-    //             "vent_type": "Decentralised continuous MEV",
-    //             "SFP":0.15,
-    //             "EnergySupply": "mains elec",
-    //             "design_outdoor_air_flow_rate": minimum_air_flow_rate
-    //         }}),
-    //     );
-    // } else {
-    //     // extract_fans follow the same as the actual dwelling
-    //     // but there must be a minimum of one extract fan
-    //     // per wet room, as per ADF guidance
-    //     let wet_rooms_count = number_of_wet_rooms.ok_or_else(|| {
-    //         anyhow!("missing NumberOfWetRooms - required for FHS notional building")
-    //     })?;
-    //     if wet_rooms_count <= 1 {
-    //         bail!("invalid/missing NumberOfWetRooms ({wet_rooms_count})");
-    //     }
-    //     let mut mech_vents: IndexMap<String, Value> = Default::default();
-    //     for i in 0..wet_rooms_count {
-    //         let mech_vent = json!(
-    //                 {
-    //                 "sup_air_flw_ctrl": "ODA",
-    //                 "sup_air_temp_ctrl": "CONST",
-    //                 "vent_type": "Intermittent MEV",
-    //                 "SFP": 0.15,
-    //                 "EnergySupply": "mains elec",
-    //                 "design_outdoor_air_flow_rate": 80
-    //             }
-    //         );
-    //         mech_vents.insert(i.to_string().into(), mech_vent);
-    //     }
-    //     infiltration_ventilation.insert("MechanicalVentilation".into(), json!(mech_vents));
-    // }
+    let leaks = infiltration_ventilation
+        .entry("Leaks")
+        .or_insert(json!({}))
+        .as_object_mut()
+        .ok_or(anyhow::anyhow!("Leaks was expected to be an object"))?;
+    leaks.insert("test_pressure".into(), json!("Standard"));
+    leaks.insert("test_result".into(), json!(test_result));
+    infiltration_ventilation.insert("MechanicalVentilation".into(), mechanical_ventilation);
+    infiltration_ventilation.insert("Vents".into(), background_vents);
 
     Ok(())
 }
@@ -611,7 +573,7 @@ pub(crate) fn edit_thermal_bridging(input: &mut InputForProcessing) -> anyhow::R
                 element.insert("heat_transfer_coeff".into(), json!(0.));
             }
             "ThermalBridgeLinear" => {
-                let junction_type = element.get("junction_type").and_then(|junc| junc.as_str()).and_then(|junc| if TABLE_R2.contains_key(junc) {Some(junc)} else {None}).ok_or_else(|| anyhow!("Thermal bridging junction type was expected to be set and one of the values in SAP10.2 Table R2."))?;
+                let junction_type = element.get("junction_type").and_then(|junc| junc.as_str()).and_then(|junc| if TABLE_R2.contains_key(junc) { Some(junc) } else { None }).ok_or_else(|| anyhow!("Thermal bridging junction type was expected to be set and one of the values in SAP10.2 Table R2."))?;
                 element.insert(
                     "linear_thermal_transmittance".into(),
                     json!(TABLE_R2[junction_type]),
@@ -3388,5 +3350,327 @@ mod tests {
         let actual_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
             serde_json::from_value(test_input.input["SpaceHeatSystem"].clone()).unwrap();
         assert_eq!(actual_space_heat_system, expected_space_heat_system);
+    }
+
+    #[rstest]
+    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
+    fn test_sleeved_dhn_heat_network(
+        mut test_input: InputForProcessing,
+        cold_water_source: std::string::String,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        let custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                },
+                "custom_2": {
+                    "Emissions Factor kgCO2e/kWh": 0.5,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.5,
+                    "Primary Energy Factor kWh/kWh delivered": 0.5,
+                },
+            }))
+            .unwrap();
+
+        // When the notional heating system is created
+        let new_factors = edit_space_heating_system(
+            &mut test_input,
+            &cold_water_source,
+            tfa,
+            HeatNetworkType::SleevedDhn.into(),
+            &custom_energy_factors,
+            is_fee,
+        )
+        .unwrap();
+        // Then the heating system created is a heat network with an HIU
+
+        let expected_heat_source_wet: IndexMap<String, HeatSourceWetDetails> =
+            serde_json::from_value(json!({
+                "notionalHIU": {
+                    "type": "HIU",
+                    "EnergySupply": "_notional_heat_network",
+                    "power_max": 45,
+                    "HIU_daily_loss": 0.8,
+                    "building_level_distribution_losses": 62,
+                }
+            }))
+            .unwrap();
+        let actual_heat_source_wet: IndexMap<String, HeatSourceWetDetails> =
+            serde_json::from_value(test_input.input["HeatSourceWet"].clone()).unwrap();
+        assert_eq!(actual_heat_source_wet, expected_heat_source_wet);
+
+        let expected_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
+            serde_json::from_value(json!({
+                "hw cylinder": {
+                    "type": "HIU",
+                    "ColdWaterSource": &cold_water_source,
+                    "HeatSourceWet": "notionalHIU",
+                }
+            }))
+            .unwrap();
+        let actual_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
+            serde_json::from_value(test_input.input["HotWaterSource"].clone()).unwrap();
+        assert_eq!(actual_hot_water_source, expected_hot_water_source);
+
+        // And the SpaceHeatSystem is replaced with a notional one
+        assert_eq!(
+            test_input.input["Zone"]["whole dwelling"]["SpaceHeatSystem"]
+                .as_str()
+                .unwrap(),
+            "whole dwelling_SpaceHeatSystem_Notional"
+        );
+        let expected_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
+            serde_json::from_value(json!({
+                "whole dwelling_SpaceHeatSystem_Notional": {
+                    "type": "WetDistribution",
+                    "thermal_mass": 0.014388888888888889,
+                    "emitters": [
+                        {
+                            "c": 0.00999636253957565,
+                            "frac_convective": 0.7,
+                            "n": 1.34,
+                            "wet_emitter_type": "radiator",
+                        }
+                    ],
+                    "temp_diff_emit_dsgn": 20,
+                    "variable_flow": false,
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "ecodesign_controller": {"ecodesign_control_class": 1},
+                    "Control": "HeatingPattern_Null",
+                    "design_flow_temp": 55,
+                    "design_flow_rate": 8,
+                    "Zone": "whole dwelling",
+                    "pipework": [],
+                }
+            }))
+            .unwrap();
+        let actual_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
+            serde_json::from_value(test_input.input["SpaceHeatSystem"].clone()).unwrap();
+        assert_eq!(actual_space_heat_system, expected_space_heat_system);
+
+        // And the custom energy factors have the notional heat network has
+        // the mean factors of the actual custom supplies
+        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "_notional_heat_network": {
+                    "Emissions Factor kgCO2e/kWh": 0.75,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.75,
+                    "Primary Energy Factor kWh/kWh delivered": 0.75,
+                }
+            }))
+            .unwrap();
+        assert_eq!(new_factors, expected_custom_energy_factors);
+
+        // And the notional custom EnergySupply is added
+        assert_eq!(
+            test_input.input["EnergySupply"]["_notional_heat_network"].clone(),
+            json!({"fuel": "custom", "is_export_capable": false})
+        );
+
+        // And the original custom EnergySupply is removed
+        assert!(!test_input.input["EnergySupply"]
+            .as_object()
+            .unwrap()
+            .contains_key("custom_1"));
+    }
+
+    #[rstest]
+    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
+    fn test_communal_heat_network(
+        mut test_input: InputForProcessing,
+        cold_water_source: std::string::String,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        let custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }
+            }))
+            .unwrap();
+        test_input.input["HeatSourceWet"] = json!( {
+            "HeatNetwork": {
+                "type": "HIU",
+                "EnergySupply": "custom_1",
+                "power_max": 3.0,
+                "HIU_daily_loss": 0.8,
+                "building_level_distribution_losses": 62,
+                "is_heat_network": true,
+                "heat_network_type": "communal",
+            }
+        });
+        test_input.input["EnergySupply"]["custom_1"] =
+            json!({"is_export_capable": false, "fuel": "custom"});
+
+        // When the notional heating system is created
+        let heat_network_type =
+            test_input.input["HeatSourceWet"]["HeatNetwork"]["heat_network_type"].clone();
+        let new_factors = edit_space_heating_system(
+            &mut test_input,
+            &cold_water_source,
+            tfa,
+            serde_json::from_value(heat_network_type).unwrap(),
+            &custom_energy_factors,
+            is_fee,
+        )
+        .unwrap();
+
+        // Then the heating system created is a heat network with a HIU
+
+        let expected_heat_source_wet: IndexMap<String, HeatSourceWetDetails> =
+            serde_json::from_value(json!({
+                "notionalHIU": {
+                    "type": "HIU",
+                    "EnergySupply": "_notional_heat_network",
+                    "power_max": 45,
+                    "HIU_daily_loss": 0.8,
+                    "building_level_distribution_losses": 62,
+                }
+            }))
+            .unwrap();
+        let actual_heat_source_wet: IndexMap<String, HeatSourceWetDetails> =
+            serde_json::from_value(test_input.input["HeatSourceWet"].clone()).unwrap();
+        assert_eq!(actual_heat_source_wet, expected_heat_source_wet);
+
+        let expected_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
+            serde_json::from_value(json!({
+                "hw cylinder": {
+                    "type": "HIU",
+                    "ColdWaterSource": &cold_water_source,
+                    "HeatSourceWet": "notionalHIU",
+                }
+            }))
+            .unwrap();
+        let actual_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
+            serde_json::from_value(test_input.input["HotWaterSource"].clone()).unwrap();
+        assert_eq!(actual_hot_water_source, expected_hot_water_source);
+
+        // And the SpaceHeatSystem is replaced with a notional one
+        assert_eq!(
+            test_input.input["Zone"]["whole dwelling"]["SpaceHeatSystem"]
+                .as_str()
+                .unwrap(),
+            "whole dwelling_SpaceHeatSystem_Notional"
+        );
+        let expected_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
+            serde_json::from_value(json!({
+                "whole dwelling_SpaceHeatSystem_Notional": {
+                    "type": "WetDistribution",
+                    "thermal_mass": 0.014388888888888889,
+                    "emitters": [
+                        {
+                            "c": 0.00999636253957565,
+                            "frac_convective": 0.7,
+                            "n": 1.34,
+                            "wet_emitter_type": "radiator",
+                        }
+                    ],
+                    "temp_diff_emit_dsgn": 20,
+                    "variable_flow": false,
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "ecodesign_controller": {"ecodesign_control_class": 1},
+                    "Control": "HeatingPattern_Null",
+                    "design_flow_temp": 55,
+                    "design_flow_rate": 8,
+                    "Zone": "whole dwelling",
+                    "pipework": [],
+                }
+            }))
+            .unwrap();
+        let actual_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
+            serde_json::from_value(test_input.input["SpaceHeatSystem"].clone()).unwrap();
+        assert_eq!(actual_space_heat_system, expected_space_heat_system);
+
+        // And the custom energy factors have the standardised factors of a communal system
+        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "_notional_heat_network": {
+                    "Emissions Factor kgCO2e/kWh": 0.033,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.033,
+                    "Primary Energy Factor kWh/kWh delivered": 0.75,
+                }
+            }))
+            .unwrap();
+        assert_eq!(new_factors, expected_custom_energy_factors);
+
+        // And the notional custom EnergySupply is added
+        assert_eq!(
+            test_input.input["EnergySupply"]["_notional_heat_network"].clone(),
+            json!({"fuel": "custom", "is_export_capable": false})
+        );
+
+        // And the original custom EnergySupply is removed
+        assert!(!test_input.input["EnergySupply"]
+            .as_object()
+            .unwrap()
+            .contains_key("custom_1"));
+    }
+
+    #[rstest]
+    // #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
+    fn test_actual_with_centralised_mechanical_ventilation_system(
+        mut test_input: InputForProcessing,
+    ) {
+        test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
+            "mechvent1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Centralised continuous MEV",
+                "measured_fan_power": 12.26,
+                "measured_air_flow_rate": 37.,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 80.,
+                "mid_height_air_flow_path": 1.5,
+                "orientation360": 90.,
+                "pitch": 60.,
+            }
+        });
+        let minimum_air_flow_rate = 100.;
+        let minimum_vent_area = 200.;
+        let minimum_vent_count = 4;
+
+        // When the notional infiltration ventilation preprocessing is applied
+        edit_infiltration_ventilation(
+            &mut test_input,
+            minimum_air_flow_rate,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then two dMEVs are created in the notional with numbered vent names
+        let expected_mech_vent = json!({
+            "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 2.25,
+                "orientation360": 90.,
+                "pitch": 90.,
+            },
+            "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0.,
+                "pitch": 90.,
+            },
+        });
+        let actual_mech_vent =
+            test_input.input["InfiltrationVentilation"]["MechanicalVentilation"].clone();
+        assert_eq!(actual_mech_vent, expected_mech_vent);
     }
 }
