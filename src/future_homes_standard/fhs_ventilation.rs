@@ -11,11 +11,11 @@ use serde_json::{json, Map, Value};
 pub(crate) fn create_background_vents(
     input: InputForProcessing,
     minimum_vent_area: f64,
-    minimum_vent_count: usize,
+    minimum_vent_count: isize,
 ) -> anyhow::Result<Value> {
     let building_elements = input.all_building_element_values()?;
     let window_vent_placements = sorted_windows_by_area(&building_elements)?;
-    let mut num_remaining_vents = minimum_vent_count - window_vent_placements.len();
+    let mut num_remaining_vents = minimum_vent_count - window_vent_placements.len() as isize;
     let mut wall_vent_placements = Vec::new();
 
     // Place any remaining vents in walls in order of decreasing wall area,
@@ -706,5 +706,241 @@ mod test {
                 .unwrap(),
             expected_wall
         )
+    }
+
+    #[test]
+    fn test_only_places_vents_in_windows_if_there_are_enough_windows() {
+        // Given a dwelling with two windows and one wall, and a requirement for at least two vents
+        let input = InputForProcessing {
+            input: json!({
+            "NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 0.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 1.0,
+                        },
+                        "window 1": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.6,
+                            "base_height": 1.3,
+                        },
+                        "wall 0": {
+                            "type": "BuildingElementOpaque",
+                            "colour": "Intermediate",
+                            "thermal_resistance_construction": 0.72,
+                            "areal_heat_capacity": "Very light",
+                            "mass_distribution_class": "E: Mass concentrated at external side",
+                            "pitch": 90,
+                            "is_external_door": false,
+                            "orientation360": 0,
+                            "base_height": 0.0,
+                            "height": 2.5,
+                            "width": 8,
+                            "area": 20.0,
+                        },
+                    }
+                }
+            }}),
+        };
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When background vents are generated
+        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+
+        // Then the mid_height_air_flow_path for the vents correspond to them being placed
+        // at the top of the two windows (not the wall)
+        // height * sin(pitch) + base_height - ventilation_zone_height
+        // = 1.2 + 1.0 = 2.2  (window 0)
+        // = 1.6 + 1.3 = 2.9  (window 1)
+        let expected_num_vents = 2; // max(number_of_windows, minimum_vent_count)
+        let expected_window_0 = 2.2;
+        let expected_window_1 = 2.9;
+
+        assert_eq!(vents.as_object().unwrap().len(), expected_num_vents);
+        assert_relative_eq!(
+            vents["vent_0"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_0
+        );
+        assert_relative_eq!(
+            vents["vent_1"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_1
+        );
+    }
+
+    #[test]
+    fn test_places_vents_in_windows_and_walls_if_there_are_not_enough_windows() {
+        // Given a dwelling with one window and two walls, and a requirement at least two vents
+        let input = InputForProcessing {
+            input: json!({"NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 0.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 1.0,
+                        },
+                        "wall 0": {
+                            "type": "BuildingElementOpaque",
+                            "colour": "Intermediate",
+                            "thermal_resistance_construction": 0.72,
+                            "areal_heat_capacity": "Very light",
+                            "mass_distribution_class": "E: Mass concentrated at external side",
+                            "pitch": 90,
+                            "is_external_door": false,
+                            "orientation360": 0,
+                            "base_height": 0.0,
+                            "height": 2.5,
+                            "width": 8,
+                            "area": 20.0,
+                        },
+                        "wall 1": {
+                            "type": "BuildingElementOpaque",
+                            "colour": "Intermediate",
+                            "thermal_resistance_construction": 0.72,
+                            "areal_heat_capacity": "Very light",
+                            "mass_distribution_class": "E: Mass concentrated at external side",
+                            "pitch": 90,
+                            "is_external_door": false,
+                            "orientation360": 0,
+                            "base_height": 0.0,
+                            "height": 3.0,
+                            "width": 10,
+                            "area": 30.0,
+                        },
+                    }
+                }
+            }}),
+        };
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+        // When background vents are generated
+        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+
+        // Then the mid_height_air_flow_path for the vents correspond to them being placed
+        // at the top of the window and the middle of the wall with the greatest area
+        // height * sin(pitch) + base_height - ventilation_zone_height
+        // = 1.2 + 1.0 = 2.2  (window 0)
+        // = 2.5 / 2 = 1.25  (wall 0)
+        // = 3.0 / 2 = 1.5  (wall 1)
+        let expected_num_vents = 2; // max(number_of_windows, minimum_vent_count)
+        let expected_window_0 = 2.2;
+        let expected_wall_1 = 1.5;
+
+        assert_eq!(vents.as_object().unwrap().len(), expected_num_vents);
+        assert_relative_eq!(
+            vents["vent_0"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_0
+        );
+        assert_relative_eq!(
+            vents["vent_1"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_wall_1
+        );
+    }
+
+    #[test]
+    fn test_places_vents_in_all_windows() {
+        // Given a dwelling with three windows and a minimum requirement for at least two vents
+        let input = InputForProcessing {
+            input: json!({"NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 0.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 1.0,
+                        },
+                        "window 1": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.6,
+                            "base_height": 1.3,
+                        },
+                        "window 2": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 0.2,
+                            "height": 0.2,
+                            "base_height": 1.5,
+                        },
+                    }
+                }
+            }}),
+        };
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When background vents are generated
+        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+
+        // Then the mid_height_air_flow_path for the vents correspond to them being placed
+        // at the top of all three windows
+        // height * sin(pitch) + base_height - ventilation_zone_height
+        // = 1.2 + 1.0 = 2.2  (window 0)
+        // = 1.6 + 1.3 = 2.9  (window 1)
+        // = 0.2 + 1.5 = 1.7  (window 2)
+        // Note that even though the minimum_vent_count is two, we expect
+        // create_background_vents() to add a vent to every window (i.e. all three
+        // windows), even if there are more windows that minimum_vent_count.
+        let expected_num_vents = 3; // max(number_of_windows, minimum_vent_count)
+        let expected_window_0 = 2.2;
+        let expected_window_1 = 2.9;
+        let expected_window_2 = 1.7;
+
+        assert_eq!(vents.as_object().unwrap().len(), expected_num_vents);
+
+        // Ordered from smallest area to largest (window 2 (0.4), window 0 (1.2), window1 (1.6))
+        assert_relative_eq!(
+            vents["vent_0"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_2
+        );
+        assert_relative_eq!(
+            vents["vent_1"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_0
+        );
+        assert_relative_eq!(
+            vents["vent_2"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected_window_1
+        );
     }
 }
