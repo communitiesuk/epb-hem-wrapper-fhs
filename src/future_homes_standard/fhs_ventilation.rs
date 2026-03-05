@@ -943,4 +943,219 @@ mod test {
             expected_window_1
         );
     }
+
+    #[rstest]
+    fn test_matches_pitch_and_orientation(background_vents_input: InputForProcessing) {
+        // Given a dwelling with a ventilation zone base height and one window and one wall,
+        // and a requirement for at least two vents
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When the background vents are generated
+        let vents = create_background_vents(
+            background_vents_input,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then the vents have pitch and orientation of the corresponding window/wall
+        assert_eq!(vents["vent_0"]["pitch"], 70); // window 1 pitch
+        assert_eq!(vents["vent_0"]["orientation360"], 180); // window 1 orientation
+        assert_eq!(vents["vent_1"]["pitch"], 80); // wall 1 pitch
+        assert_eq!(vents["vent_1"]["orientation360"], 0); // wall 1 orientation
+    }
+
+    #[rstest]
+    fn test_distributes_vent_area(background_vents_input: InputForProcessing) {
+        // Given a dwelling with a ventilation zone base height and one window and one wall,
+        // and a requirement for at least two vents
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When the background vents are generated
+        let vents = create_background_vents(
+            background_vents_input,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then the minimum_vent_area is distributed equally across the vents
+        let expected_vent_area_per_vent = 20.; // 40 / 2
+
+        assert_eq!(vents["vent_0"]["area_cm2"], expected_vent_area_per_vent);
+        assert_eq!(vents["vent_1"]["area_cm2"], expected_vent_area_per_vent);
+    }
+
+    #[test]
+    fn test_places_vents_in_all_windows_including_rooflights() {
+        // Given a dwelling with three windows, one of which is a rooflight, and a minimum
+        // requirement for at least two vents
+        let input = InputForProcessing {
+            input: json!({
+            "NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 1.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 1.0,
+                        },
+                        "window 1": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.6,
+                            "base_height": 1.3,
+                        },
+                        "rooflight 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 180,
+                            "orientation360": 10,
+                            "width": 0.2,
+                            "height": 0.2,
+                            "base_height": 1.5,
+                        },
+                    }
+                }
+            }}),
+        };
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When background vents are generated
+        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count).unwrap();
+
+        // Then a vent is placed in the rooflight and the other windows
+        let expected_num_vents = 3; // max(number_of_windows, minimum_vent_count)
+
+        assert_eq!(vents.as_object().unwrap().len(), expected_num_vents);
+
+        // And the mid_height_air_flow_path of the rooflight vent with 180 deg pitch is as expected
+        // height * sin(pitch) + base_height - ventilation_zone_height
+        // = 0.2 * 0 + 1.5 - 1.0 = 0.5  (rooflight 0)
+        let expected = 0.5;
+
+        assert_relative_eq!(
+            vents["vent_0"]["mid_height_air_flow_path"]
+                .as_f64()
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_raises_error_when_insufficient_walls_background_vents() {
+        // Given a dwelling with one window but no walls, and a minimum
+        // requirement for at least two vents
+        let input = InputForProcessing {
+            input: json!({
+            "NumberOfBedrooms": 0,
+            "NumberOfHabitableRooms": 1,
+            "InfiltrationVentilation": {"ventilation_zone_base_height": 1.0},
+            "Zone": {
+                "zone 1": {
+                    "BuildingElement": {
+                        "window 0": {
+                            "type": "BuildingElementTransparent",
+                            "pitch": 90,
+                            "orientation360": 180,
+                            "width": 1.0,
+                            "height": 1.2,
+                            "base_height": 1.0,
+                        }
+                    }
+                }
+            }}),
+        };
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When background vents are generated
+        let vents = create_background_vents(input, minimum_vent_area, minimum_vent_count);
+
+        // Then an error is raised describing the lack of walls
+        assert_eq!(
+            vents.unwrap_err().to_string(),
+            "Unable to place 1 remaining background vent(s). Dwelling lacks suitable walls."
+        );
+    }
+
+    #[fixture]
+    fn no_windows_input() -> InputForProcessing {
+        let input_json = json!({
+        "NumberOfBedrooms": 0,
+        "NumberOfHabitableRooms": 1,
+        "InfiltrationVentilation": {"ventilation_zone_base_height": 1.0},
+        "Zone": {
+            "zone 1": {
+                "BuildingElement": {
+                    "wall 1": {
+                        "type": "BuildingElementOpaque",
+                        "colour": "Intermediate",
+                        "thermal_resistance_construction": 0.72,
+                        "areal_heat_capacity": "Very light",
+                        "mass_distribution_class": "E: Mass concentrated at external side",
+                        "pitch": 45,
+                        "is_external_door": false,
+                        "orientation360": 0,
+                        "base_height": 0.2,
+                        "height": 2.5,
+                        "width": 8,
+                        "area": 20.0,
+                    }
+                }
+            }
+        }});
+
+        InputForProcessing { input: input_json }
+    }
+
+    #[rstest]
+    fn test_raises_error_when_insufficient_vertical_walls(no_windows_input: InputForProcessing) {
+        // Given a dwelling with no windows and no near-vertical walls, and a minimum
+        // requirement for at least two vents (where near-vertical refers to a
+        // building elements with a pitch such that the pitch class is equal to
+        // HeatFlowDirection.HORIZONTAL))
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 2;
+
+        // When background vents are generated
+        let vents =
+            create_background_vents(no_windows_input, minimum_vent_area, minimum_vent_count);
+
+        // Then an error is raised describing the lack of windows and/or walls
+        assert_eq!(
+            vents.unwrap_err().to_string(),
+            "Unable to place 2 remaining background vent(s). Dwelling lacks suitable walls."
+        );
+    }
+
+    #[rstest]
+    fn test_places_no_vents_when_minimum_vent_count_is_zero_and_there_are_no_windows(
+        no_windows_input: InputForProcessing,
+    ) {
+        // Given a dwelling with no windows, one wall and a minimum
+        // requirement for zero vents
+        let minimum_vent_area = 40.;
+        let minimum_vent_count = 0;
+
+        // When background vents are generated
+        let vents =
+            create_background_vents(no_windows_input, minimum_vent_area, minimum_vent_count)
+                .unwrap();
+
+        // Then no vents are returned
+        let expected_num_vents = 0; // max(number_of_windows, minimum_vent_count)
+
+        assert_eq!(vents.as_object().unwrap().len(), expected_num_vents);
+    }
 }
