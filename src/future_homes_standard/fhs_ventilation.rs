@@ -11,11 +11,12 @@ use serde_json::{json, Map, Value};
 pub(crate) fn create_background_vents(
     input: &InputForProcessing,
     minimum_vent_area: f64,
-    minimum_vent_count: isize,
+    minimum_vent_count: usize,
 ) -> anyhow::Result<Value> {
     let building_elements = input.all_building_element_values()?;
     let window_vent_placements = sorted_windows_by_area(&building_elements)?;
-    let mut num_remaining_vents = minimum_vent_count - window_vent_placements.len() as isize;
+    let mut num_remaining_vents =
+        minimum_vent_count as isize - window_vent_placements.len() as isize;
     let mut wall_vent_placements = Vec::new();
 
     // Place any remaining vents in walls in order of decreasing wall area,

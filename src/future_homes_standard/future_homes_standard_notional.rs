@@ -141,7 +141,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         input,
         minimum_air_flow_rate,
         minimum_vent_area,
-        minimum_vent_count as isize,
+        minimum_vent_count,
     )?;
 
     // edit space heating system
@@ -201,7 +201,7 @@ fn edit_infiltration_ventilation(
     input: &mut InputForProcessing,
     minimum_air_flow_rate: f64,
     minimum_vent_area: f64,
-    minimum_vent_count: isize,
+    minimum_vent_count: usize,
 ) -> anyhow::Result<()> {
     let test_result = 4.;
 
