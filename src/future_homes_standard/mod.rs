@@ -37,6 +37,12 @@ mod project_lookups;
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;
 
+impl Default for FhsSingleCalcWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FhsSingleCalcWrapper {
     pub fn new() -> Self {
         Self {}
@@ -68,6 +74,12 @@ impl HemWrapper for FhsSingleCalcWrapper {
 
 /// A HEM wrapper for full FHS compliance calculations.
 pub struct FhsComplianceWrapper;
+
+impl Default for FhsComplianceWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FhsComplianceWrapper {
     pub fn new() -> Self {

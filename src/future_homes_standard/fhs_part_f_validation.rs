@@ -74,9 +74,9 @@ pub(crate) mod part_f {
             _ => (80, 80),
         };
 
-        return habitable_rooms as f64 * minimum_area_per_habitable_room as f64
-            + bathrooms as f64 * minimum_area_per_bathroom as f64
-            + minimum_area_per_kitchen as f64; // Assume all dwellings have one kitchen
+        habitable_rooms as f64 * minimum_area_per_habitable_room as f64
+            + bathrooms as f64 * minimum_area_per_bathroom
+            + minimum_area_per_kitchen as f64// Assume all dwellings have one kitchen
     }
 
     pub fn minimum_background_vent_count_continuous(bedrooms: usize) -> usize {
@@ -197,7 +197,6 @@ pub(crate) mod part_f {
             .and_then(|v| v.as_object())
             .ok_or_else(|| anyhow!("Vents object is required for InfiltrationVentilation"))?
             .values()
-            .into_iter()
             .collect();
 
         let intermittent_mev_vents: Vec<&JsonValue> = mech_vents
@@ -225,10 +224,10 @@ pub(crate) mod part_f {
             })
             .collect();
 
-        let has_intermittent_vents = intermittent_mev_vents.len() > 0;
-        let has_continuous_vents = mvhr_vents.len() > 0
-            || centralised_mev_vents.len() > 0
-            || decentralised_mev_vents.len() > 0;
+        let has_intermittent_vents = !intermittent_mev_vents.is_empty();
+        let has_continuous_vents = !mvhr_vents.is_empty()
+            || !centralised_mev_vents.is_empty()
+            || !decentralised_mev_vents.is_empty();
 
         let mut intermittent_errors: Vec<String> = Default::default();
         if has_intermittent_vents {
@@ -264,13 +263,13 @@ pub(crate) mod part_f {
         let mut all_collected_errors = intermittent_errors.clone();
         all_collected_errors.append(&mut continuous_errors.clone());
 
-        if all_collected_errors.len() == 0 {
+        if all_collected_errors.is_empty() {
             return Ok(());
         }
 
         if has_intermittent_vents && has_continuous_vents {
             // Dwellings only have to pass either intermittent or continuous validation
-            if intermittent_errors.len() == 0 || continuous_errors.len() == 0 {
+            if intermittent_errors.is_empty() || continuous_errors.is_empty() {
                 return Ok(());
             }
         }
@@ -312,7 +311,7 @@ pub(crate) mod part_f {
         // The validation below only applies to continuous_mev_vents, not mvhr_vents. Since only one
         // validation pathway has to pass for multi system dwellings, if any mvhr_vents are present
         // we do not carry out the validation below
-        if continuous_mev_vents.len() > 0 && mvhr_vents.len() == 0 {
+        if !continuous_mev_vents.is_empty() && mvhr_vents.is_empty() {
             errors.append(&mut validate_continuous_mev_vents(
                 centralised_mev_vents,
                 decentralised_mev_vents,
@@ -335,15 +334,15 @@ pub(crate) mod part_f {
         wet_rooms: usize,
     ) -> anyhow::Result<Vec<String>> {
         let background_area_compliant =
-            sufficient_background_ventilation_area_continuous(&background_vents, habitable_rooms)?;
+            sufficient_background_ventilation_area_continuous(background_vents, habitable_rooms)?;
 
         let background_count_compliant =
-            sufficient_background_vent_count_continuous(&background_vents, bedrooms);
+            sufficient_background_vent_count_continuous(background_vents, bedrooms);
 
         // the number of decentralised continuous vents only needs to be validated for
         // decentralised systems (when no centralised vents exist)
         let decentralised_vent_count_compliant =
-            if decentralised_mev_vents.len() > 0 && centralised_mev_vents.len() == 0 {
+            if !decentralised_mev_vents.is_empty() && centralised_mev_vents.is_empty() {
                 sufficient_mev_count(decentralised_mev_vents, wet_rooms)
             } else {
                 true

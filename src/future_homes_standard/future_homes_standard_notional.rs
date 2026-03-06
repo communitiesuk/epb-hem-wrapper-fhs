@@ -918,7 +918,7 @@ fn replace_space_heating_system(
             "Zone": zone_name,
             "pipework": [],
         }))?;
-        input.set_space_heat_system_for_zone(&zone_name, &zone_space_heat_system_name)?;
+        input.set_space_heat_system_for_zone(zone_name, &zone_space_heat_system_name)?;
     }
 
     Ok(())
@@ -1494,8 +1494,7 @@ fn add_solar_pv(
         if let Some(on_site_generation) = input.on_site_generation()? {
             let total_peak_power: f64 = on_site_generation
                 .values()
-                .map(|panel| panel.get("peak_power").and_then(|power| power.as_f64()))
-                .flatten()
+                .filter_map(|panel| panel.get("peak_power").and_then(|power| power.as_f64()))
                 .sum();
 
             // If the calculated peak_kW is less than the actual total power,

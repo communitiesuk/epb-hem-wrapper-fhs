@@ -2384,8 +2384,7 @@ impl InputForProcessing {
                 {
                     for building_element in building_elements
                         .values_mut()
-                        .map(|v| v.as_object_mut())
-                        .flatten()
+                        .filter_map(|v| v.as_object_mut())
                     {
                         building_element.remove("security_risk");
                         building_element.remove("is_external_door");
@@ -2397,8 +2396,7 @@ impl InputForProcessing {
                 {
                     for building_element in building_elements
                         .values_mut()
-                        .map(|v| v.as_object_mut())
-                        .flatten()
+                        .filter_map(|v| v.as_object_mut())
                     {
                         building_element.remove("junction_type");
                     }

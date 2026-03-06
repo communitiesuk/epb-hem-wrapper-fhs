@@ -227,8 +227,7 @@ pub(crate) fn create_imev_pattern(
             .iter()
             .filter(|(_, vent)| {
                 vent["vent_type"]
-                    .as_str()
-                    .map_or(false, |vent_type| vent_type == "Intermittent MEV")
+                    .as_str() == Some("Intermittent MEV")
             })
             .map(|(vent_name, vent)| (vent_name.to_string(), vent))
             .collect();
@@ -1061,16 +1060,14 @@ mod test {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             let expected_schedule_1 = expected.input["Control"]
                 ["_intermittent_MEV_control: mechvent1"]["schedule"]["main"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             for (i, entry) in actual_schedule_1.iter().enumerate() {
                 assert_relative_eq!(entry, &expected_schedule_1[i], epsilon = 1e-7);
@@ -1081,16 +1078,14 @@ mod test {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             let expected_schedule_2 = expected.input["Control"]
                 ["_intermittent_MEV_control: mechvent2"]["schedule"]["main"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             for (i, entry) in actual_schedule_2.iter().enumerate() {
                 assert_relative_eq!(entry, &expected_schedule_2[i], epsilon = 1e-7);
@@ -1101,16 +1096,14 @@ mod test {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             let expected_schedule_3 = expected.input["Control"]
                 ["_intermittent_MEV_control: mechvent3"]["schedule"]["main"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(Value::as_f64)
-                .flatten()
+                .filter_map(Value::as_f64)
                 .collect::<Vec<_>>();
             for (i, entry) in actual_schedule_3.iter().enumerate() {
                 assert_relative_eq!(entry, &expected_schedule_3[i], epsilon = 1e-7);
