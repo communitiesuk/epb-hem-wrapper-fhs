@@ -3,9 +3,9 @@ use crate::future_homes_standard::fhs_hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
 use crate::future_homes_standard::input::{
-    json_error, set_control_max_name_for_storage_tank_heat_source,
-    set_control_min_name_for_storage_tank_heat_source, HotWaterSourceDetailsForProcessing,
-    HotWaterSourceDetailsJsonMap, InputForProcessing, JsonAccessResult,
+    json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
+    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
+    JsonAccessResult,
 };
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
@@ -1149,28 +1149,37 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         .map(HotWaterSourceDetailsJsonMap)
     {
         if hw_source.is_storage_tank() {
-            for heat_source in hw_source.all_storage_tank_heat_sources()? {
-                let is_solar_thermal_system = heat_source
-                    .as_object()
-                    .and_then(|v| v.get("type"))
-                    .and_then(|v| v.as_str())
-                    .map(|heat_source_type| heat_source_type == "SolarThermalSystem")
-                    .ok_or_else(|| json_error("Heat source type missing or not a string"))?;
+            for heat_source in hw_source.all_heat_sources_mut()? {
+                set_control_max_name_for_heat_source(heat_source, hw_max_temp)?;
 
-                set_control_max_name_for_storage_tank_heat_source(heat_source, hw_max_temp)?;
+                let heat_source_type = heat_source.get("type").ok_or_else(|| {
+                    json_error("Type field missing from storage tank heat source")
+                })?;
 
-                if !is_solar_thermal_system {
-                    set_control_min_name_for_storage_tank_heat_source(heat_source, hw_min_temp)?;
+                if heat_source_type != "SolarThermalSystem" {
+                    set_control_min_name_for_heat_source(heat_source, hw_min_temp)?;
                 }
             }
         } else if hw_source.is_smart_hot_water_tank() {
             hw_source.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
-            hw_source.set_control_max_name_for_smart_hot_water_tank_heat_sources(
-                hw_smart_hot_water_tank_max_soc_name,
-            )?;
-            hw_source.set_control_min_name_for_smart_hot_water_tank_heat_sources(
-                hw_smart_hot_water_tank_min_soc_name,
-            )?;
+
+            for heat_source in hw_source.all_heat_sources_mut()? {
+                set_control_max_name_for_heat_source(
+                    heat_source,
+                    hw_smart_hot_water_tank_max_soc_name,
+                )?;
+
+                let heat_source_type = heat_source.get("type").ok_or_else(|| {
+                    json_error("Type field missing from smart hot water tank heat source")
+                })?;
+
+                if heat_source_type != "SolarThermalSystem" {
+                    set_control_min_name_for_heat_source(
+                        heat_source,
+                        hw_smart_hot_water_tank_min_soc_name,
+                    )?;
+                }
+            }
         } else if hw_source.is_combi_boiler() || hw_source.is_point_of_use() || hw_source.is_hiu() {
             // Instantaneous water heating systems must be available 24 hours a day
             // so do nothing

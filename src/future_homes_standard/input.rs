@@ -2483,7 +2483,7 @@ impl UValueEditableBuildingElement for UValueEditableBuildingElementJsonValue<'_
     }
 }
 
-pub(super) fn set_control_min_name_for_storage_tank_heat_source(
+pub(super) fn set_control_min_name_for_heat_source(
     heat_source: &mut JsonValue,
     control_name: &str,
 ) -> JsonAccessResult<()> {
@@ -2494,7 +2494,7 @@ pub(super) fn set_control_min_name_for_storage_tank_heat_source(
     Ok(())
 }
 
-pub(super) fn set_control_max_name_for_storage_tank_heat_source(
+pub(super) fn set_control_max_name_for_heat_source(
     heat_source: &mut JsonValue,
     control_name: &str,
 ) -> JsonAccessResult<()> {
@@ -2506,31 +2506,19 @@ pub(super) fn set_control_max_name_for_storage_tank_heat_source(
 }
 
 pub trait HotWaterSourceDetailsForProcessing {
-    fn all_storage_tank_heat_sources(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;
+    fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;
     fn is_storage_tank(&self) -> bool;
     fn is_combi_boiler(&self) -> bool;
     fn is_hiu(&self) -> bool;
     fn is_point_of_use(&self) -> bool;
     fn is_smart_hot_water_tank(&self) -> bool;
-    fn set_control_min_name_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()>;
-    fn set_control_max_name_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()>;
     fn set_temp_setpnt_max(&mut self, temp_setpoint_max_name: &str);
 }
 
 pub struct HotWaterSourceDetailsJsonMap<'a>(pub &'a mut Map<std::string::String, JsonValue>);
 
 impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
-    fn all_storage_tank_heat_sources(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>> {
-        if !self.is_storage_tank() {
-            return Err(json_error("Only StorageTank hw cylinders have HeatSources"));
-        }
-
+    fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>> {
         let heat_sources = self
             .0
             .get_mut("HeatSource")
@@ -2574,40 +2562,6 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
             .get("type")
             .and_then(|source_type| source_type.as_str())
             .is_some_and(|source_type| source_type == "SmartHotWaterTank")
-    }
-
-    fn set_control_min_name_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()> {
-        if !self.is_smart_hot_water_tank() {
-            return Ok(());
-        }
-
-        if let Some(heat_sources) = self.0.get_mut("HeatSource").and_then(|v| v.as_object_mut()) {
-            for heat_source in heat_sources.values_mut().flat_map(|v| v.as_object_mut()) {
-                heat_source.insert("Controlmin".into(), json!(control_name));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn set_control_max_name_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        control_name: &str,
-    ) -> anyhow::Result<()> {
-        if !self.is_smart_hot_water_tank() {
-            return Ok(());
-        }
-
-        if let Some(heat_sources) = self.0.get_mut("HeatSource").and_then(|v| v.as_object_mut()) {
-            for heat_source in heat_sources.values_mut().flat_map(|v| v.as_object_mut()) {
-                heat_source.insert("Controlmax".into(), json!(control_name));
-            }
-        }
-
-        Ok(())
     }
 
     fn set_temp_setpnt_max(&mut self, temp_setpoint_max_name: &str) {
