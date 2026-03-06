@@ -1,5 +1,5 @@
 pub(crate) mod part_f {
-
+    use anyhow::{anyhow, bail};
     use home_energy_model::{
         compare_floats::max_of_2,
         core::units::{LITRES_PER_CUBIC_METRE, SECONDS_PER_HOUR},
@@ -87,20 +87,17 @@ pub(crate) mod part_f {
         vents: Vec<&JsonValue>,
         total_floor_area: f64,
         bedrooms: usize,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         let total_design_flow: f64 = vents
             .iter()
             .map(|v| {
-                v.get("design_outdoor_air_flow_rate")
-                    .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
-                    .as_f64()
-                    .expect("design_outdoor_air_flow_rate should be a number")
+                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
             })
-            .sum();
+            .sum::<Result<f64, _>>()?;
 
         let min_ventilation =
             minimum_whole_dwelling_ventilation_rate_continuous(total_floor_area, bedrooms);
-        total_design_flow >= min_ventilation
+        Ok(total_design_flow >= min_ventilation)
     }
 
     pub fn sufficient_whole_dwelling_ventilation_rate_intermittent(
@@ -109,40 +106,33 @@ pub(crate) mod part_f {
         utility_rooms: usize,
         sanitary_accommodations: usize,
         is_kitchen_vent_external: bool,
-    ) -> bool {
-        let total_design_flow: f64 = vents
-            .iter()
-            .map(|v| {
-                v.get("design_outdoor_air_flow_rate")
-                    .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
-                    .as_f64()
-                    .expect("design_outdoor_air_flow_rate should be a number")
-            })
-            .sum();
+    ) -> anyhow::Result<bool> {
+        let total_design_flow = total_design_flow_from_vents(vents)?;
         let min_ventilation = minimum_whole_dwelling_ventilation_rate_intermittent(
             bathrooms,
             utility_rooms,
             sanitary_accommodations,
             is_kitchen_vent_external,
         );
-        total_design_flow >= min_ventilation
+        Ok(total_design_flow >= min_ventilation)
+    }
+
+    fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        vents
+            .iter()
+            .map(|v| {
+                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
+            })
+            .sum()
     }
 
     pub fn sufficient_background_ventilation_area_continuous(
         vents: &Vec<&JsonValue>,
         habitable_rooms: usize,
-    ) -> bool {
-        let total_vent_area: f64 = vents
-            .iter()
-            .map(|v| {
-                v.get("area_cm2")
-                    .expect("area_cm2 is required for all Vents")
-                    .as_f64()
-                    .expect("area_cm2 should be a number")
-            })
-            .sum();
+    ) -> anyhow::Result<bool> {
+        let total_vent_area = total_vent_area_from_vents(vents)?;
         let min_area = minimum_background_ventilation_area_continuous(habitable_rooms);
-        total_vent_area >= min_area
+        Ok(total_vent_area >= min_area)
     }
 
     pub fn sufficient_background_ventilation_area_intermittent(
@@ -150,32 +140,36 @@ pub(crate) mod part_f {
         habitable_rooms: usize,
         bathrooms: usize,
         storeys: usize,
-    ) -> bool {
-        let total_vent_area: f64 = vents
-            .iter()
-            .map(|v| {
-                v.get("area_cm2")
-                    .expect("area_cm2 is required for all Vents")
-                    .as_f64()
-                    .expect("area_cm2 should be a number")
-            })
-            .sum();
+    ) -> anyhow::Result<bool> {
+        let total_vent_area = total_vent_area_from_vents(vents)?;
         let min_area =
             minimum_background_ventilation_area_intermittent(habitable_rooms, bathrooms, storeys);
-        total_vent_area >= min_area
+        Ok(total_vent_area >= min_area)
     }
 
-    pub fn sufficient_large_imev(vents: &[&JsonValue], is_kitchen_vent_external: bool) -> bool {
+    fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        vents
+            .iter()
+            .map(|v| {
+                anyhow::Ok(v.get("area_cm2").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    anyhow!("area_cm2 provided as a number is expected for MechanicalVentilation")
+                })?)
+            })
+            .sum()
+    }
+
+    pub fn sufficient_large_imev(
+        vents: &[&JsonValue],
+        is_kitchen_vent_external: bool,
+    ) -> anyhow::Result<bool> {
         let min_flow_rate = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l / s
         let min_flow_rate_m3hr = litres_per_second_to_cubic_metres_per_hour(min_flow_rate); // m3/hr
 
-        vents.iter().any(|v| {
-            v.get("design_outdoor_air_flow_rate")
-                .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
-                .as_f64()
-                .expect("design_outdoor_air_flow_rate should be a number")
-                >= min_flow_rate_m3hr
-        })
+        let vent_flow_rates: Vec<f64> = vents.iter().map(|v| anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)).collect::<Result<_, _>>()?;
+
+        Ok(vent_flow_rates
+            .into_iter()
+            .any(|rate| rate >= min_flow_rate_m3hr))
     }
 
     pub(crate) fn validate_dwelling_ventilation(
@@ -189,20 +183,19 @@ pub(crate) mod part_f {
         sanitary_accommodations: usize,
         storeys: usize,
         is_kitchen_vent_external: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let mech_vents = ventilation
             .get("MechanicalVentilation")
             .and_then(|v| v.as_object());
-        if mech_vents.is_none() || mech_vents.unwrap().len() == 0 {
-            return Err("FHS input validation failed, see part F of the building regulations.\nDwelling lacks any mechanical vents.".into());
-        }
-        let mech_vents = mech_vents.unwrap();
+        let mech_vents = match mech_vents {
+            Some(mech_vents) if !mech_vents.is_empty() => mech_vents,
+            _ => bail!("FHS input validation failed, see part F of the building regulations.\nDwelling lacks any mechanical vents."),
+        };
 
         let background_vents: Vec<&JsonValue> = ventilation
             .get("Vents")
-            .expect("Vents is required for InfiltrationVentilation")
-            .as_object()
-            .expect("Vents is required for InfiltrationVentilation")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| anyhow!("Vents object is required for InfiltrationVentilation"))?
             .values()
             .into_iter()
             .collect();
@@ -210,40 +203,24 @@ pub(crate) mod part_f {
         let intermittent_mev_vents: Vec<&JsonValue> = mech_vents
             .values()
             .filter(|mech_vent| {
-                mech_vent
-                    .get("vent_type")
-                    .expect("vent_type is required for MechanicalVentilation")
-                    .as_str()
-                    == Some("Intermittent MEV")
+                mech_vent.get("vent_type").and_then(|v| v.as_str()) == Some("Intermittent MEV")
             })
             .collect();
         let mvhr_vents: Vec<&JsonValue> = mech_vents
             .values()
-            .filter(|mech_vent| {
-                mech_vent
-                    .get("vent_type")
-                    .expect("vent_type is required for MechanicalVentilation")
-                    .as_str()
-                    == Some("MVHR")
-            })
+            .filter(|mech_vent| mech_vent.get("vent_type").and_then(|v| v.as_str()) == Some("MVHR"))
             .collect();
         let centralised_mev_vents: Vec<&JsonValue> = mech_vents
             .values()
             .filter(|mech_vent| {
-                mech_vent
-                    .get("vent_type")
-                    .expect("vent_type is required for MechanicalVentilation")
-                    .as_str()
+                mech_vent.get("vent_type").and_then(|v| v.as_str())
                     == Some("Centralised continuous MEV")
             })
             .collect();
         let decentralised_mev_vents: Vec<&JsonValue> = mech_vents
             .values()
             .filter(|mech_vent| {
-                mech_vent
-                    .get("vent_type")
-                    .expect("vent_type is required for MechanicalVentilation")
-                    .as_str()
+                mech_vent.get("vent_type").and_then(|v| v.as_str())
                     == Some("Decentralised continuous MEV")
             })
             .collect();
@@ -266,7 +243,7 @@ pub(crate) mod part_f {
                 storeys,
                 is_kitchen_vent_external,
                 bedrooms,
-            );
+            )?;
         }
 
         let mut continuous_errors: Vec<String> = Default::default();
@@ -280,7 +257,7 @@ pub(crate) mod part_f {
                 bedrooms,
                 habitable_rooms,
                 wet_rooms,
-            );
+            )?;
         }
 
         // note - important to clone() here so that `append` doesn't modify intermittent_errors or continuous_errors
@@ -298,10 +275,10 @@ pub(crate) mod part_f {
             }
         }
 
-        {
-            let result = format!("FHS input validation failed, see part F of the building regulations.\nFailure(s):\n{}", all_collected_errors.join("\n"));
-            Err(result)
-        }
+        bail!(
+            "FHS input validation failed, see part F of the building regulations.\nFailure(s):\n{}",
+            all_collected_errors.join("\n")
+        );
     }
 
     fn validate_continuous_vents(
@@ -313,7 +290,7 @@ pub(crate) mod part_f {
         bedrooms: usize,
         habitable_rooms: usize,
         wet_rooms: usize,
-    ) -> Vec<String> {
+    ) -> anyhow::Result<Vec<String>> {
         let mut errors: Vec<String> = Default::default();
 
         let mut continuous_mev_vents = centralised_mev_vents.clone();
@@ -328,7 +305,7 @@ pub(crate) mod part_f {
             bedrooms,
         );
 
-        if !mech_compliant {
+        if !mech_compliant? {
             errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
         }
 
@@ -343,10 +320,10 @@ pub(crate) mod part_f {
                 bedrooms,
                 habitable_rooms,
                 wet_rooms,
-            ));
+            )?);
         }
 
-        errors
+        Ok(errors)
     }
 
     fn validate_continuous_mev_vents(
@@ -356,9 +333,9 @@ pub(crate) mod part_f {
         bedrooms: usize,
         habitable_rooms: usize,
         wet_rooms: usize,
-    ) -> Vec<String> {
+    ) -> anyhow::Result<Vec<String>> {
         let background_area_compliant =
-            sufficient_background_ventilation_area_continuous(&background_vents, habitable_rooms);
+            sufficient_background_ventilation_area_continuous(&background_vents, habitable_rooms)?;
 
         let background_count_compliant =
             sufficient_background_vent_count_continuous(&background_vents, bedrooms);
@@ -387,12 +364,11 @@ pub(crate) mod part_f {
             )
         ];
 
-        let results: Vec<String> = checks
+        Ok(checks
             .iter()
             .filter(|(passed, _)| !passed)
             .map(|(_, message)| message.to_string())
-            .collect();
-        results
+            .collect())
     }
 
     fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: usize) -> bool {
@@ -414,23 +390,23 @@ pub(crate) mod part_f {
         storeys: usize,
         is_kitchen_vent_external: bool,
         bedrooms: usize,
-    ) -> Vec<String> {
+    ) -> anyhow::Result<Vec<String>> {
         let background_compliant = sufficient_background_ventilation_area_intermittent(
             background_vents,
             habitable_rooms,
             bathrooms,
             storeys,
-        );
+        )?;
         let mech_compliant = sufficient_whole_dwelling_ventilation_rate_intermittent(
             &intermittent_mev_vents,
             bathrooms,
             utility_rooms,
             sanitary_accommodations,
             is_kitchen_vent_external,
-        );
+        )?;
         let mev_count_compliant = sufficient_mev_count(&intermittent_mev_vents, wet_rooms);
         let large_compliant =
-            sufficient_large_imev(&intermittent_mev_vents, is_kitchen_vent_external);
+            sufficient_large_imev(&intermittent_mev_vents, is_kitchen_vent_external)?;
         let background_count_compliant =
             sufficient_background_vent_count_intermittent(background_vents, bedrooms);
 
@@ -451,12 +427,11 @@ pub(crate) mod part_f {
             ),
         ];
 
-        let results: Vec<String> = checks
+        Ok(checks
             .iter()
             .filter(|(passed, _)| !passed)
             .map(|(_, message)| message.to_string())
-            .collect();
-        results
+            .collect())
     }
 
     fn sufficient_background_vent_count_intermittent(
@@ -587,10 +562,10 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains(
+            assert!(e.to_string().contains(
                 "Dwelling lacks sufficient background vent area for continuous ventilation."
             ));
-            assert!(e.contains(
+            assert!(e.to_string().contains(
                 "Dwelling lacks sufficient number of background vents for continuous ventilation."
             ));
         });
@@ -623,7 +598,9 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks any mechanical vents"));
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks any mechanical vents"));
         });
     }
 
@@ -653,11 +630,13 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
-            assert!(e.contains(
+            let error_message = e.to_string();
+            assert!(error_message
+                .contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+            assert!(error_message.contains(
                 "Dwelling lacks sufficient background vent area for continuous ventilation."
             ));
-            assert!(e.contains(
+            assert!(error_message.contains(
                 "Dwelling lacks sufficient number of background vents for continuous ventilation."
             ));
         });
@@ -759,7 +738,9 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks sufficient continuous mechanical extract rate."));
         });
     }
 
@@ -876,8 +857,9 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
-            assert!(e.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
         });
     }
 
@@ -936,8 +918,10 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
-            assert!(e.contains(
+            let error_message = e.to_string();
+            assert!(error_message
+                .contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains(
                 "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
             ));
         });
@@ -1039,7 +1023,7 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains(
+            assert!(e.to_string().contains(
                 "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
             ));
         });
@@ -1117,7 +1101,7 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains(
+            assert!(e.to_string().contains(
                 "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
             ));
         });
@@ -1166,10 +1150,11 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
-            assert!(e.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
-            assert!(e.contains("Dwelling lacks a large enough intermittent mechanical vent for cooking events."));
-            assert!(e.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains("Dwelling lacks a large enough intermittent mechanical vent for cooking events."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
         });
     }
 
@@ -1242,9 +1227,9 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(
-                e.contains("Dwelling lacks sufficient number of intermittent mechanical vents.")
-            );
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks sufficient number of intermittent mechanical vents."));
         });
     }
 
@@ -1546,13 +1531,14 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
-            assert!(e.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
-            assert!(e.contains("Dwelling lacks sufficient number of intermittent mechanical vents."));
-            assert!(e.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
-            assert!(e.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
-            assert!(e.contains("Dwelling lacks sufficient background vent area for continuous ventilation."));
-            assert!(e.contains("Dwelling lacks sufficient number of background vents for continuous ventilation."));
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of intermittent mechanical vents."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for continuous ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for continuous ventilation."));
         });
     }
 
@@ -1653,7 +1639,7 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            assert!(e.to_string().contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
         });
     }
 
@@ -1704,7 +1690,7 @@ mod tests {
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
-            assert!(e.contains("Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."));
+            assert!(e.to_string().contains("Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."));
         });
     }
 }
