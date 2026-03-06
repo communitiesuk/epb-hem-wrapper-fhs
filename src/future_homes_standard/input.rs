@@ -2181,6 +2181,13 @@ impl InputForProcessing {
             .collect::<anyhow::Result<_, _>>()
     }
 
+    pub(crate) fn heat_source_wet_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
+        self.root_mut()?
+            .get_mut("HeatSourceWet")
+            .and_then(|source| source.as_object_mut())
+            .ok_or_else(|| json_error("HeatSourceWet not an object"))
+    }
+
     pub(crate) fn cold_water_source(&self) -> anyhow::Result<ColdWaterSourceInput> {
         Ok(serde_json::from_value(
             self.root()?

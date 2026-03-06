@@ -4063,6 +4063,42 @@ fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()>
     Ok(())
 }
 
+/// The EnergySupply of a heat network is exclusively allowed to be a custom object defining
+/// a custom fuel. In this case we need to move the custom object into EnergySupply and
+/// reference it for the heat network. We extract out the custom energy factors to be used later.
+fn create_custom_energy_supply_factors(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let mut custom_energy_supply_factors = IndexMap::new();
+
+    for (heat_source_wet_key, heat_source_wet) in input.heat_source_wet_mut()?.iter_mut() {
+        // Process custom EnergySupply objects
+        let is_heat_network = heat_source_wet
+            .get("is_heat_network")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if let Some(energy_supply) = heat_source_wet.get_mut("EnergySupply") {
+            if is_heat_network {
+                let name = energy_supply
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        json_error("Name field missing or not a string on energy supply")
+                    })?;
+                // Extract custom energy factor
+                custom_energy_supply_factors.insert(
+                    name,
+                    energy_supply
+                        .get("factor")
+                        .ok_or_else(|| json_error("Factor field missing on energy supply"))?
+                        .clone(),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[allow(dead_code)] // for now!! TODO remove dead_code annotation during 1.0.0a4 migration once function is referenced
 pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // detail of removal of FHS fields is delegated to input here
@@ -5330,6 +5366,51 @@ mod tests {
 
             // Then the existing values should remain unchanged
             assert_eq!(input, original_input);
+        }
+    }
+
+    mod test_create_custom_energy_supply_factors {
+        use super::*;
+        use crate::future_homes_standard::input::InputForProcessing;
+        use serde_json::json;
+
+        #[test]
+        #[ignore = "todo 1.0.0a4 migration"]
+        fn test_sets_custom_energy_supplies() {
+            // Given a custom energy supply specified for a heat network
+            let mut input = InputForProcessing {
+                input: json!({
+                    "EnergySupply": {},
+                    "HeatSourceWet": {
+                        "heat network": {
+                            "type": "HIU",
+                            "is_heat_network": true,
+                            "heat_network_type": "sleeved DHN",
+                            "HIU_daily_loss": 1,
+                            "power_max": 1,
+                            "building_level_distribution_losses": 1,
+                            "EnergySupply": {
+                                "name": "custom_heat_network_supply",
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 1,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                                    "Primary Energy Factor kWh/kWh delivered": 1,
+                                },
+                                "is_export_capable": false,
+                            },
+                        }
+                    },
+                }),
+            };
+
+            // When create_custom_energy_supply is called for non notional mode
+            let stored_factors = create_custom_energy_supply_factors(&mut input).unwrap();
+
+            // Then the input is mutated such that a custom fuel energy supply is created
+            assert_eq!(
+                input.input["EnergySupply"]["custom_heat_network_supply"],
+                json!({"fuel": "custom", "is_export_capable": false})
+            );
         }
     }
 }
