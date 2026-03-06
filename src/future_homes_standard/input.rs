@@ -2503,10 +2503,7 @@ pub trait HotWaterSourceDetailsForProcessing {
         &mut self,
         control_name: &str,
     ) -> anyhow::Result<()>;
-    fn set_temp_setpoint_max_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        temp_setpoint_max_name: &str,
-    ) -> anyhow::Result<()>;
+    fn set_temp_setpnt_max(&mut self, temp_setpoint_max_name: &str);
 }
 
 pub struct HotWaterSourceDetailsJsonMap<'a>(pub &'a mut Map<std::string::String, JsonValue>);
@@ -2596,21 +2593,9 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
         Ok(())
     }
 
-    fn set_temp_setpoint_max_for_smart_hot_water_tank_heat_sources(
-        &mut self,
-        temp_setpoint_max_name: &str,
-    ) -> anyhow::Result<()> {
-        if !self.is_smart_hot_water_tank() {
-            return Ok(());
-        }
-
-        if let Some(heat_sources) = self.0.get_mut("HeatSource").and_then(|v| v.as_object_mut()) {
-            for heat_source in heat_sources.values_mut().flat_map(|v| v.as_object_mut()) {
-                heat_source.insert("temp_setpnt_max".into(), json!(temp_setpoint_max_name));
-            }
-        }
-
-        Ok(())
+    fn set_temp_setpnt_max(&mut self, temp_setpoint_max_name: &str) {
+        self.0
+            .insert("temp_setpnt_max".into(), json!(temp_setpoint_max_name));
     }
 }
 

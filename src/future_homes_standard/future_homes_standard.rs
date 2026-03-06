@@ -1164,14 +1164,12 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
                 }
             }
         } else if hw_source.is_smart_hot_water_tank() {
+            hw_source.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
             hw_source.set_control_max_name_for_smart_hot_water_tank_heat_sources(
                 hw_smart_hot_water_tank_max_soc_name,
             )?;
             hw_source.set_control_min_name_for_smart_hot_water_tank_heat_sources(
                 hw_smart_hot_water_tank_min_soc_name,
-            )?;
-            hw_source.set_temp_setpoint_max_for_smart_hot_water_tank_heat_sources(
-                hw_smart_hot_water_tank_temp_max_name,
             )?;
         } else if hw_source.is_combi_boiler() || hw_source.is_point_of_use() || hw_source.is_hiu() {
             // Instantaneous water heating systems must be available 24 hours a day
@@ -5122,6 +5120,75 @@ mod tests {
                 input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["SolarThermalSystem"]
                     ["Controlmax"],
                 "_HW_max_temp"
+            );
+        }
+
+        #[rstest]
+        fn test_smart_tank_gets_controls(mut input: InputForProcessing) {
+            // Given a dwelling with a SmartHotWaterTank fed by a header tank and immersion
+            input.input["HotWaterSource"]["hw cylinder"]["type"] = json!("SmartHotWaterTank");
+
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+
+            // Then the heating pattern reflects a max temperature of 60C for the tank always
+            // and controls with a min/max state of charge:
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"]
+                    ["Controlmax"],
+                "_HW_smart_hot_water_tank_max_soc"
+            );
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"]
+                    ["Controlmin"],
+                "_HW_smart_hot_water_tank_min_soc"
+            );
+            assert_eq!(
+                input.input["HotWaterSource"]["hw cylinder"]["temp_setpnt_max"],
+                "_HW_smart_hot_water_tank_temp_max"
+            );
+            assert_eq!(
+                input.input["Control"]["_HW_smart_hot_water_tank_max_soc"],
+                json!({
+                    "schedule": {
+                        "day": [
+                            {"repeat": 2, "value": 1.0},
+                            {"repeat": 1, "value": 0.6},
+                            {"repeat": 4, "value": 0.5},
+                            {"repeat": 17, "value": 0.6},
+                        ],
+                        "main": [{"repeat": 365, "value": "day"}],
+                    },
+                    "start_day": 0,
+                    "time_series_step": 1,
+                    "type": "SetpointTimeControl",
+                })
+            );
+            assert_eq!(
+                input.input["Control"]["_HW_smart_hot_water_tank_min_soc"],
+                json!({
+                    "schedule": {
+                        "day": [
+                            {"repeat": 2, "value": 1.0},
+                            {"repeat": 1, "value": 0.1},
+                            {"repeat": 4, "value": 0.5},
+                            {"repeat": 17, "value": 0.1},
+                        ],
+                        "main": [{"repeat": 365, "value": "day"}],
+                    },
+                    "start_day": 0,
+                    "time_series_step": 1,
+                    "type": "SetpointTimeControl",
+                })
+            );
+            assert_eq!(
+                input.input["Control"]["_HW_smart_hot_water_tank_temp_max"],
+                json!({
+                    "schedule": {"main": [{"repeat": 8760, "value": 60.0}]},
+                    "start_day": 0,
+                    "time_series_step": 1,
+                    "type": "SetpointTimeControl"
+                })
             );
         }
     }
