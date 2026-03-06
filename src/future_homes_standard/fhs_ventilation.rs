@@ -91,7 +91,7 @@ pub(crate) fn create_mechanical_ventilation(
             .as_object()
             .and_then(|el| el.get("pitch"))
             .and_then(|pitch| pitch.as_f64())
-            .ok_or_else(|| json_error("Pitch missing or invalid"))?;
+            .ok_or_else(|| json_error("Building element 'pitch' missing or not a number"))?;
 
         if pitch_class(pitch) == HeatFlowDirection::Horizontal {
             windows_excluding_rooflights.push(window);
@@ -142,7 +142,7 @@ pub(crate) fn create_mechanical_ventilation(
 
                 Some((orientation, pitch))
             })
-            .ok_or_else(|| json_error("Building element fields missing or invalid"))?;
+            .ok_or_else(|| json_error("One or more building element fields missing or invalid: 'orientation360', 'pitch'"))?;
 
         let dmev_key = format!("Decentralised_Continuous_MEV_{i}");
         let dmev_value = create_dmev(
@@ -192,7 +192,7 @@ fn calc_vent_mid_height_airflow_path(
 
             Some((el_type, base_height, height, pitch))
         })
-        .ok_or_else(|| json_error("Building element fields missing or invalid"))?;
+        .ok_or_else(|| json_error("One or more building element fields missing or invalid: 'type', 'base_height', 'height', 'pitch'"))?;
 
     Ok(if el_type == "BuildingElementOpaque" {
         base_height + (height * pitch.to_radians().sin() / 2.) - ventilation_zone_base_height
@@ -210,17 +210,17 @@ fn sorted_windows_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Va
             .ok_or_else(|| json_error("Building element was not an object"))?
             .get("type")
             .and_then(|el_type| el_type.as_str())
-            .ok_or_else(|| json_error("Building element type missing or not a string"))?;
+            .ok_or_else(|| json_error("Building element 'type' missing or not a string"))?;
 
         if el_type == "BuildingElementTransparent" {
             let width = building_element
                 .get("width")
                 .and_then(|width| width.as_f64())
-                .ok_or_else(|| json_error("Building element width missing or invalid"))?;
+                .ok_or_else(|| json_error("Building element 'width' missing or not a number"))?;
             let height = building_element
                 .get("height")
                 .and_then(|height| height.as_f64())
-                .ok_or_else(|| json_error("Building element height missing or invalid"))?;
+                .ok_or_else(|| json_error("Building element 'height' missing or not a number"))?;
             windows.push((width * height, (*building_element).clone()));
         }
     }
@@ -240,25 +240,25 @@ fn sorted_walls_by_area(building_elements: &[&Value]) -> anyhow::Result<Vec<Valu
         let el_type = element
             .get("type")
             .and_then(|el_type| el_type.as_str())
-            .ok_or_else(|| json_error("Building element type missing or not a string"))?;
+            .ok_or_else(|| json_error("Building element 'type' missing or not a string"))?;
 
         if el_type == "BuildingElementOpaque" {
             let pitch = element
                 .get("pitch")
                 .and_then(|pitch| pitch.as_f64())
-                .ok_or_else(|| json_error("Building element pitch missing or invalid"))?;
+                .ok_or_else(|| json_error("Building element 'pitch' missing or not a number"))?;
 
             if pitch_class(pitch) == HeatFlowDirection::Horizontal {
                 let is_external_door = element
                     .get("is_external_door")
                     .and_then(|v| v.as_bool())
                     .ok_or_else(|| {
-                        json_error("Building element is_external_door missing or invalid")
+                        json_error("Building element 'is_external_door' missing or not a boolean")
                     })?;
                 let area = element
                     .get("area")
                     .and_then(|area| area.as_f64())
-                    .ok_or_else(|| json_error("Building element area missing or invalid"))?;
+                    .ok_or_else(|| json_error("Building element 'area' missing or not a number"))?;
 
                 if !is_external_door {
                     walls.push((area, (*building_element).clone()));
