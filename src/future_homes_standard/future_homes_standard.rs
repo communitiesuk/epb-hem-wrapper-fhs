@@ -1179,6 +1179,24 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         }
     }
 
+    if input.has_preheated_water_source() {
+        for heat_source in input.all_preheated_tank_heat_source_values_mut()? {
+            let heat_source = heat_source
+                .as_object_mut()
+                .ok_or_else(|| json_error("Heat source on pre heated tank was not an object"))?;
+
+            heat_source.insert("Controlmax".into(), hw_max_temp.into());
+
+            let heat_source_type = heat_source
+                .get("type")
+                .ok_or_else(|| json_error("Type field missing from pre heated tank heat source"))?;
+
+            if heat_source_type != "SolarThermalSystem" {
+                heat_source.insert("Controlmin".into(), hw_min_temp.into());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -5189,6 +5207,42 @@ mod tests {
                     "time_series_step": 1,
                     "type": "SetpointTimeControl"
                 })
+            );
+        }
+
+        #[rstest]
+        fn test_preheated_tank_gets_controls(mut input: InputForProcessing) {
+            // Given a dwelling with a preheated tank (fed by a header tank)
+            input.input["PreHeatedWaterSource"] = json!({
+                "preheated tank": {
+                    "volume": 80.0,
+                    "daily_losses": 1.68,
+                    "ColdWaterSource": "header tank",
+                    "HeatSource": {
+                        "immersion": {
+                            "type": "ImmersionHeater",
+                            "power": 3.0,
+                            "EnergySupply": "mains elec",
+                            "heater_position": 0.1,
+                            "thermostat_position": 0.33,
+                        }
+                    },
+                }
+            });
+
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+
+            // Then it receives identical controls to a StorageTank
+            assert_eq!(
+                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
+                    ["Controlmax"],
+                "_HW_max_temp"
+            );
+            assert_eq!(
+                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
+                    ["Controlmin"],
+                "_HW_min_temp"
             );
         }
     }

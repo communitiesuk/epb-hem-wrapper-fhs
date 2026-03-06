@@ -498,6 +498,25 @@ impl InputForProcessing {
         self.remove_root_key("PreHeatedWaterSource")
     }
 
+    pub(crate) fn has_preheated_water_source(&self) -> bool {
+        self.input.get("PreHeatedWaterSource").is_some()
+    }
+
+    pub(crate) fn all_preheated_tank_heat_source_values_mut(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&mut JsonValue>> {
+        Ok(self
+            .root_object_mut("PreHeatedWaterSource")?
+            .get_mut("preheated tank")
+            .ok_or_else(|| json_error("preheated tank not found"))?
+            .get_mut("HeatSource")
+            .ok_or_else(|| json_error("HeatSource not found"))?
+            .as_object_mut()
+            .ok_or_else(|| json_error("HeatSource not an object"))?
+            .values_mut()
+            .collect())
+    }
+
     pub fn zone_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
         Ok(self
             .zone_node()?
