@@ -225,10 +225,7 @@ pub(crate) fn create_imev_pattern(
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Missing MechanicalVentilation section in input"))?
             .iter()
-            .filter(|(_, vent)| {
-                vent["vent_type"]
-                    .as_str() == Some("Intermittent MEV")
-            })
+            .filter(|(_, vent)| vent["vent_type"].as_str() == Some("Intermittent MEV"))
             .map(|(vent_name, vent)| (vent_name.to_string(), vent))
             .collect();
         if intermittent_mevs.is_empty() {
@@ -401,10 +398,10 @@ pub(crate) fn create_imev_pattern(
             .event_type
             .is_some_and(|event_type| event_type == EventType::Tapping)
         {
-            let mut best_non_kitchen_imev = non_kitchen_imevs.get_next_best_imev(event)?;
-            if let Some(best_non_kitchen_imev) = best_non_kitchen_imev.as_mut() {
-                best_non_kitchen_imev.assign_on_time(event)?;
-            }
+            let best_non_kitchen_imev = non_kitchen_imevs
+                .get_next_best_imev(event)?
+                .ok_or_else(|| anyhow!("At least one non-kitchen IMEV is expected"))?;
+            best_non_kitchen_imev.assign_on_time(event)?;
         }
     }
 
