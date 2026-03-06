@@ -1188,7 +1188,7 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         }
     }
 
-    if input.has_preheated_water_source() {
+    if input.has_preheated_water_source()? {
         for heat_source in input.all_preheated_tank_heat_source_values_mut()? {
             let heat_source = heat_source
                 .as_object_mut()

@@ -498,8 +498,8 @@ impl InputForProcessing {
         self.remove_root_key("PreHeatedWaterSource")
     }
 
-    pub(crate) fn has_preheated_water_source(&self) -> bool {
-        self.input.get("PreHeatedWaterSource").is_some()
+    pub(crate) fn has_preheated_water_source(&self) -> JsonAccessResult<bool> {
+        Ok(self.root()?.contains_key("PreHeatedWaterSource"))
     }
 
     pub(crate) fn all_preheated_tank_heat_source_values_mut(
