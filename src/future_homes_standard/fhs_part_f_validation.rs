@@ -92,9 +92,9 @@ pub(crate) mod part_f {
             .iter()
             .map(|v| {
                 v.get("design_outdoor_air_flow_rate")
-                    .unwrap()
+                    .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
                     .as_f64()
-                    .unwrap()
+                    .expect("design_outdoor_air_flow_rate should be a number")
             })
             .sum();
 
@@ -114,9 +114,9 @@ pub(crate) mod part_f {
             .iter()
             .map(|v| {
                 v.get("design_outdoor_air_flow_rate")
-                    .unwrap()
+                    .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
                     .as_f64()
-                    .unwrap()
+                    .expect("design_outdoor_air_flow_rate should be a number")
             })
             .sum();
         let min_ventilation = minimum_whole_dwelling_ventilation_rate_intermittent(
@@ -134,7 +134,12 @@ pub(crate) mod part_f {
     ) -> bool {
         let total_vent_area: f64 = vents
             .iter()
-            .map(|v| v.get("area_cm2").unwrap().as_f64().unwrap())
+            .map(|v| {
+                v.get("area_cm2")
+                    .expect("area_cm2 is required for all Vents")
+                    .as_f64()
+                    .expect("area_cm2 should be a number")
+            })
             .sum();
         let min_area = minimum_background_ventilation_area_continuous(habitable_rooms);
         total_vent_area >= min_area
@@ -148,7 +153,12 @@ pub(crate) mod part_f {
     ) -> bool {
         let total_vent_area: f64 = vents
             .iter()
-            .map(|v| v.get("area_cm2").unwrap().as_f64().unwrap())
+            .map(|v| {
+                v.get("area_cm2")
+                    .expect("area_cm2 is required for all Vents")
+                    .as_f64()
+                    .expect("area_cm2 should be a number")
+            })
             .sum();
         let min_area =
             minimum_background_ventilation_area_intermittent(habitable_rooms, bathrooms, storeys);
@@ -161,14 +171,10 @@ pub(crate) mod part_f {
 
         vents.iter().any(|v| {
             v.get("design_outdoor_air_flow_rate")
-                .unwrap()
+                .expect("design_outdoor_air_flow_rate is required for MechanicalVentilation")
                 .as_f64()
-                .is_some()
-                && v.get("design_outdoor_air_flow_rate")
-                    .unwrap()
-                    .as_f64()
-                    .unwrap()
-                    >= min_flow_rate_m3hr
+                .expect("design_outdoor_air_flow_rate should be a number")
+                >= min_flow_rate_m3hr
         })
     }
 
@@ -190,41 +196,55 @@ pub(crate) mod part_f {
         if mech_vents.is_none() || mech_vents.unwrap().len() == 0 {
             return Err("FHS input validation failed, see part F of the building regulations.\nDwelling lacks any mechanical vents.".into());
         }
+        let mech_vents = mech_vents.unwrap();
 
-        // TODO avoid unwraps
         let background_vents: Vec<&JsonValue> = ventilation
             .get("Vents")
-            .unwrap()
+            .expect("Vents is required for InfiltrationVentilation")
             .as_object()
-            .unwrap()
+            .expect("Vents is required for InfiltrationVentilation")
             .values()
             .into_iter()
             .collect();
 
         let intermittent_mev_vents: Vec<&JsonValue> = mech_vents
-            .unwrap()
             .values()
             .filter(|mech_vent| {
-                mech_vent.get("vent_type").unwrap().as_str() == Some("Intermittent MEV")
+                mech_vent
+                    .get("vent_type")
+                    .expect("vent_type is required for MechanicalVentilation")
+                    .as_str()
+                    == Some("Intermittent MEV")
             })
             .collect();
         let mvhr_vents: Vec<&JsonValue> = mech_vents
-            .unwrap()
-            .values()
-            .filter(|mech_vent| mech_vent.get("vent_type").unwrap().as_str() == Some("MVHR"))
-            .collect();
-        let centralised_mev_vents: Vec<&JsonValue> = mech_vents
-            .unwrap()
             .values()
             .filter(|mech_vent| {
-                mech_vent.get("vent_type").unwrap().as_str() == Some("Centralised continuous MEV")
+                mech_vent
+                    .get("vent_type")
+                    .expect("vent_type is required for MechanicalVentilation")
+                    .as_str()
+                    == Some("MVHR")
+            })
+            .collect();
+        let centralised_mev_vents: Vec<&JsonValue> = mech_vents
+            .values()
+            .filter(|mech_vent| {
+                mech_vent
+                    .get("vent_type")
+                    .expect("vent_type is required for MechanicalVentilation")
+                    .as_str()
+                    == Some("Centralised continuous MEV")
             })
             .collect();
         let decentralised_mev_vents: Vec<&JsonValue> = mech_vents
-            .unwrap()
             .values()
             .filter(|mech_vent| {
-                mech_vent.get("vent_type").unwrap().as_str() == Some("Decentralised continuous MEV")
+                mech_vent
+                    .get("vent_type")
+                    .expect("vent_type is required for MechanicalVentilation")
+                    .as_str()
+                    == Some("Decentralised continuous MEV")
             })
             .collect();
 
@@ -284,7 +304,6 @@ pub(crate) mod part_f {
         }
     }
 
-    // TODO move
     fn validate_continuous_vents(
         mvhr_vents: &Vec<&JsonValue>,
         centralised_mev_vents: &Vec<&JsonValue>,
@@ -330,7 +349,6 @@ pub(crate) mod part_f {
         errors
     }
 
-    // TODO move
     fn validate_continuous_mev_vents(
         centralised_mev_vents: &Vec<&JsonValue>,
         decentralised_mev_vents: &Vec<&JsonValue>,
@@ -381,12 +399,10 @@ pub(crate) mod part_f {
         vents.len() >= wet_rooms
     }
 
-    // TODO move
     fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: usize) -> bool {
         vents.len() >= minimum_background_vent_count_continuous(bedrooms)
     }
 
-    // TODO move
     fn validate_intermittent_vents(
         intermittent_mev_vents: Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
@@ -504,10 +520,6 @@ mod tests {
     // test_does_not_raise_if_sufficient_continuous_MEV_and_background_vents
     #[test]
     fn test_does_not_raise_if_sufficient_cmev_and_background_vents() {
-        // TODO match newest schema instead
-        // note that in Python the JSON examples have less content
-        //  because they don't need to passs schema validation prior to this
-
         let json = r#"{ 
             "Vents": {
                 "vent1": {
@@ -750,8 +762,6 @@ mod tests {
             assert!(e.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
         });
     }
-
-    // TODO test_does_not_raise_if_sufficient_MVHR_and_continuous_MEV_and_no_background_vents
 
     #[test]
     fn test_does_not_raise_if_sufficient_imev_and_background_vents() {
