@@ -24,7 +24,7 @@ pub(crate) fn ingest_for_processing(json: impl Read) -> Result<InputForProcessin
     InputForProcessing::init_with_json(json)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct InputForProcessing {
     pub(crate) input: JsonValue,
 }
@@ -121,7 +121,7 @@ impl InputForProcessing {
     }
 
     /// Uses entry API to ensure that root key is created if it does not already exist.
-    fn root_object_entry_mut(
+    pub(crate) fn root_object_entry_mut(
         &mut self,
         root_key: &str,
     ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {

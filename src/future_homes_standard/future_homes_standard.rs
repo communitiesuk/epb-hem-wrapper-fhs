@@ -4052,6 +4052,17 @@ fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Resu
     Ok(())
 }
 
+/// Ensures that input "HotWaterDemand" exists and contains required sub-keys.
+fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let hot_water_demand = input.root_object_entry_mut("HotWaterDemand")?;
+
+    hot_water_demand.entry("Shower").or_insert(json!({}));
+    hot_water_demand.entry("Bath").or_insert(json!({}));
+    hot_water_demand.entry("Other").or_insert(json!({}));
+
+    Ok(())
+}
+
 #[allow(dead_code)] // for now!! TODO remove dead_code annotation during 1.0.0a4 migration once function is referenced
 pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // detail of removal of FHS fields is delegated to input here
@@ -5253,6 +5264,72 @@ mod tests {
                     ["Controlmin"],
                 "_HW_min_temp"
             );
+        }
+    }
+
+    mod test_create_hot_water_demand {
+        use super::*;
+        use crate::future_homes_standard::input::InputForProcessing;
+        use serde_json::json;
+
+        #[test]
+        fn test_initialises_missing_hot_water_demand() {
+            // Given a project_dict with no HotWaterDemand
+            let mut input = InputForProcessing { input: json!({}) };
+
+            // When create_hot_water_demand is called
+            create_hot_water_demand(&mut input).unwrap();
+
+            // Then HotWaterDemand and sub-keys should be initialised
+            assert_eq!(input.input["HotWaterDemand"]["Shower"], json!({}));
+            assert_eq!(input.input["HotWaterDemand"]["Bath"], json!({}));
+            assert_eq!(input.input["HotWaterDemand"]["Other"], json!({}));
+        }
+
+        #[test]
+        fn test_initialises_missing_sub_keys() {
+            // Given a project_dict with no HotWaterDemand sub-keys
+            let mut input = InputForProcessing {
+                input: json!({"HotWaterDemand": {}}),
+            };
+
+            // When create_hot_water_demand is called
+            create_hot_water_demand(&mut input).unwrap();
+
+            // Then HotWaterDemand and sub-keys should be initialised
+            assert_eq!(input.input["HotWaterDemand"]["Shower"], json!({}));
+            assert_eq!(input.input["HotWaterDemand"]["Bath"], json!({}));
+            assert_eq!(input.input["HotWaterDemand"]["Other"], json!({}));
+        }
+
+        #[test]
+        fn test_preserves_existing_keys() {
+            // Given existing values under HotWaterDemand
+            let mut original_input = InputForProcessing {
+                input: json!({
+                    "HotWaterDemand": {
+                        "Shower": {
+                            "mixer": {
+                                "type": "MixerShower",
+                                "flowrate": 8.0,
+                                "ColdWaterSource": "mains water",
+                            }
+                        },
+                        "Bath": {
+                            "medium": {"size": 100, "ColdWaterSource": "header tank", "flowrate": 8.0}
+                        },
+                        "Other": {"other": {"flowrate": 8.0, "ColdWaterSource": "header tank"}},
+                    }
+                }),
+            };
+
+            let input = original_input.clone();
+
+            // When create_hot_water_demand is called
+            create_hot_water_demand(&mut original_input).unwrap();
+
+            // Then the existing values should remain unchanged
+            assert_eq!(input, original_input);
         }
     }
 }
