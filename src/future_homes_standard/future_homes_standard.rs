@@ -11,8 +11,8 @@ use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
 use home_energy_model::core::units::{
-    Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, LITRES_PER_CUBIC_METRE,
-    MINUTES_PER_HOUR, SECONDS_PER_HOUR, WATTS_PER_KILOWATT,
+    Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, MINUTES_PER_HOUR,
+    WATTS_PER_KILOWATT,
 };
 use home_energy_model::corpus::{Corpus, OutputOptions};
 use home_energy_model::hem_core::external_conditions::{
@@ -3285,34 +3285,6 @@ pub(super) fn create_window_opening_schedule(input: &mut InputForProcessing) -> 
     }
 
     Ok(())
-}
-
-/// Calculate effective air change rate accoring to according to Part F 1.24 a
-pub(crate) fn minimum_air_change_rate(
-    _input: &InputForProcessing,
-    total_floor_area: f64,
-    total_volume: f64,
-    bedroom_number: usize,
-) -> f64 {
-    // minimum ventilation rates method B
-    let min_ventilation_rates_b = [19, 25, 31, 37, 43];
-
-    // Calculate minimum whole dwelling ventilation rate l/s method A
-    let min_ventilation_rate_a = total_floor_area * 0.3;
-
-    // Calculate minimum whole dwelling ventilation rate l/s method B
-    let min_ventilation_rate_b = if bedroom_number <= 5 {
-        min_ventilation_rates_b[bedroom_number - 1]
-    } else {
-        min_ventilation_rates_b.last().unwrap() + (bedroom_number - 5) * 6
-    };
-
-    // Calculate air change rate ACH
-    let highest_min_ventilation_rate =
-        f64::max(min_ventilation_rate_a, min_ventilation_rate_b as f64);
-
-    highest_min_ventilation_rate / total_volume * SECONDS_PER_HOUR as f64
-        / LITRES_PER_CUBIC_METRE as f64
 }
 
 /// Set min and max vent opening thresholds

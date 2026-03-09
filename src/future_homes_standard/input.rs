@@ -2239,13 +2239,6 @@ impl InputForProcessing {
             .ok_or_else(|| anyhow!("No HeatSourceWet object with key {key}"))
     }
 
-    pub(crate) fn heat_source_wet_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
-        self.root_mut()?
-            .get_mut("HeatSourceWet")
-            .and_then(|source| source.as_object_mut())
-            .ok_or_else(|| json_error("HeatSourceWet not an object"))
-    }
-
     pub fn remove_heat_source_wet(&mut self) -> JsonAccessResult<&mut Self> {
         self.remove_root_key("HeatSourceWet")
     }
