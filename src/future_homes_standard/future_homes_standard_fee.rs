@@ -1,4 +1,4 @@
-use super::future_homes_standard::{apply_fhs_preprocessing, calc_tfa, minimum_air_change_rate};
+use super::future_homes_standard::{apply_fhs_preprocessing, calc_tfa};
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::fhs_part_f_validation::part_f::{
     minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
