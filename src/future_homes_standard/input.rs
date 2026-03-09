@@ -1548,6 +1548,15 @@ impl InputForProcessing {
             .and_then(|energy_supply| energy_supply.as_object()))
     }
 
+    pub(crate) fn energy_supplies_contain_key(
+        &self,
+        energy_supply_key: &str,
+    ) -> JsonAccessResult<bool> {
+        Ok(self
+            .root_object("EnergySupply")?
+            .contains_key(energy_supply_key))
+    }
+
     #[cfg(test)]
     pub(crate) fn add_diverter_to_energy_supply(
         &mut self,
@@ -2206,6 +2215,28 @@ impl InputForProcessing {
                 ))
             })
             .collect::<anyhow::Result<_, _>>()
+    }
+
+    pub(crate) fn heat_source_wet_by_key(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<&Map<String, JsonValue>> {
+        self.root()?
+            .get("HeatSourceWet")
+            .and_then(|value| value.get(key))
+            .and_then(|value| value.as_object())
+            .ok_or_else(|| anyhow!("No HeatSourceWet object with key {key}"))
+    }
+
+    pub(crate) fn heat_source_wet_by_key_mut(
+        &mut self,
+        key: &str,
+    ) -> anyhow::Result<&mut Map<String, JsonValue>> {
+        self.root_mut()?
+            .get_mut("HeatSourceWet")
+            .and_then(|value| value.get_mut(key))
+            .and_then(|value| value.as_object_mut())
+            .ok_or_else(|| anyhow!("No HeatSourceWet object with key {key}"))
     }
 
     pub(crate) fn heat_source_wet_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {

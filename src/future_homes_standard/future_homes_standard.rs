@@ -20,10 +20,10 @@ use home_energy_model::hem_core::external_conditions::{
 };
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    BuildingElementHeightWidthInput, EnergySupplyDetails, EnergySupplyType, FuelType,
-    HeatingControlType, Input, MechanicalVentilationForProcessing, MechanicalVentilationJsonValue,
-    SmartApplianceBattery, TransparentBuildingElement, TransparentBuildingElementJsonValue,
-    WaterHeatingEventType,
+    BuildingElementHeightWidthInput, CustomEnergySourceFactor, EnergySupplyDetails,
+    EnergySupplyType, FuelType, HeatingControlType, Input, MechanicalVentilationForProcessing,
+    MechanicalVentilationJsonValue, SmartApplianceBattery, TransparentBuildingElement,
+    TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
 use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
@@ -4066,37 +4066,95 @@ fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()>
 /// The EnergySupply of a heat network is exclusively allowed to be a custom object defining
 /// a custom fuel. In this case we need to move the custom object into EnergySupply and
 /// reference it for the heat network. We extract out the custom energy factors to be used later.
-fn create_custom_energy_supply_factors(input: &mut InputForProcessing) -> anyhow::Result<()> {
+fn create_custom_energy_supply_factors(
+    input: &mut InputForProcessing,
+) -> anyhow::Result<IndexMap<String, CustomEnergySourceFactor>> {
     let mut custom_energy_supply_factors = IndexMap::new();
 
-    for (heat_source_wet_key, heat_source_wet) in input.heat_source_wet_mut()?.iter_mut() {
-        // Process custom EnergySupply objects
-        let is_heat_network = heat_source_wet
-            .get("is_heat_network")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+    let heat_source_wet_keys = input
+        .heat_source_wet()?
+        .keys()
+        .cloned()
+        .collect::<Vec<String>>();
 
-        if let Some(energy_supply) = heat_source_wet.get_mut("EnergySupply") {
+    for heat_source_wet_key in heat_source_wet_keys {
+        let is_heat_network = {
+            input
+                .heat_source_wet_by_key(&heat_source_wet_key)?
+                .get("is_heat_network")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
+        if let Some((Some(name), Some(factor), Some(is_export_capable))) = input
+            .heat_source_wet_by_key(&heat_source_wet_key)?
+            .get("EnergySupply")
+            .and_then(|v| v.as_object())
+            .map(|v| {
+                (
+                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("factor").and_then(|v| v.as_object()),
+                    v.get("is_export_capable").and_then(|v| v.as_bool()),
+                )
+            })
+        {
             if is_heat_network {
-                let name = energy_supply
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        json_error("Name field missing or not a string on energy supply")
-                    })?;
                 // Extract custom energy factor
-                custom_energy_supply_factors.insert(
-                    name,
-                    energy_supply
-                        .get("factor")
-                        .ok_or_else(|| json_error("Factor field missing on energy supply"))?
-                        .clone(),
-                );
+                custom_energy_supply_factors
+                    .insert(name.clone(), serde_json::from_value(json!(factor))?);
+                // Create new top level EnergySupply
+                if input.energy_supplies_contain_key(&name)? {
+                    bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply for HeatSourceWet '{heat_source_wet_key}' with the same name.");
+                }
+                input.add_energy_supply_for_key(
+                    &name,
+                    json!({
+                        "fuel": "custom",
+                        "is_export_capable": is_export_capable,
+                    }),
+                )?;
+                input
+                    .heat_source_wet_by_key_mut(&heat_source_wet_key)?
+                    .insert("EnergySupply".into(), json!(name));
             }
+        }
+
+        // Process custom EnergySupply_heat_network dicts
+        if let Some((Some(name), Some(factor), Some(is_export_capable))) = input
+            .heat_source_wet_by_key(&heat_source_wet_key)?
+            .get("EnergySupply_heat_network")
+            .and_then(|v| v.as_object())
+            .map(|v| {
+                (
+                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("factor").and_then(|v| v.as_object()),
+                    v.get("is_export_capable").and_then(|v| v.as_bool()),
+                )
+            })
+        {
+            // Extract custom energy factor
+            custom_energy_supply_factors
+                .insert(name.clone(), serde_json::from_value(json!(factor))?);
+            // Create new top level EnergySupply
+            if input.energy_supplies_contain_key(&name)? {
+                bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet '{heat_source_wet_key}' with the same name.");
+            }
+            input.add_energy_supply_for_key(
+                &name,
+                json!({
+                    "fuel": "custom",
+                    "is_export_capable": is_export_capable,
+                }),
+            )?;
+            // Replace heat source's EnergySupply_heat_network dict with name (str) reference
+            // to new top level EnergySupply
+            input
+                .heat_source_wet_by_key_mut(&heat_source_wet_key)?
+                .insert("EnergySupply_heat_network".into(), json!(name));
         }
     }
 
-    Ok(())
+    Ok(custom_energy_supply_factors)
 }
 
 #[allow(dead_code)] // for now!! TODO remove dead_code annotation during 1.0.0a4 migration once function is referenced
@@ -5375,7 +5433,6 @@ mod tests {
         use serde_json::json;
 
         #[test]
-        #[ignore = "todo 1.0.0a4 migration"]
         fn test_sets_custom_energy_supplies() {
             // Given a custom energy supply specified for a heat network
             let mut input = InputForProcessing {
@@ -5410,6 +5467,307 @@ mod tests {
             assert_eq!(
                 input.input["EnergySupply"]["custom_heat_network_supply"],
                 json!({"fuel": "custom", "is_export_capable": false})
+            );
+            // And referenced by the heat network
+            assert_eq!(
+                input.input["HeatSourceWet"]["heat network"]["EnergySupply"],
+                "custom_heat_network_supply"
+            );
+            // And the factors are stored for later postprocessing
+            assert_eq!(
+                stored_factors["custom_heat_network_supply"],
+                serde_json::from_value(json!({
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }))
+                .unwrap()
+            );
+        }
+
+        #[test]
+        fn test_handles_custom_energy_supply_heat_network_for_heat_pump() {
+            // Given a HeatSourceWet of type HeatPump with a
+            // source_type of HeatNetwork and a custom EnergySupply_heat_network
+            let mut input = InputForProcessing {
+                input: json!({
+                    "EnergySupply": {"mains elec": {"fuel": "electricity", "is_export_capable": true}},
+                    "HeatSourceWet": {
+                        "heat pump": {
+                            "type": "HeatPump",
+                            "EnergySupply": "mains elec",
+                            "EnergySupply_heat_network": {
+                                "name": "custom_heat_network_supply",
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 0.99,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.98,
+                                    "Primary Energy Factor kWh/kWh delivered": 0.97,
+                                },
+                                "is_export_capable": false,
+                            },
+                            "is_heat_network": false,
+                            "source_type": "HeatNetwork",
+                            "temp_distribution_heat_network": 20.0,
+                            "sink_type": "Water",
+                            "backup_ctrl_type": "TopUp",
+                            "modulating_control": true,
+                            "min_modulation_rate_35": 0.35,
+                            "min_modulation_rate_55": 0.4,
+                            "time_constant_onoff_operation": 140,
+                            "temp_return_feed_max": 70.0,
+                            "temp_lower_operating_limit": -5.0,
+                            "min_temp_diff_flow_return_for_hp_to_operate": 0.0,
+                            "var_flow_temp_ctrl_during_test": true,
+                            "power_heating_circ_pump": 0.015,
+                            "power_source_circ_pump": 0.01,
+                            "power_standby": 0.015,
+                            "power_crankcase_heater": 0.01,
+                            "power_off": 0.015,
+                            "power_max_backup": 3.0,
+                            "test_data_EN14825": [
+                                {
+                                    "test_letter": "A",
+                                    "capacity": 8.4,
+                                    "cop": 4.6,
+                                    "design_flow_temp": 35,
+                                    "temp_outlet": 34,
+                                    "temp_source": 20,
+                                    "temp_test": -7,
+                                }
+                            ],
+                        }
+                    },
+                }),
+            };
+
+            // When create_custom_energy_supply is called for non notional mode
+            let stored_factors = create_custom_energy_supply_factors(&mut input).unwrap();
+
+            // Then the dictionary is mutated such that a custom fuel energy supply is created
+            assert_eq!(
+                input.input["EnergySupply"]["custom_heat_network_supply"],
+                json!({"fuel": "custom", "is_export_capable": false})
+            );
+            // And referenced by the heat pump
+            assert_eq!(
+                input.input["HeatSourceWet"]["heat pump"]["EnergySupply_heat_network"],
+                "custom_heat_network_supply"
+            );
+            // And the factors are stored for later postprocessing
+            assert_eq!(
+                stored_factors["custom_heat_network_supply"],
+                serde_json::from_value(json!({
+                    "Emissions Factor kgCO2e/kWh": 0.99,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.98,
+                    "Primary Energy Factor kWh/kWh delivered": 0.97,
+                }))
+                .unwrap()
+            );
+        }
+
+        #[test]
+        fn test_handles_both_custom_energy_supplies_for_heat_pump_that_is_itself_a_heat_network() {
+            // Given a HeatSourceWet of type HeatPump that is itself a heat network, with a
+            // source_type that is also HeatNetwork and a custom EnergySupply_heat_network
+            // and a custom EnergySupply
+            let mut input = InputForProcessing {
+                input: json!({
+                    "EnergySupply": {"mains elec": {"fuel": "electricity", "is_export_capable": true}},
+                    "HeatSourceWet": {
+                        "heat pump": {
+                            "type": "HeatPump",
+                            "EnergySupply": {
+                                "name": "custom_heat_pump_supply",
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 1,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 2,
+                                    "Primary Energy Factor kWh/kWh delivered": 0.5,
+                                },
+                                "is_export_capable": false,
+                            },
+                            "EnergySupply_heat_network": {
+                                "name": "custom_heat_network_supply",
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 0.99,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.98,
+                                    "Primary Energy Factor kWh/kWh delivered": 0.97,
+                                },
+                                "is_export_capable": false,
+                            },
+                            "is_heat_network": true,
+                            "heat_network_type": "sleeved DHN",
+                            "source_type": "HeatNetwork",
+                            "temp_distribution_heat_network": 20.0,
+                            "sink_type": "Water",
+                            "backup_ctrl_type": "TopUp",
+                            "modulating_control": true,
+                            "min_modulation_rate_35": 0.35,
+                            "min_modulation_rate_55": 0.4,
+                            "time_constant_onoff_operation": 140,
+                            "temp_return_feed_max": 70.0,
+                            "temp_lower_operating_limit": -5.0,
+                            "min_temp_diff_flow_return_for_hp_to_operate": 0.0,
+                            "var_flow_temp_ctrl_during_test": true,
+                            "power_heating_circ_pump": 0.015,
+                            "power_source_circ_pump": 0.01,
+                            "power_standby": 0.015,
+                            "power_crankcase_heater": 0.01,
+                            "power_off": 0.015,
+                            "power_max_backup": 3.0,
+                            "test_data_EN14825": [
+                                {
+                                    "test_letter": "A",
+                                    "capacity": 8.4,
+                                    "cop": 4.6,
+                                    "design_flow_temp": 35,
+                                    "temp_outlet": 34,
+                                    "temp_source": 20,
+                                    "temp_test": -7,
+                                }
+                            ],
+                        }
+                    },
+                }),
+            };
+
+            // When create_custom_energy_supply is called for non notional mode
+            let stored_factors = create_custom_energy_supply_factors(&mut input).unwrap();
+
+            // Then the dictionary is mutated such that a custom fuel energy supply is created
+            assert_eq!(
+                input.input["EnergySupply"]["custom_heat_network_supply"],
+                json!({"fuel": "custom", "is_export_capable": false})
+            );
+
+            // And referenced by the heat pump
+            assert_eq!(
+                input.input["HeatSourceWet"]["heat pump"]["EnergySupply"],
+                "custom_heat_pump_supply"
+            );
+            assert_eq!(
+                input.input["HeatSourceWet"]["heat pump"]["EnergySupply_heat_network"],
+                "custom_heat_network_supply"
+            );
+
+            // And the factors are stored for later postprocessing
+            assert_eq!(
+                stored_factors["custom_heat_pump_supply"],
+                serde_json::from_value(json!({
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 2,
+                    "Primary Energy Factor kWh/kWh delivered": 0.5,
+                }))
+                .unwrap()
+            );
+            assert_eq!(
+                stored_factors["custom_heat_network_supply"],
+                serde_json::from_value(json!({
+                    "Emissions Factor kgCO2e/kWh": 0.99,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.98,
+                    "Primary Energy Factor kWh/kWh delivered": 0.97,
+                }))
+                .unwrap()
+            );
+        }
+
+        #[test]
+        fn test_raises_error_if_custom_energy_supply_name_already_exists() {
+            // Given a custom energy supply specified for a heat network with
+            // a name that is the same as an existing energy supply
+            let mut input = InputForProcessing {
+                input: json!({
+                    "EnergySupply": {"mains elec": {"fuel": "electricity", "is_export_capable": true}},
+                    "HeatSourceWet": {
+                        "heat network": {
+                            "type": "HIU",
+                            "is_heat_network": true,
+                            "heat_network_type": "sleeved DHN",
+                            "HIU_daily_loss": 1,
+                            "power_max": 1,
+                            "building_level_distribution_losses": 1,
+                            "EnergySupply": {
+                                "name": "mains elec",  // conflicts with existing energy supply
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 1,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                                    "Primary Energy Factor kWh/kWh delivered": 1,
+                                },
+                                "is_export_capable": false,
+                            },
+                        }
+                    },
+                }),
+            };
+
+            let result = create_custom_energy_supply_factors(&mut input);
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "An EnergySupply named 'mains elec' already exists. Unable to add a custom EnergySupply for HeatSourceWet 'heat network' with the same name."
+            );
+        }
+
+        #[test]
+        fn test_raises_error_if_custom_energy_supply_heat_network_name_already_exists() {
+            // Given a HeatSourceWet of type HeatPump with a
+            // source_type of HeatNetwork and a custom EnergySupply_heat_network
+            // with a name that is the same as an existing energy supply
+            let mut input = InputForProcessing {
+                input: json!({
+                    "EnergySupply": {"mains elec": {"fuel": "electricity", "is_export_capable": true}},
+                    "HeatSourceWet": {
+                        "heat pump": {
+                            "type": "HeatPump",
+                            "EnergySupply": "mains elec",
+                            "EnergySupply_heat_network": {
+                                "name": "mains elec",
+                                "factor": {
+                                    "Emissions Factor kgCO2e/kWh": 0.99,
+                                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 0.98,
+                                    "Primary Energy Factor kWh/kWh delivered": 0.97,
+                                },
+                                "is_export_capable": false,
+                            },
+                            "is_heat_network": false,
+                            "source_type": "HeatNetwork",
+                            "temp_distribution_heat_network": 20.0,
+                            "sink_type": "Water",
+                            "backup_ctrl_type": "TopUp",
+                            "modulating_control": true,
+                            "min_modulation_rate_35": 0.35,
+                            "min_modulation_rate_55": 0.4,
+                            "time_constant_onoff_operation": 140,
+                            "temp_return_feed_max": 70.0,
+                            "temp_lower_operating_limit": -5.0,
+                            "min_temp_diff_flow_return_for_hp_to_operate": 0.0,
+                            "var_flow_temp_ctrl_during_test": true,
+                            "power_heating_circ_pump": 0.015,
+                            "power_source_circ_pump": 0.01,
+                            "power_standby": 0.015,
+                            "power_crankcase_heater": 0.01,
+                            "power_off": 0.015,
+                            "power_max_backup": 3.0,
+                            "test_data_EN14825": [
+                                {
+                                    "test_letter": "A",
+                                    "capacity": 8.4,
+                                    "cop": 4.6,
+                                    "design_flow_temp": 35,
+                                    "temp_outlet": 34,
+                                    "temp_source": 20,
+                                    "temp_test": -7,
+                                }
+                            ],
+                        }
+                    },
+                }),
+            };
+
+            let result = create_custom_energy_supply_factors(&mut input);
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "An EnergySupply named 'mains elec' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet 'heat pump' with the same name."
             );
         }
     }
