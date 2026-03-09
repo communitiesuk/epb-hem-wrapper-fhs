@@ -177,6 +177,120 @@ pub(crate) fn apply_fhs_preprocessing(
     Ok(())
 }
 
+fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for building_element in input.all_building_element_values_mut()? {
+        let building_element_type = building_element
+            .get("type")
+            .and_then(|el| el.as_str())
+            .ok_or_else(|| anyhow!("Building element type not found"))?;
+        match building_element_type {
+            "BuildingElementGround" => {
+                building_element["pitch"] = json!(180);
+            }
+            "BuildingElementOpaque" => {
+                let pitch = building_element
+                    .get("pitch")
+                    .and_then(|el| el.as_f64())
+                    .ok_or_else(|| anyhow!("Building element pitch not found"))?;
+                if pitch > 120. {
+                    building_element["colour"] = json!("Intermediate");
+                } else if pitch < 60. {
+                    building_element["colour"] = json!("Intermediate");
+                }
+                if [0., 180.].contains(&pitch) {
+                    building_element["orientation360"] = json!(180);
+                }
+            }
+            "BuildingElementTransparent" => {
+                let pitch = building_element
+                    .get("pitch")
+                    .and_then(|el| el.as_f64())
+                    .ok_or_else(|| anyhow!("Building element pitch not found"))?;
+                if [0., 180.].contains(&pitch) {
+                    building_element["orientation360"] = json!(180);
+                }
+            }
+            _ => {}
+        }
+    }
+    input
+        .infiltration_ventilation_node_mut()?
+        .insert("vent_opening_ratio_init".into(), json!(1));
+    for vent in input.vents_mut()?.values_mut() {
+        vent["pressure_difference_ref"] = json!(20);
+    }
+    for energy_supply in input.energy_supplies_mut()? {
+        if let Some(electric_battery) = energy_supply.get_mut("ElectricBattery") {
+            electric_battery["battery_age"] = json!(0);
+            electric_battery["grid_charging_possible"] = json!(false);
+        }
+        if energy_supply
+            .get("fuel")
+            .and_then(|fuel| fuel.as_str())
+            .is_some_and(|fuel| ["mains_gas", "gas"].contains(&fuel))
+        {
+            energy_supply.insert("is_export_capable".into(), json!(false));
+        } else if energy_supply
+            .get("fuel")
+            .and_then(|fuel| fuel.as_str())
+            .is_some_and(|fuel| fuel == "electricity")
+            && !energy_supply.contains_key("is_export_capable")
+        {
+            energy_supply.insert("is_export_capable".into(), json!(true));
+        }
+    }
+    if let Some(baths) = input.baths_mut()? {
+        for bath in baths.values_mut() {
+            bath["flowrate"] = json!(12);
+        }
+    }
+    for space_heat_system in input.space_heat_systems_mut()?.values_mut() {
+        if space_heat_system
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "ElecStorageHeater")
+        {
+            space_heat_system["state_of_charge_init"] = json!(1.0);
+        }
+    }
+    if let Some(heat_source_wet) = input.heat_source_wet_mut()? {
+        for heat_source in heat_source_wet.values_mut() {
+            if let Some((Some(source_type), battery_type, backup_ctrl_type)) =
+                heat_source.as_object().map(|source| {
+                    (
+                        source
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .map(ToOwned::to_owned),
+                        source
+                            .get("battery_type")
+                            .and_then(|t| t.as_str())
+                            .map(ToOwned::to_owned),
+                        source
+                            .get("backup_ctrl_type")
+                            .and_then(|t| t.as_str())
+                            .map(ToOwned::to_owned),
+                    )
+                })
+            {
+                {
+                    if source_type == "HeatBattery" && battery_type.is_some_and(|bt| bt == "pcm") {
+                        heat_source["temp_init"] = heat_source
+                            .get("max_temperature")
+                            .ok_or_else(|| anyhow!("max_temperature not found in heat source"))?
+                            .clone();
+                    }
+                }
+                if source_type == "HeatPump" && backup_ctrl_type.is_some_and(|bct| bct != "None") {
+                    heat_source["time_delay_backup"] = json!(1.0);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn set_temp_internal_static_calcs(input: &mut InputForProcessing) -> anyhow::Result<()> {
     input.set_temp_internal_air_static_calcs(Some(LIVING_ROOM_SETPOINT_FHS))?;
 
@@ -5740,6 +5854,335 @@ mod tests {
             assert_eq!(
                 result.unwrap_err().to_string(),
                 "An EnergySupply named 'mains elec' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet 'heat pump' with the same name."
+            );
+        }
+    }
+
+    mod apply_defaults {
+        use super::*;
+
+        #[test]
+        fn test_adds_floor_pitch() {
+            // Given a floor building element
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {"a": {"BuildingElement": {"floor": {"type": "BuildingElementGround"}}}},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // when apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a pitch value of 180 is added to the floor
+            assert_eq!(
+                input.input["Zone"],
+                json!({"a": {"BuildingElement": {"floor": {"type": "BuildingElementGround", "pitch": 180}}}})
+            );
+        }
+
+        #[test]
+        fn test_adds_orientation_to_flat_opaques() {
+            // Given a floor building element
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {
+                        "a": {"BuildingElement": {"floor": {"type": "BuildingElementOpaque", "pitch": 0}}}
+                    },
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a orientation360 value of 180 is added to the flat element and intermediate colour
+            assert_eq!(
+                input.input["Zone"],
+                json!({
+                    "a": {
+                        "BuildingElement": {
+                            "floor": {
+                                "type": "BuildingElementOpaque",
+                                "pitch": 0,
+                                "orientation360": 180,
+                                "colour": "Intermediate",
+                            }
+                        }
+                    }
+                })
+            );
+        }
+
+        #[test]
+        fn test_adds_orientation_to_flat_transparent_elements() {
+            // Given a window building element with a flat pitch, indicating a skylight
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {
+                        "a": {
+                            "BuildingElement": {
+                                "window": {"type": "BuildingElementTransparent", "pitch": 0}
+                            }
+                        }
+                    },
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then an orientation360 value of 180 is added to the element
+            assert_eq!(
+                input.input["Zone"],
+                json!({
+                    "a": {
+                        "BuildingElement": {
+                            "window": {
+                                "type": "BuildingElementTransparent",
+                                "pitch": 0,
+                                "orientation360": 180,
+                            }
+                        }
+                    }
+                })
+            );
+        }
+
+        #[test]
+        fn test_adds_vent_opening_ratio_init() {
+            // Given a project dict with InfiltrationVentilation
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then vent_opening_ratio_init is added to the InfiltrationVentilation object and set to 1
+            assert_eq!(
+                input.input["InfiltrationVentilation"],
+                json!({"vent_opening_ratio_init": 1, "Vents": {}})
+            );
+        }
+
+        #[test]
+        fn test_adds_pressure_difference_ref() {
+            // Given a project dict with InfiltrationVentilation and one vent
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {"vent1": {}}},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then pressure_difference_ref is added to the Vent object and set to 20
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["Vents"]["vent1"],
+                json!({"pressure_difference_ref": 20})
+            );
+        }
+
+        #[test]
+        fn test_adds_battery_age() {
+            // Given a project dict with Energy supply and one ElectricBattery
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then battery_age is added to the ElectricBattery object and set to 0
+            assert_eq!(
+                input.input["EnergySupply"]["supply1"]["ElectricBattery"]["battery_age"],
+                json!(0)
+            );
+        }
+
+        #[test]
+        fn test_adds_battery_grid_charging() {
+            // Given a project dict with Energy supply and one ElectricBattery
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then grid_charging_possible is added and set to False
+            assert_eq!(
+                input.input["EnergySupply"]["supply1"]["ElectricBattery"]["grid_charging_possible"],
+                json!(false)
+            );
+        }
+
+        #[test]
+        fn test_adds_bath_flowrate() {
+            // Given a project dict with HotWaterDemand and one Bath
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {"Bath": {"bath1": {}}},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then flowrate is added to the Bath object and set to 12
+            assert_eq!(
+                input.input["HotWaterDemand"]["Bath"]["bath1"],
+                json!({"flowrate": 12})
+            );
+        }
+
+        #[test]
+        fn test_adds_is_export_capable_gas() {
+            // Given a project dict with Energy supply and gas fuel type
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {"supply1": {"fuel": "gas"}},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then is_export_capable is added and set to false
+            assert_eq!(
+                input.input["EnergySupply"]["supply1"],
+                json!({"fuel": "gas", "is_export_capable": false})
+            );
+        }
+
+        #[test]
+        fn test_adds_is_export_capable_electricity() {
+            // Given a project dict with Energy supply and electricity fuel type
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {"supply1": {"fuel": "electricity"}},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then is_export_capable is added and set to true
+            assert_eq!(
+                input.input["EnergySupply"]["supply1"],
+                json!({"fuel": "electricity", "is_export_capable": true})
+            );
+        }
+
+        #[test]
+        fn test_adds_is_export_capable_electricity_override() {
+            // Given a project dict with an energy supply with electricity fuel type
+            // Where the user has specified the value for is_export_capable
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "EnergySupply": {"supply1": {"fuel": "electricity", "is_export_capable": false}},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then the user specified value is not overridden
+            assert_eq!(
+                input.input["EnergySupply"]["supply1"],
+                json!({"fuel": "electricity", "is_export_capable": false})
+            );
+        }
+
+        #[test]
+        fn test_adds_state_of_charge_init() {
+            // Given a electric storage heater
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {"a": {"type": "ElecStorageHeater"}},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a state_of_charge_init of 1.0 is added to the heater
+            assert_eq!(
+                input.input["SpaceHeatSystem"]["a"]["state_of_charge_init"],
+                json!(1.0)
+            );
+        }
+
+        #[test]
+        fn test_adds_temp_init_for_heat_batteries() {
+            // Given a heat battery
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {
+                        "a": {"type": "HeatBattery", "max_temperature": 80, "battery_type": "pcm"}
+                    },
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a temp_init equal to the max_temperature is added to the battery (80)
+            assert_eq!(input.input["HeatSourceWet"]["a"]["temp_init"], json!(80));
+        }
+
+        #[test]
+        fn test_adds_time_delay_backup_for_heat_pumps() {
+            // Given a heat pump with a backup_ctrl_type of not None
+            let mut input = InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {"a": {"type": "HeatPump", "backup_ctrl_type": "TopUp"}},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a time_delay_backup of 1.0 is added to the heat pump
+            assert_eq!(
+                input.input["HeatSourceWet"]["a"]["time_delay_backup"],
+                json!(1.0)
             );
         }
     }

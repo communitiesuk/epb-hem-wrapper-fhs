@@ -138,6 +138,15 @@ impl InputForProcessing {
     ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
         Ok(self.root()?.get(root_key).and_then(|v| v.as_object()))
     }
+    fn optional_root_object_mut(
+        &mut self,
+        root_key: &str,
+    ) -> JsonAccessResult<Option<&mut Map<std::string::String, JsonValue>>> {
+        Ok(self
+            .root_mut()?
+            .get_mut(root_key)
+            .and_then(|v| v.as_object_mut()))
+    }
 
     pub fn set_simulation_time(
         &mut self,
@@ -806,6 +815,12 @@ impl InputForProcessing {
                 .collect(),
             None => vec![],
         })
+    }
+
+    pub fn space_heat_systems_mut(
+        &mut self,
+    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+        Ok(self.root_object_mut("SpaceHeatSystem")?)
     }
 
     pub fn temperature_setback_for_space_heat_system(
@@ -1548,6 +1563,16 @@ impl InputForProcessing {
             .and_then(|energy_supply| energy_supply.as_object()))
     }
 
+    pub fn energy_supplies_mut(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+        Ok(self
+            .root_object_mut("EnergySupply")?
+            .values_mut()
+            .filter_map(|value| value.as_object_mut())
+            .collect::<Vec<&mut Map<String, JsonValue>>>())
+    }
+
     pub(crate) fn energy_supplies_contain_key(
         &self,
         energy_supply_key: &str,
@@ -1812,6 +1837,21 @@ impl InputForProcessing {
             .collect())
     }
 
+    pub(crate) fn all_building_element_values_mut(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&mut JsonValue>> {
+        Ok(self
+            .zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|el| el.as_object_mut())
+            })
+            .flatten()
+            .map(|(_, el)| el)
+            .collect())
+    }
+
     #[cfg(test)]
     pub(crate) fn building_element_by_key(
         &self,
@@ -1976,7 +2016,7 @@ impl InputForProcessing {
         Ok(())
     }
 
-    fn infiltration_ventilation_node_mut(
+    pub fn infiltration_ventilation_node_mut(
         &mut self,
     ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
         self.root_object_mut("InfiltrationVentilation")
@@ -2082,6 +2122,13 @@ impl InputForProcessing {
         infiltration_ventilation_node.insert("Vents".into(), mech_vents);
 
         Ok(self)
+    }
+
+    pub fn vents_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+        self.root_object_mut("InfiltrationVentilation")?
+            .get_mut("Vents")
+            .and_then(|v| v.as_object_mut())
+            .ok_or(json_error("Vents node not available"))
     }
 
     #[cfg(test)]
@@ -2215,6 +2262,10 @@ impl InputForProcessing {
                 ))
             })
             .collect::<anyhow::Result<_, _>>()
+    }
+
+    pub fn heat_source_wet_mut(&mut self) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
+        self.optional_root_object_mut("HeatSourceWet")
     }
 
     pub(crate) fn heat_source_wet_by_key(
