@@ -2048,6 +2048,33 @@ impl InputForProcessing {
         Ok(())
     }
 
+    pub fn set_mechanical_ventilations(
+        &mut self,
+        mech_vents: JsonValue,
+    ) -> JsonAccessResult<&Self> {
+        let infiltration_ventilation_node = self
+            .input
+            .get_mut("InfiltrationVentilation")
+            .ok_or(json_error("InfiltrationVentilation node not found"))?
+            .as_object_mut()
+            .ok_or(json_error("InfiltrationVentilation node is not an object"))?;
+        infiltration_ventilation_node.insert("MechanicalVentilation".into(), mech_vents);
+
+        Ok(self)
+    }
+
+    pub fn set_vents(&mut self, mech_vents: JsonValue) -> JsonAccessResult<&Self> {
+        let infiltration_ventilation_node = self
+            .input
+            .get_mut("InfiltrationVentilation")
+            .ok_or(json_error("InfiltrationVentilation node not found"))?
+            .as_object_mut()
+            .ok_or(json_error("InfiltrationVentilation node is not an object"))?;
+        infiltration_ventilation_node.insert("Vents".into(), mech_vents);
+
+        Ok(self)
+    }
+
     #[cfg(test)]
     pub(crate) fn mechanical_ventilation_control_by_key(
         &self,
@@ -2186,6 +2213,10 @@ impl InputForProcessing {
             .get_mut("HeatSourceWet")
             .and_then(|source| source.as_object_mut())
             .ok_or_else(|| json_error("HeatSourceWet not an object"))
+    }
+
+    pub fn remove_heat_source_wet(&mut self) -> JsonAccessResult<&mut Self> {
+        self.remove_root_key("HeatSourceWet")
     }
 
     pub(crate) fn cold_water_source(&self) -> anyhow::Result<ColdWaterSourceInput> {
