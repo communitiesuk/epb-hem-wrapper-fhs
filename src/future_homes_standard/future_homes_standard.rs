@@ -66,6 +66,23 @@ const HW_SETPOINT_MAX: f64 = 60.0;
 // Occupant sleep+wake hours as per Part O
 const OCCUPANT_WAKING_HR: usize = 7;
 const OCCUPANT_SLEEPING_HR: usize = 23;
+
+/// Apply initial pre-processing required for all modes
+pub(crate) fn initial_preprocessing(input: &mut InputForProcessing) -> anyhow::Result<IndexMap<String, CustomEnergySourceFactor>> {
+    create_hot_water_demand(input)?;
+    create_zone_area(input)?;
+    create_hot_water_distribution(input)?;
+    let custom_energy_supply_factors = create_custom_energy_supply_factors(input)?;
+
+    apply_defaults(input)?;
+
+    input.reset_control()?;
+    input.set_simulation_time(simtime())?;
+    input.set_cross_vent_possible(true)?;
+
+    Ok(custom_energy_supply_factors)
+}
+
 pub(crate) struct SimSettings {
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
