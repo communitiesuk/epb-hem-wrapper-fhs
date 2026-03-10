@@ -76,7 +76,7 @@ pub(crate) mod part_f {
 
         habitable_rooms as f64 * minimum_area_per_habitable_room as f64
             + bathrooms as f64 * minimum_area_per_bathroom
-            + minimum_area_per_kitchen as f64// Assume all dwellings have one kitchen
+            + minimum_area_per_kitchen as f64 // Assume all dwellings have one kitchen
     }
 
     pub fn minimum_background_vent_count_continuous(bedrooms: usize) -> usize {
@@ -281,7 +281,7 @@ pub(crate) mod part_f {
     }
 
     fn validate_continuous_vents(
-        mvhr_vents: &Vec<&JsonValue>,
+        mvhr_vents: &[&JsonValue],
         centralised_mev_vents: &Vec<&JsonValue>,
         decentralised_mev_vents: &Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
@@ -295,7 +295,7 @@ pub(crate) mod part_f {
         let mut continuous_mev_vents = centralised_mev_vents.clone();
         continuous_mev_vents.append(&mut decentralised_mev_vents.clone());
 
-        let mut vents = mvhr_vents.clone();
+        let mut vents = mvhr_vents.to_owned();
         vents.append(&mut continuous_mev_vents.clone());
 
         let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
@@ -326,7 +326,7 @@ pub(crate) mod part_f {
     }
 
     fn validate_continuous_mev_vents(
-        centralised_mev_vents: &Vec<&JsonValue>,
+        centralised_mev_vents: &[&JsonValue],
         decentralised_mev_vents: &Vec<&JsonValue>,
         background_vents: &Vec<&JsonValue>,
         bedrooms: usize,

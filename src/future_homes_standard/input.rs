@@ -820,10 +820,8 @@ impl InputForProcessing {
         })
     }
 
-    pub fn space_heat_systems_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
-        Ok(self.root_object_mut("SpaceHeatSystem")?)
+    pub fn space_heat_systems_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
+        self.root_object_mut("SpaceHeatSystem")
     }
 
     pub fn temperature_setback_for_space_heat_system(
@@ -2025,7 +2023,10 @@ impl InputForProcessing {
         self.root_object_mut("InfiltrationVentilation")
     }
 
-    pub fn set_cross_vent_possible(&mut self, cross_vent_possible: bool) -> JsonAccessResult<&Self> {
+    pub fn set_cross_vent_possible(
+        &mut self,
+        cross_vent_possible: bool,
+    ) -> JsonAccessResult<&Self> {
         self.infiltration_ventilation_node_mut()?
             .insert("cross_vent_possible".into(), cross_vent_possible.into());
         Ok(self)
