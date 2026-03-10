@@ -6298,4 +6298,6 @@ mod tests {
             );
         }
     }
+
+    // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
 }
