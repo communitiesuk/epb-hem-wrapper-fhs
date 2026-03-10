@@ -657,8 +657,7 @@ impl InputForProcessing {
         Ok(self.zone_node()?.values().all(|zone| {
             zone.get("Lighting")
                 .and_then(|l| l.as_object())
-                .and_then(|l| l.get("bulbs"))
-                .is_some_and(|bulbs| bulbs.is_object())
+                .is_some_and(|l| l.contains_key("bulbs"))
         }))
     }
 
@@ -683,8 +682,7 @@ impl InputForProcessing {
 
     pub fn light_bulbs_for_each_zone(
         &self,
-    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, Map<std::string::String, JsonValue>>>
-    {
+    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, Vec<JsonValue>>> {
         Ok(self
             .zone_node()?
             .iter()
@@ -692,7 +690,7 @@ impl InputForProcessing {
                 let bulbs = zone
                     .get("Lighting")
                     .and_then(|lighting| lighting.get("bulbs"))
-                    .and_then(|bulbs| bulbs.as_object());
+                    .and_then(|bulbs| bulbs.as_array());
                 (
                     smartstring::alias::String::from(zone_name),
                     bulbs.map(ToOwned::to_owned).unwrap_or_default(),

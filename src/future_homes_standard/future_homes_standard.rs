@@ -1799,25 +1799,25 @@ fn create_lighting_gains(
         let mut zone_total_wattage = 0.0;
         let mut zone_capacity = 0.0;
 
-        for (bulb_name, bulb) in bulbs {
+        for (i, bulb) in bulbs.iter().enumerate() {
             let bulb_efficacy = bulb
                 .get("efficacy")
                 .and_then(|e| e.as_f64())
-                .ok_or(json_error(
-                    format!("Bulb efficacy for bulb with name '{bulb_name}' should have been expressed as a number"),
-                ))?;
+                .ok_or(json_error(format!(
+                "Bulb efficacy for bulb with index '{i}' should have been expressed as a number"
+            )))?;
             let bulb_power = bulb
                 .get("power")
                 .and_then(|e| e.as_f64())
-                .ok_or(json_error(
-                    format!("Bulb power for bulb with name '{bulb_name}' should have been expressed as a number"),
-                ))?;
+                .ok_or(json_error(format!(
+                    "Bulb power for bulb with index '{i}' should have been expressed as a number"
+                )))?;
             let bulb_count = bulb
                 .get("count")
                 .and_then(|e| e.as_u64())
-                .ok_or(json_error(
-                    format!("Bulb count for bulb with name '{bulb_name}' should have been expressed as an integer"),
-                ))?;
+                .ok_or(json_error(format!(
+                    "Bulb count for bulb with index '{i}' should have been expressed as an integer"
+                )))?;
 
             // Calculate total lumens and wattage for the bulb
             let bulb_lumens = bulb_efficacy * bulb_power * bulb_count as f64;
@@ -1831,7 +1831,7 @@ fn create_lighting_gains(
         }
 
         if zone_total_wattage == 0. {
-            bail!("Total wattage is zero in zone {zone_name}");
+            bail!("Invalid total wattage in zone {zone_name}, cannot equal 0.");
         }
 
         // Calculate zone efficacy
@@ -1845,14 +1845,16 @@ fn create_lighting_gains(
     }
 
     if total_area == 0. {
-        bail!("Total area is zero");
+        bail!("Invalid/missing value calculated for total area across zones, cannot equal 0.");
     }
 
     // Calculate overall lighting efficacy as area-weighted average
     let lighting_efficacy = total_weighted_efficacy / total_area;
 
     if lighting_efficacy == 0. {
-        bail!("Invalid/missing lighting efficacy calculated from bulb details for all zones");
+        bail!(
+            "Invalid lighting efficacy calculated from bulb details for all zones, cannot equal 0."
+        );
     }
 
     // from analysis of EFUS 2017 data (updated to derive from harmonic mean)
@@ -6204,6 +6206,96 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Invalid total floor area"));
+        }
+    }
+
+    mod create_lighting_gains {
+        use super::*;
+
+        #[test]
+        fn test_total_wattage_0_raises() {
+            // Given a valid project_dict input with 0 total bulb wattage (power)
+            let tfa = 100.0;
+            let n_occupants = 5.;
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "whole dwelling": {
+                            "Lighting": {
+                                "bulbs": [
+                                    {"count": 20, "power": 0, "efficacy": 150},
+                                    {"count": 20, "power": 0, "efficacy": 50},
+                                ]
+                            }
+                        }
+                    }
+                }),
+            };
+            // When create_lighting_gains is called
+            // Then an error is returned
+            let result = create_lighting_gains(&mut input, tfa, n_occupants);
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "Invalid total wattage in zone whole dwelling, cannot equal 0."
+            );
+        }
+
+        #[test]
+        fn test_lighting_efficacy_0_raises() {
+            // Given a valid project_dict input with lighting efficacy 0, total floor area of 100
+            // and 5 occupants
+            let tfa = 100.0;
+            let n_occupants = 5.;
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "whole dwelling": {
+                            "area": 100.0,
+                            "Lighting": {
+                                "bulbs": [
+                                    {"count": 20, "power": 3, "efficacy": 0},
+                                    {"count": 2, "power": 30, "efficacy": 0},
+                                ]
+                            },
+                        }
+                    }
+                }),
+            };
+            // When create_lighting_gains is called
+            // Then an error is returned
+            let result = create_lighting_gains(&mut input, tfa, n_occupants);
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "Invalid lighting efficacy calculated from bulb details for all zones, cannot equal 0."
+            );
+        }
+
+        #[test]
+        fn test_total_area_0_raises() {
+            // Given a zone with area property equal to 0
+            // which is possible to get from a valid input
+            let tfa = 100.0;
+            let n_occupants = 5.;
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "whole dwelling": {
+                            "area": 0.0,
+                            "Lighting": {"bulbs": [{"count": 20, "power": 3, "efficacy": 20}]},
+                        }
+                    }
+                }),
+            };
+            // When create_lighting_gains is called
+            // Then an error is returned
+            let result = create_lighting_gains(&mut input, tfa, n_occupants);
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "Invalid/missing value calculated for total area across zones, cannot equal 0."
+            );
         }
     }
 }
