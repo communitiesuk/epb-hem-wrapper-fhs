@@ -191,6 +191,11 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub fn reset_control(&mut self) -> JsonAccessResult<&Self> {
+        self.root_mut()?.insert("Control".into(), json!({}));
+        Ok(self)
+    }
+
     pub(crate) fn zone_node(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root_object("Zone")
     }
@@ -2018,6 +2023,12 @@ impl InputForProcessing {
         &mut self,
     ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
         self.root_object_mut("InfiltrationVentilation")
+    }
+
+    pub fn set_cross_vent_possible(&mut self, cross_vent_possible: bool) -> JsonAccessResult<&Self> {
+        self.infiltration_ventilation_node_mut()?
+            .insert("cross_vent_possible".into(), cross_vent_possible.into());
+        Ok(self)
     }
 
     pub fn mechanical_ventilations_for_processing(
