@@ -6,7 +6,7 @@ use crate::future_homes_standard::input::InputForProcessing;
 use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
 
-use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
+use future_homes_standard::{apply_fhs_postprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::CustomEnergySourceFactor;
 use home_energy_model::output::{OutputCore, OutputSummary};
@@ -132,16 +132,10 @@ impl HemWrapper for FhsComplianceWrapper {
 static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
     LazyLock::new(|| {
         [
-            (CalculationKey::Fhs, FhsFlags::FHS_ASSUMPTIONS),
-            (CalculationKey::FhsFee, FhsFlags::FHS_FEE_ASSUMPTIONS),
-            (
-                CalculationKey::FhsNotional,
-                FhsFlags::FHS_NOT_A_ASSUMPTIONS | FhsFlags::FHS_NOT_B_ASSUMPTIONS,
-            ),
-            (
-                CalculationKey::FhsNotionalFee,
-                FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS | FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS,
-            ),
+            (CalculationKey::Fhs, FhsFlags::FHS_ACTUAL),
+            (CalculationKey::FhsFee, FhsFlags::FHS_ACTUAL_FEE),
+            (CalculationKey::FhsNotional, FhsFlags::FHS_NOTIONAL),
+            (CalculationKey::FhsNotionalFee, FhsFlags::FHS_NOTIONAL_FEE),
         ]
     });
 
@@ -151,29 +145,17 @@ fn do_fhs_preprocessing(
     flags: &FhsFlags,
 ) -> anyhow::Result<()> {
     // Apply required preprocessing steps, if any
-    if flags.intersects(
-        FhsFlags::FHS_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_NOT_B_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS,
-    ) {
+    if flags.contains(FhsFlags::FHS_NOTIONAL_FEE) {
+        apply_fhs_notional_preprocessing(input_for_processing, custom_energy_supply_factors, true)?;
+    }
+    if flags.contains(FhsFlags::FHS_NOTIONAL) {
         apply_fhs_notional_preprocessing(
             input_for_processing,
             custom_energy_supply_factors,
             false,
         )?;
     }
-    if flags.intersects(
-        FhsFlags::FHS_ASSUMPTIONS
-            | FhsFlags::FHS_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_NOT_B_ASSUMPTIONS,
-    ) {
-        apply_fhs_preprocessing(input_for_processing, Some(false), None)?;
-    } else if flags.intersects(
-        FhsFlags::FHS_FEE_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS,
-    ) {
+    if flags.intersects(FhsFlags::FHS_ACTUAL_FEE | FhsFlags::FHS_NOTIONAL_FEE) {
         apply_fhs_fee_preprocessing(input_for_processing)?;
     }
 
@@ -194,13 +176,8 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    if flags.intersects(
-        FhsFlags::FHS_ASSUMPTIONS
-            | FhsFlags::FHS_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_NOT_B_ASSUMPTIONS,
-    ) {
-        let notional =
-            flags.intersects(FhsFlags::FHS_NOT_A_ASSUMPTIONS | FhsFlags::FHS_NOT_B_ASSUMPTIONS);
+    if flags.intersects(FhsFlags::FHS_ACTUAL | FhsFlags::FHS_NOTIONAL) {
+        let notional = flags.contains(FhsFlags::FHS_NOTIONAL);
         apply_fhs_postprocessing(
             input,
             output_writer,
@@ -210,11 +187,7 @@ fn do_fhs_postprocessing(
             timestep_array,
             notional,
         )?;
-    } else if flags.intersects(
-        FhsFlags::FHS_FEE_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS
-            | FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS,
-    ) {
+    } else if flags.intersects(FhsFlags::FHS_ACTUAL_FEE | FhsFlags::FHS_NOTIONAL_FEE) {
         let OutputSummary {
             space_heat_demand_total,
             space_cool_demand_total,
