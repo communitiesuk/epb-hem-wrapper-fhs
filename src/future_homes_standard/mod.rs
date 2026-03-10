@@ -8,13 +8,15 @@ use crate::{CalculationKey, FhsFlags};
 
 use future_homes_standard::{apply_fhs_postprocessing, apply_fhs_preprocessing};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
+use home_energy_model::input::CustomEnergySourceFactor;
 use home_energy_model::output::{OutputCore, OutputSummary};
 use home_energy_model::output_writer::OutputWriter;
 use home_energy_model::CalculationResult;
 use home_energy_model::HemResponse;
+use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 mod fhs_appliance;
 mod fhs_compliance_response;
@@ -53,9 +55,10 @@ impl HemWrapper for FhsSingleCalcWrapper {
     fn apply_preprocessing(
         &self,
         mut input: InputForProcessing,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
-        do_fhs_preprocessing(&mut input, flags)?;
+        do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flags)?;
         Ok(HashMap::from([(CalculationKey::Primary, input)]))
     }
 
@@ -91,6 +94,7 @@ impl HemWrapper for FhsComplianceWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         _flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
         vec![input; FHS_COMPLIANCE_CALCULATIONS.len()]
@@ -98,7 +102,7 @@ impl HemWrapper for FhsComplianceWrapper {
             .enumerate()
             .map(|(i, mut input)| {
                 let (key, flags) = &FHS_COMPLIANCE_CALCULATIONS[i];
-                do_fhs_preprocessing(&mut input, flags)?;
+                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flags)?;
                 Ok((*key, input))
             })
             .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
@@ -143,10 +147,10 @@ static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
 
 fn do_fhs_preprocessing(
     input_for_processing: &mut InputForProcessing,
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     flags: &FhsFlags,
 ) -> anyhow::Result<()> {
     // Apply required preprocessing steps, if any
-    // TODO (from Python) Implement notional runs (the below treats them the same as the equivalent non-notional runs)
     if flags.intersects(
         FhsFlags::FHS_NOT_A_ASSUMPTIONS
             | FhsFlags::FHS_NOT_B_ASSUMPTIONS
@@ -155,8 +159,8 @@ fn do_fhs_preprocessing(
     ) {
         apply_fhs_notional_preprocessing(
             input_for_processing,
-            &Default::default(),
-            false, // TODO correct arguments for migration to 1.0.0a4
+            custom_energy_supply_factors,
+            false,
         )?;
     }
     if flags.intersects(

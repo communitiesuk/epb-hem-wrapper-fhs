@@ -68,7 +68,9 @@ const OCCUPANT_WAKING_HR: usize = 7;
 const OCCUPANT_SLEEPING_HR: usize = 23;
 
 /// Apply initial pre-processing required for all modes
-pub(crate) fn initial_preprocessing(input: &mut InputForProcessing) -> anyhow::Result<IndexMap<String, CustomEnergySourceFactor>> {
+pub(crate) fn initial_preprocessing(
+    input: &mut InputForProcessing,
+) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
     create_hot_water_demand(input)?;
     create_zone_area(input)?;
     create_hot_water_distribution(input)?;
@@ -4173,7 +4175,7 @@ fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()>
 /// reference it for the heat network. We extract out the custom energy factors to be used later.
 fn create_custom_energy_supply_factors(
     input: &mut InputForProcessing,
-) -> anyhow::Result<IndexMap<String, CustomEnergySourceFactor>> {
+) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
     let mut custom_energy_supply_factors = IndexMap::new();
 
     let heat_source_wet_keys = input
@@ -4205,8 +4207,10 @@ fn create_custom_energy_supply_factors(
         {
             if is_heat_network {
                 // Extract custom energy factor
-                custom_energy_supply_factors
-                    .insert(name.clone(), serde_json::from_value(json!(factor))?);
+                custom_energy_supply_factors.insert(
+                    Arc::<str>::from(name.to_string()),
+                    serde_json::from_value(json!(factor))?,
+                );
                 // Create new top level EnergySupply
                 if input.energy_supplies_contain_key(&name)? {
                     bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply for HeatSourceWet '{heat_source_wet_key}' with the same name.");
@@ -4238,8 +4242,10 @@ fn create_custom_energy_supply_factors(
             })
         {
             // Extract custom energy factor
-            custom_energy_supply_factors
-                .insert(name.clone(), serde_json::from_value(json!(factor))?);
+            custom_energy_supply_factors.insert(
+                Arc::<str>::from(name.to_string()),
+                serde_json::from_value(json!(factor))?,
+            );
             // Create new top level EnergySupply
             if input.energy_supplies_contain_key(&name)? {
                 bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet '{heat_source_wet_key}' with the same name.");

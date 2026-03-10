@@ -2,22 +2,25 @@ use crate::future_homes_standard::fhs_sleeved_dhn_validation::validate_sleeved_d
 use crate::future_homes_standard::fhs_window_validation::{
     validate_existence_of_window, validate_window_base_height_within_ventilation_zone,
 };
+use crate::future_homes_standard::future_homes_standard::initial_preprocessing;
 use crate::future_homes_standard::input::{ingest_for_processing, InputForProcessing};
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
 use anyhow::anyhow;
 use bitflags::bitflags;
 use home_energy_model::errors::{HemError, PostprocessingError};
-use home_energy_model::input::Input;
+use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output_writer::OutputWriter;
 pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
 use home_energy_model::CalculationResult;
 pub use home_energy_model::HemResponse;
+use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Arc;
 use tracing::{error, instrument};
 
 pub mod future_homes_standard;
@@ -47,6 +50,7 @@ pub(crate) trait HemWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>>;
     fn apply_postprocessing(
@@ -76,14 +80,25 @@ impl HemWrapper for ChosenWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
         match self {
             ChosenWrapper::FhsSingleCalc(wrapper) => {
-                <FhsSingleCalcWrapper as HemWrapper>::apply_preprocessing(wrapper, input, flags)
+                <FhsSingleCalcWrapper as HemWrapper>::apply_preprocessing(
+                    wrapper,
+                    input,
+                    custom_energy_supply_factors,
+                    flags,
+                )
             }
             ChosenWrapper::FhsCompliance(wrapper) => {
-                <FhsComplianceWrapper as HemWrapper>::apply_preprocessing(wrapper, input, flags)
+                <FhsComplianceWrapper as HemWrapper>::apply_preprocessing(
+                    wrapper,
+                    input,
+                    custom_energy_supply_factors,
+                    flags,
+                )
             }
         }
     }
@@ -148,10 +163,11 @@ pub fn run_wrappers(
         #[instrument(skip_all)]
         fn apply_preprocessing_from_wrappers(
             input_for_processing: InputForProcessing,
+            custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
             wrapper: &impl HemWrapper,
             flags: &FhsFlags,
         ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
-            wrapper.apply_preprocessing(input_for_processing, flags)
+            wrapper.apply_preprocessing(input_for_processing, custom_energy_supply_factors, flags)
         }
 
         #[instrument(skip_all)]
@@ -165,13 +181,15 @@ pub fn run_wrappers(
         }
 
         // 1. ingest / parse input and enter preprocessing stage
-        let input_for_processing =
+        let mut input_for_processing =
             ingest_input_and_start_preprocessing(input, external_conditions_data.as_ref())?;
 
         // 2. apply preprocessing from wrappers
         let wrapper = choose_wrapper(flags);
+        let custom_energy_supply_factors = initial_preprocessing(&mut input_for_processing)?;
+        // TODO: call validate_dwelling_ventilation if "actual"/"fhs"
         let input = match catch_unwind(AssertUnwindSafe(|| {
-            apply_preprocessing_from_wrappers(input_for_processing, &wrapper, flags)
+            apply_preprocessing_from_wrappers(input_for_processing, &custom_energy_supply_factors, &wrapper, flags)
                 .map_err(HemError::InvalidRequest)
         })) {
             Ok(result) => result?,
