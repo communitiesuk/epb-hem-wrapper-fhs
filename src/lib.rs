@@ -86,20 +86,10 @@ impl HemWrapper for ChosenWrapper {
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
         match self {
             ChosenWrapper::FhsSingleCalc(wrapper) => {
-                <FhsSingleCalcWrapper as HemWrapper>::apply_preprocessing(
-                    wrapper,
-                    input,
-                    custom_energy_supply_factors,
-                    flags,
-                )
+                wrapper.apply_preprocessing(input, custom_energy_supply_factors, flags)
             }
             ChosenWrapper::FhsCompliance(wrapper) => {
-                <FhsComplianceWrapper as HemWrapper>::apply_preprocessing(
-                    wrapper,
-                    input,
-                    custom_energy_supply_factors,
-                    flags,
-                )
+                wrapper.apply_preprocessing(input, custom_energy_supply_factors, flags)
             }
         }
     }
