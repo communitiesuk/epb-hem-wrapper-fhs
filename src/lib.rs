@@ -1,4 +1,5 @@
 use crate::future_homes_standard::fhs_sleeved_dhn_validation::validate_sleeved_dhn;
+use crate::future_homes_standard::fhs_storeys_validation::validate_storeys_in_building_and_dwelling;
 use crate::future_homes_standard::fhs_window_validation::{
     validate_existence_of_window, validate_window_base_height_within_ventilation_zone,
 };
@@ -142,9 +143,13 @@ pub fn run_wrappers(
             input_for_processing
                 .merge_external_conditions_data(external_conditions_data.map(|x| x.into()))?;
 
-            // specifically validate certain sections of the input
+            // Validate dwelling storeys is not greater than building storeys
+            validate_storeys_in_building_and_dwelling(&input_for_processing)?;
+            // Validate sleeved DHN
             validate_sleeved_dhn(&input_for_processing)?;
+            // Validate dwelling has at least one window for vent size calculation
             validate_existence_of_window(&input_for_processing)?;
+            // Validate dwelling windows are above the ventilation zone base height
             validate_window_base_height_within_ventilation_zone(&input_for_processing)?;
 
             Ok(input_for_processing)

@@ -3,8 +3,8 @@ use anyhow::bail;
 
 ///  Validate that the number of storeys in the building, if specified, is greater
 ///  than or equal to the number of storeys in the dwelling.
-fn validate_storeys_in_building_and_dwelling(
-    input_for_processing: InputForProcessing,
+pub(crate) fn validate_storeys_in_building_and_dwelling(
+    input_for_processing: &InputForProcessing,
 ) -> anyhow::Result<()> {
     let storeys_in_dwelling = input_for_processing.storeys_in_dwelling()?;
     let storeys_in_building = input_for_processing.storeys_in_building()?;
@@ -43,7 +43,7 @@ mod test {
         // Given a two storey flat in a 30 storey building
         let input = storeys_input(30);
         // When validation is called
-        assert!(validate_storeys_in_building_and_dwelling(input).is_ok())
+        assert!(validate_storeys_in_building_and_dwelling(&input).is_ok())
         // Then no error is raised
     }
 
@@ -52,7 +52,7 @@ mod test {
         // Given a two storey flat in a two storey building
         let input = storeys_input(2);
         // When validation is called
-        assert!(validate_storeys_in_building_and_dwelling(input).is_ok())
+        assert!(validate_storeys_in_building_and_dwelling(&input).is_ok())
         // Then no error is raised
     }
 
@@ -62,6 +62,6 @@ mod test {
         let input = storeys_input(1);
         // When validation is called
         // Then an error is raised
-        assert!(validate_storeys_in_building_and_dwelling(input).is_err())
+        assert!(validate_storeys_in_building_and_dwelling(&input).is_err())
     }
 }
