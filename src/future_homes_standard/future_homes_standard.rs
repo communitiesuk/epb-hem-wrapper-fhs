@@ -830,7 +830,7 @@ pub(super) fn calc_n_occupants(
     number_of_bedrooms: usize,
 ) -> anyhow::Result<f64> {
     if total_floor_area <= 0. {
-        bail!("Invalid floor area: {total_floor_area}");
+        bail!("Invalid total floor area: {total_floor_area}, must be greater than 0");
     }
 
     // sigmoid curve is only used for one bedroom occupancy.
@@ -6184,6 +6184,26 @@ mod tests {
                 input.input["HeatSourceWet"]["a"]["time_delay_backup"],
                 json!(1.0)
             );
+        }
+    }
+
+    mod calc_n_occupants {
+        use super::*;
+
+        #[test]
+        fn test_invalid_tfa_raises() {
+            // Given a total floor area of 0
+            // which is possible to get from a valid input
+            let tfa = 0.0;
+            let n_beds = 1usize;
+            // When calc_N_occupants is called
+            // Then an error is returned
+            let result = calc_n_occupants(tfa, n_beds);
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid total floor area"));
         }
     }
 }
