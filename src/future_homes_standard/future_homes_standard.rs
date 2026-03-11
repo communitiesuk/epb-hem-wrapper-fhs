@@ -1112,6 +1112,27 @@ fn separate_time_and_temp_control_weekday_heating_schedule(
     .map_err(|_| anyhow!("Failed to convert to heating schedule with 48 entries"))
 }
 
+fn weekday_heating_schedule(
+    zone: &JsonValue,
+    temp_setback: f64,
+    advanced_start: f64,
+    heating_control_type: &str,
+) -> anyhow::Result<[Option<f64>; 48]> {
+    // The weekday schedule depends on the heating_control_type
+    // because SeparateTimeAndTempControl means the livingroom and
+    // restofdwelling can have different heating schedules so they need
+    // to be combined to a suitably weighted temperature at each timestep.
+    match heating_control_type {
+        "SeparateTempControl" => separate_temp_control_weekday_heating_schedule(zone),
+        "SeparateTimeAndTempControl" => separate_time_and_temp_control_weekday_heating_schedule(
+            zone,
+            temp_setback,
+            advanced_start,
+        ),
+        _ => bail!("Invalid HeatingControlType: '{heating_control_type}', expected 'SeparateTempControl' or 'SeparateTimeAndTempControl'"),
+    }
+}
+
 /// Space heating.
 fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 07:00-09:30 and then 16:30-22:00
@@ -6888,6 +6909,73 @@ mod tests {
             expected_schedule.extend(vec![None; 14]); // unoccupied
             expected_schedule.extend(vec![Some(20.2); 11]); // both occupied
             expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule.to_vec(), expected_schedule);
+        }
+    }
+
+    mod weekday_heating_schedule {
+        use super::*;
+
+        #[rstest]
+        fn test_unknown_heat_control_type(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 2.;
+            let heating_control_type = "IDoNotExistControl";
+            let result = weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+                heating_control_type,
+            );
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .starts_with("Invalid HeatingControlType"))
+        }
+
+        #[rstest]
+        fn test_separate_temp_control(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 2.;
+            let heating_control_type = "SeparateTempControl";
+            let schedule = weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+                heating_control_type,
+            )
+            .unwrap();
+
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 11]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule.to_vec(), expected_schedule);
+        }
+
+        #[rstest]
+        fn test_separate_time_and_temp_control(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 1.;
+            let heating_control_type = "SeparateTimeAndTempControl";
+            let schedule = weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+                heating_control_type,
+            )
+            .unwrap();
+
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(18.6); 2]); // livingroom only
+            expected_schedule.extend(vec![Some(20.2); 2]); // livingroom only, plus restofdwelling advanced start
+            expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
+            expected_schedule.extend(vec![None; 4]);
 
             assert_eq!(schedule.to_vec(), expected_schedule);
         }
