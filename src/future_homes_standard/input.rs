@@ -1023,17 +1023,19 @@ impl InputForProcessing {
     ) -> JsonAccessResult<&Self> {
         self.root_object_mut("EnergySupply")?
             .get_mut(energy_supply_name)
-            .ok_or(json_error(format!(
-                "There is no provided energy supply with the name '{energy_supply_name}'"
-            )))?
+            .ok_or_else(|| {
+                json_error(format!(
+                    "There is no provided energy supply with the name '{energy_supply_name}'"
+                ))
+            })?
             .as_object_mut()
-            .ok_or(json_error("The indicated energy supply was not an object"))?
-            .get_mut(energy_supply_name)
-            .map(|energy_supply| {
-                energy_supply.get("diverter").as_mut().map(|diverter| {
-                    diverter.get("Controlmax").replace(&json!(control_max_name));
-                })
-            });
+            .ok_or_else(|| json_error("Energy supply was not an object"))?
+            .get_mut("diverter")
+            .ok_or_else(|| json_error("Diverter field not found on energy supply"))?
+            .as_object_mut()
+            .ok_or_else(|| json_error("Energy supply diverter is not an object"))?
+            .insert("Controlmax".into(), json!(control_max_name));
+
         Ok(self)
     }
 
