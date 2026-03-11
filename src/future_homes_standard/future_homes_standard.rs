@@ -926,9 +926,15 @@ fn create_metabolic_gains(
     Ok(())
 }
 
-fn calc_zone_setpoint_fhs(input: &InputForProcessing, zone_name: &str) -> anyhow::Result<f64> {
-    let living_room_area = input.living_room_area_for_zone(zone_name)?;
-    let rest_of_dwelling_area = input.rest_of_dwelling_area_for_zone(zone_name)?;
+fn calc_zone_setpoint_fhs(zone: &JsonValue) -> anyhow::Result<f64> {
+    let living_room_area = zone
+        .get("livingroom_area")
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| anyhow!("Living room area must be a valid number"))?;
+    let rest_of_dwelling_area = zone
+        .get("restofdwelling_area")
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| anyhow!("Rest of dwelling area must be a valid number"))?;
     if living_room_area + rest_of_dwelling_area == 0. {
         bail!("Sum of living room area and rest of dwelling area must be greater than 0");
     }
@@ -967,6 +973,22 @@ fn habitable_building_height(input: &InputForProcessing) -> anyhow::Result<f64> 
     input.habitable_building_height().map_err(Into::into)
 }
 
+fn separate_temp_control_weekday_heating_schedule(
+    zone: &JsonValue,
+) -> anyhow::Result<[Option<f64>; 48]> {
+    // 07:00-09:30 and then 16:30-22:00
+    let mut heating_weekday = Vec::with_capacity(48);
+    heating_weekday.extend(repeat_n(false, 14));
+    heating_weekday.extend(repeat_n(true, 5));
+    heating_weekday.extend(repeat_n(false, 14));
+    heating_weekday.extend(repeat_n(true, 11));
+    heating_weekday.extend(repeat_n(false, 4));
+    let heating_weekday: [bool; 48] = heating_weekday.try_into().unwrap();
+    let setpoint = calc_zone_setpoint_fhs(zone)?;
+
+    Ok(heating_weekday.map(|is_heating| is_heating.then_some(setpoint)))
+}
+
 fn combined_schedule_setpoint(
     zone: &JsonValue,
     temp_setback: f64,
@@ -1002,7 +1024,7 @@ fn separate_time_and_temp_control_weekday_heating_schedule(
     zone: &JsonValue,
     temp_setback: f64,
     advanced_start: f64,
-) -> anyhow::Result<Vec<Option<f64>>> {
+) -> anyhow::Result<[Option<f64>; 48]> {
     if advanced_start > 7. {
         bail!("advanced_start exceeds 7 hours and is therefore incompatible with heating schedule starting at 07:00");
     }
@@ -1060,7 +1082,7 @@ fn separate_time_and_temp_control_weekday_heating_schedule(
             .try_into()
             .unwrap();
 
-    Ok(izip!(
+    izip!(
         heating_livingroom_weekday_with_advanced_start,
         heating_restofdwelling_weekday_with_advanced_start,
         heating_livingroom_weekday,
@@ -1085,7 +1107,9 @@ fn separate_time_and_temp_control_weekday_heating_schedule(
                 .transpose()
         },
     )
-    .collect::<Result<_, _>>()?)
+    .collect::<Result<Vec<Option<f64>>, _>>()?
+    .try_into()
+    .map_err(|_| anyhow!("Failed to convert to heating schedule with 48 entries"))
 }
 
 /// Space heating.
@@ -5238,7 +5262,7 @@ mod tests {
     fn test_calc_zone_setpoint_fhs(input: InputForProcessing) {
         // Given a zone with a livingroom_area of 40 and a restofdwelling_area of 100
         // When calc_zone_setpoint_fhs() is called
-        let setpoint_fhs = calc_zone_setpoint_fhs(&input, "whole dwelling").unwrap();
+        let setpoint_fhs = calc_zone_setpoint_fhs(&input.input["Zone"]["whole dwelling"]).unwrap();
         // Then it returns the area weighted mean of 21 degC and 20 degC
         // i.e. (21 * 25 + 20 * 100) / (25 + 100) = 20.2
         let expected_setpoint_fhs = 20.2;
@@ -5253,7 +5277,7 @@ mod tests {
 
         // When calc_zone_setpoint_fhs() is called
         // Then an exception is raised
-        assert!(calc_zone_setpoint_fhs(&input, "whole dwelling").is_err());
+        assert!(calc_zone_setpoint_fhs(&input.input["Zone"]["whole dwelling"]).is_err());
     }
 
     #[rstest]
@@ -6785,7 +6809,7 @@ mod tests {
             expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
             expected_schedule.extend(vec![None; 4]); // unoccupied
 
-            assert_eq!(schedule, expected_schedule);
+            assert_eq!(schedule.to_vec(), expected_schedule);
         }
 
         #[rstest]
@@ -6806,7 +6830,7 @@ mod tests {
             expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
             expected_schedule.extend(vec![None; 4]); // unoccupied
 
-            assert_eq!(schedule, expected_schedule);
+            assert_eq!(schedule.to_vec(), expected_schedule);
         }
 
         #[rstest]
@@ -6827,7 +6851,7 @@ mod tests {
             expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
             expected_schedule.extend(vec![None; 4]); // unoccupied
 
-            assert_eq!(schedule, expected_schedule);
+            assert_eq!(schedule.to_vec(), expected_schedule);
         }
 
         #[rstest]
@@ -6847,7 +6871,25 @@ mod tests {
             expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
             expected_schedule.extend(vec![None; 4]); // unoccupied
 
-            assert_eq!(schedule, expected_schedule);
+            assert_eq!(schedule.to_vec(), expected_schedule);
+        }
+    }
+
+    mod separate_temp_control_weekday_heating_schedule {
+        use super::*;
+
+        #[rstest]
+        fn test_schedule(whole_dwelling_zone: JsonValue) {
+            let schedule =
+                separate_temp_control_weekday_heating_schedule(&whole_dwelling_zone).unwrap();
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 11]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule.to_vec(), expected_schedule);
         }
     }
 }
