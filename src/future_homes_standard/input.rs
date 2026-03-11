@@ -733,6 +733,23 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub fn set_control_charger_for_space_heat_system(
+        &mut self,
+        space_heat_system: &str,
+        control_string: &str,
+    ) -> anyhow::Result<&Self> {
+        self.root_object_mut("SpaceHeatSystem")?
+            .get_mut(space_heat_system)
+            .ok_or(anyhow!(
+                "There is no provided space heat system with the name '{space_heat_system}'"
+            ))?
+            .as_object_mut()
+            .ok_or(json_error("Space heat system was not an object"))?
+            .insert("ControlCharger".into(), json!(control_string));
+
+        Ok(self)
+    }
+
     pub fn set_control_string_for_space_cool_system(
         &mut self,
         space_cool_system: &str,
@@ -1473,11 +1490,7 @@ impl InputForProcessing {
         self.remove_root_key("SpaceHeatSystem")
     }
 
-    #[cfg(test)]
-    pub(crate) fn space_heat_system_for_key(
-        &self,
-        key: &str,
-    ) -> JsonAccessResult<Option<&JsonValue>> {
+    pub fn space_heat_system_for_key(&self, key: &str) -> JsonAccessResult<Option<&JsonValue>> {
         Ok(self.root_object("SpaceHeatSystem")?.get(key))
     }
 
@@ -2625,6 +2638,17 @@ pub(super) fn set_control_max_name_for_heat_source(
         .as_object_mut()
         .ok_or(json_error("Heat source is not an object"))?
         .insert("Controlmax".into(), json!(control_name));
+    Ok(())
+}
+
+pub(super) fn set_control_charge_for_heat_source(
+    heat_source: &mut JsonValue,
+    control_name: &str,
+) -> JsonAccessResult<()> {
+    heat_source
+        .as_object_mut()
+        .ok_or(json_error("Heat source is not an object"))?
+        .insert("ControlCharge".into(), json!(control_name));
     Ok(())
 }
 

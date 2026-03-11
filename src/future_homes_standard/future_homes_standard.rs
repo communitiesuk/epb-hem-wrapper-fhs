@@ -1189,6 +1189,85 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Create charging control schedules for thermal storage systems.
+///
+/// This includes:
+///    - Electric storage heaters
+///    - Heat batteries
+fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    // 00:00 until 07:00 off-peak charging
+    let mut charging_offpeak = Vec::with_capacity(48);
+    charging_offpeak.extend(repeat_n(true, 14));
+    charging_offpeak.extend(repeat_n(false, 48 - 14));
+
+    // Electric storage heaters (SpaceHeatSystem)
+    for zone_key in input.zone_keys()? {
+        let space_heat_systems = input.space_heat_system_for_zone(&zone_key)?;
+        if space_heat_systems.is_empty() {
+            continue;
+        }
+        for space_heat_system in space_heat_systems {
+            if input
+                .space_heat_system_for_key(&space_heat_system)?
+                .and_then(|system| system.get("type"))
+                .and_then(JsonValue::as_str)
+                .is_some_and(|type_str| type_str == "ElecStorageHeater")
+            {
+                let charger_ctrlname = format!("ChargingPattern_{space_heat_system}");
+                input.set_control_charger_for_space_heat_system(
+                    &space_heat_system,
+                    &charger_ctrlname,
+                )?;
+                input.add_control(
+                    &charger_ctrlname,
+                    json!({
+                        "type": "ChargeControl",
+                        "start_day": 0,
+                        "time_series_step": 0.5,
+                        "logic_type": "manual",
+                        "charge_level": 1,
+                        "schedule": {
+                            "main": [{"value": "day", "repeat": 365}],
+                            "day": charging_offpeak,
+                        },
+                    }),
+                )?;
+            }
+        }
+    }
+
+    // Heat batteries (HeatSourceWet)
+    // In addition any heat battery "HeatSourceWet" must have a ControlCharge
+    for (heat_source_key, heat_source_wet) in input.heat_source_wet()? {
+        if heat_source_wet
+            .get("type")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|type_str| type_str == "HeatBattery")
+        {
+            let hb_ctrlname = "HeatBattery_Control";
+            input
+                .heat_source_wet_by_key_mut(&heat_source_key)?
+                .insert("ControlCharge".into(), json!(&hb_ctrlname));
+            input.add_control(
+                &hb_ctrlname,
+                json!({
+                    "type": "ChargeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "logic_type": "heat_battery",
+                    "charge_level": 1,
+                    "schedule": {
+                        "main": [{"value": "day", "repeat": 365}],
+                        "day": charging_offpeak,
+                    },
+                }),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 /// water heating pattern - if system is not instantaneous, hold at setpoint
 /// 00:00-02:00 every Sunday to allow for sterilisation cycle.
 /// Note: Holding at setpoint for two hours has been chosen because
@@ -7041,6 +7120,89 @@ mod tests {
             assert_eq!(
                 input.input["SpaceHeatSystem"]["boiler"]["Control"],
                 "HeatingPattern_boiler"
+            );
+        }
+    }
+
+    mod create_charging_pattern {
+        use super::*;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "Control": {},
+                    "HeatingControlType": "SeparateTempControl",
+                    "SpaceHeatSystem": {},
+                    "Zone": {"whole_dwelling": {"livingroom_area": 25.0, "restofdwelling_area": 100.0}},
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_charging_pattern_for_electric_storage_heater(mut input: InputForProcessing) {
+            // Given a project with an electric storage heater as the space heat system
+            input.input["SpaceHeatSystem"]["esh"] = json!({"type": "ElecStorageHeater"});
+            input.input["Zone"]["whole_dwelling"]["SpaceHeatSystem"] = json!("esh");
+
+            // When the charging pattern is created
+            create_charging_pattern(&mut input).unwrap();
+
+            // Then an electric storage heater control charge pattern is added
+            let day_schedule = vec![
+                true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+                false, false, false, false, false, false, false, false, false, false, false, false,
+                false, false, false, false, false, false, false, false, false, false, false, false,
+                false, false, false, false, false, false, false, false, false, false,
+            ];
+            assert_eq!(
+                input.input["Control"]["ChargingPattern_esh"],
+                json!({
+                    "type": "ChargeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "logic_type": "manual",
+                    "charge_level": 1,
+                    "schedule": {
+                        "main": [{"repeat": 365, "value": "day"}],
+                        "day": day_schedule,
+                    },
+                })
+            );
+        }
+
+        #[rstest]
+        fn test_charging_pattern_for_heat_battery(mut input: InputForProcessing) {
+            // Given a project with a heat battery as the wet heat source
+            input.input["HeatSourceWet"] = json!({"heat_battery": {"type": "HeatBattery"}});
+
+            // When the charging pattern is created
+            create_charging_pattern(&mut input).unwrap();
+
+            // Then a HeatBattery control charge pattern is added
+            let day_schedule = vec![
+                true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+                false, false, false, false, false, false, false, false, false, false, false, false,
+                false, false, false, false, false, false, false, false, false, false, false, false,
+                false, false, false, false, false, false, false, false, false, false,
+            ];
+            assert_eq!(
+                input.input["Control"]["HeatBattery_Control"],
+                json!({
+                    "type": "ChargeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "logic_type": "heat_battery",
+                    "charge_level": 1,
+                    "schedule": {
+                        "main": [{"repeat": 365, "value": "day"}],
+                        "day": day_schedule,
+                    },
+                })
+            );
+            assert_eq!(
+                input.input["HeatSourceWet"]["heat_battery"]["ControlCharge"],
+                "HeatBattery_Control"
             );
         }
     }
