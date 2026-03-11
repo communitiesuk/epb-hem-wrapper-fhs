@@ -49,6 +49,10 @@ const APPL_OBJ_NAME: &str = "appliances";
 const ELEC_COOK_OBJ_NAME: &str = "Eleccooking";
 const GAS_COOK_OBJ_NAME: &str = "Gascooking";
 
+const CLOTHES_WASHING_APPLIANCE: &str = "Clothes_washing";
+const CLOTHES_DRYING_APPLIANCE: &str = "Clothes_drying";
+const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = [CLOTHES_WASHING_APPLIANCE, CLOTHES_DRYING_APPLIANCE];
+
 pub(super) const LIVING_ROOM_SETPOINT_FHS: f64 = 21.0;
 pub(super) const REST_OF_DWELLING_SETPOINT_FHS: f64 = 20.0;
 
@@ -2745,60 +2749,103 @@ fn appliance_kwh_cycle_loading_factor(
     let appliance = input
         .appliance_with_key(appliance_key)?
         .ok_or_else(|| anyhow!("Appliance '{appliance_key}' not found"))?;
-    let kwh_cycle = if let Some(kwh_per_cycle) =
-        appliance.get("kWh_per_cycle").and_then(|v| v.as_f64())
-    {
-        kwh_per_cycle
-    } else if let Some(kwh_per_100_cycle) =
-        appliance.get("kWh_per_100cycle").and_then(|v| v.as_f64())
-    {
-        kwh_per_100_cycle / 100.
-    } else if let Some(kwh_per_annum) = appliance.get("kWh_per_annum").and_then(|v| v.as_f64()) {
-        // standard use is the number of cycles per annum dictated by EU standard for energy label
-        let standard_use = appliance.get("standard_use").and_then(|v| v.as_f64());
-        let standard_use = match standard_use {
-            Some(standard_use) => standard_use,
-            None => {
-                return Err(anyhow!(
-                    "Appliance '{appliance_key}' does not have a standard_use value"
-                ));
-            }
-        };
-        kwh_per_annum / standard_use
-    } else {
-        bail!(
-            "Appliance '{appliance_key}' demand must be specified as one of 'kWh_per_cycle', 'kWh_per_100cycle' or 'kWh_per_annum'"
-        );
-    };
+    let kwh_cycle = get_kwh_per_cycle(appliance, appliance_key)?;
 
-    let map_appliance = appliance_map.get(appliance_key).ok_or_else(|| anyhow!("The appliance name '{appliance_key}' was expected to be found within the appliance map: {appliance_map:?}."))?;
-
-    let mut loading_factor = 1.;
-    if appliance_key.starts_with("Clothes") {
+    let (loading_factor, kwh_cycle) = if LAUNDRY_APPLIANCE_NAMES.contains(&appliance_key) {
         // additionally, laundry appliances have variable load size,
         // which affects the required number of uses to do all the occupants' laundry for the year
-        loading_factor = {
-            map_appliance
-                .use_data
-                .as_ref()
-                .ok_or_else(|| anyhow!("Appliance is expected to have clothes use data"))?
-                .clothes_use_data
-                .as_ref()
-                .ok_or_else(|| anyhow!("Appliance is expected to have clothes use data"))?
-                .standard_load_kg
-                / appliance
-                    .get("kg_load")
-                    .and_then(|kg_load| kg_load.as_f64())
-                    .ok_or_else(|| {
-                        anyhow!("Passed in appliance is expected to have a kg_load value.")
-                    })?
-        };
+        let loading_factor = appliance_map.get(appliance_key).ok_or_else(|| {
+            anyhow!(
+                "Appliance '{appliance_key}' not found in map of known appliances.",
+            )
+        })?
+        .use_data.and_then(|use_data| use_data.clothes_use_data).map(|clothes_use_data| clothes_use_data.standard_load_kg).ok_or_else(|| {
+            anyhow!(
+                "Appliance '{appliance_key}' has no standard_load_kg value, cannot calculate loading factor.",
+            )
+        })? / appliance.get("kg_load").and_then(|kg_load| kg_load.as_f64()).ok_or_else(|| anyhow!("Appliance '{appliance_key}' has no kg_load value, cannot calculate loading factor."))?;
 
-        // There is some unreachable code in the Python here around spin dry efficiency class
-        // TODO - implement in future if needed
-    }
+        (
+            loading_factor,
+            if appliance_key == CLOTHES_DRYING_APPLIANCE {
+                let residual_moisture_adjustment = get_residual_moisture_adjustment(input)?;
+                kwh_cycle * residual_moisture_adjustment
+            } else {
+                kwh_cycle
+            },
+        )
+    } else {
+        (1.0, kwh_cycle)
+    };
 
     Ok((kwh_cycle, loading_factor))
+}
+
+fn get_kwh_per_cycle(appliance: &JsonValue, appliance_name: &str) -> anyhow::Result<f64> {
+    if let Some(kwh_per_cycle) = appliance.get("kWh_per_cycle") {
+        return Ok(kwh_per_cycle
+            .as_f64()
+            .ok_or_else(|| anyhow!("kWh_per_cycle must be a float"))?);
+    }
+
+    if let Some(kwh_per_100cycle) = appliance.get("kWh_per_100cycle") {
+        return Ok(kwh_per_100cycle
+            .as_f64()
+            .ok_or_else(|| anyhow!("kWh_per_100cycle must be a float"))?
+            / 100.);
+    }
+
+    if let Some(kwh_per_annum) = appliance.get("kWh_per_annum") {
+        // standard use is the number of cycles per annum dictated by EU standard for energy label
+        let standard_use = appliance
+            .get("standard_use")
+            .ok_or_else(|| {
+                anyhow!("Appliance '{appliance_name}' does not have a standard_use value")
+            })?
+            .as_f64()
+            .ok_or_else(|| anyhow!("standard_use must be a float"))?;
+        return Ok(kwh_per_annum
+            .as_f64()
+            .ok_or_else(|| anyhow!("kWh_per_annum must be a float"))?
+            / standard_use);
+    }
+
+    bail!("{appliance_name} demand must be specified as one of 'kWh_per_cycle', 'kWh_per_100cycle' or 'kWh_per_annum'");
+}
+
+fn get_residual_moisture_adjustment(input: &InputForProcessing) -> anyhow::Result<f64> {
+    if let Some(spin_eff_class) = input
+        .appliance_with_key(CLOTHES_WASHING_APPLIANCE)?
+        .and_then(|appliance| appliance.get("spin_dry_efficiency_class"))
+        .and_then(|s| s.as_str())
+    {
+        // In accordance with section 14 of Article 2 in EU regulation 2023/2533,
+        // 'eco programme' means a programme which is able to dry cotton laundry
+        // from an initial moisture content of the load of 60 %
+        // own to a final moisture content of the load of 0 %
+        let eu_reference_res_moisture = 0.6;
+        // EU Spin-drying efficiency classes and respective residual moisture contents
+        let res_moisture = match spin_eff_class {
+            "A" => 0.45,
+            "B" => 0.54,
+            "C" => 0.63,
+            "D" => 0.72,
+            "E" => 0.81,
+            "F" => 0.9,
+            "G" => 1.0,
+            _ => {
+                return Err(anyhow!(
+                    "Spin dry efficiency class '{spin_eff_class}' is not recognised"
+                ))
+            }
+        };
+
+        return Ok(res_moisture / eu_reference_res_moisture);
+    }
+
+    // If spin drying efficiency of clothes washing appliance is not provided assume
+    // 60% residual moisture, so no correction
+    Ok(1.0)
 }
 
 fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow::Result<()> {
@@ -6323,4 +6370,160 @@ mod tests {
     }
 
     // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
+
+    mod appliance_kwh_cycle_loading_factor {
+        use super::*;
+
+        #[test]
+        fn test_demand_not_specified_raises() {
+            // Given a project dict that has an appliance without a demand property
+            let mut input = InputForProcessing {
+                input: json!({"Appliances": {"Clothes_washing": {}}}),
+            };
+            let appliance_name = "Clothes_washing";
+            let appliance_map = Default::default();
+
+            // When appliance_kWhcycle_loadingfactor is called
+            // Then an error is returned
+            let result =
+                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map);
+            assert!(result.is_err());
+            assert!(
+                result.unwrap_err().to_string().contains("demand must be specified as one of 'kWh_per_cycle', 'kWh_per_100cycle' or 'kWh_per_annum'"),
+            );
+        }
+
+        #[test]
+        fn test_clothes_drying_no_spin_class_applies_no_adjustment() {
+            // Given a clothes drying appliance with a kWh/cycle specified
+            // and a clothes washing appliance present, but without spin class
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Appliances": {
+                        "Clothes_drying": {"kWh_per_cycle": 1.0, "kg_load": 5.0},
+                        "Clothes_washing": {
+                            // No spin_dry_efficiency_class -> assume 60% moisture, no correction
+                        },
+                    }
+                }),
+            };
+            let appliance_name = "Clothes_drying";
+            let appliance_map = [(
+                "Clothes_drying",
+                ApplianceUseProfile {
+                    util_unit: 0.0,
+                    use_data: Some(ApplianceUseData {
+                        use_metric: 0,
+                        clothes_use_data: Some(ClothesUseData {
+                            standard_load_kg: 6.0,
+                        }),
+                        _standard_use: None,
+                        duration: 0.0,
+                        duration_deviation: 0.0,
+                    }),
+                    standby: 0.0,
+                    gains_frac: 0.0,
+                    prof: vec![],
+                },
+            )]
+            .into();
+
+            // When appliance_kWhcycle_loadingfactor is called
+            let (kwh_cycle, loadingfactor) =
+                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
+                    .unwrap();
+            // Then kWh/cycle is unchanged (adjustment = 1.0)
+            assert_eq!(kwh_cycle, 1.0);
+            // And loading factor is standard_load / kg_load
+            assert_eq!(loadingfactor, 1.2); // 6.0 / 5.0
+        }
+
+        #[test]
+        fn test_clothes_drying_spin_class_f_applies_adjustment() {
+            // Given a clothes drying appliance with kWh/cycle
+            // and a clothes washing appliance with spin class F
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Appliances": {
+                        "Clothes_drying": {"kWh_per_cycle": 1.0, "kg_load": 5.0},
+                        "Clothes_washing": {"spin_dry_efficiency_class": "F"},
+                    }
+                }),
+            };
+            let appliance_name = "Clothes_drying";
+            let appliance_map = [(
+                "Clothes_drying",
+                ApplianceUseProfile {
+                    util_unit: 0.0,
+                    use_data: Some(ApplianceUseData {
+                        use_metric: 0,
+                        clothes_use_data: Some(ClothesUseData {
+                            standard_load_kg: 6.0,
+                        }),
+                        _standard_use: None,
+                        duration: 0.0,
+                        duration_deviation: 0.0,
+                    }),
+                    standby: 0.0,
+                    gains_frac: 0.0,
+                    prof: vec![],
+                },
+            )]
+            .into();
+
+            // When appliance_kWhcycle_loadingfactor is called
+            let (kwh_cycle, loadingfactor) =
+                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
+                    .unwrap();
+
+            // Then adjustment = residual_moisture(F) / 0.6 = 0.90 / 0.6 = 1.5
+            assert_eq!(kwh_cycle, 1.5); // 1.0 * (0.90 / 0.6)
+            assert_eq!(loadingfactor, 1.2); // 6.0 / 5.0
+        }
+
+        #[test]
+        fn test_kwh_per_100cycle_is_normalised_to_kwh_per_cycle() {
+            // Given an appliance specified in kWh per 100 cycles
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Appliances": {
+                        "Clothes_washing": {
+                            "kWh_per_100cycle": 50.0,  // -> 0.5 kWh/cycle
+                            "kg_load": 5.0,
+                        }
+                    }
+                }),
+            };
+            let appliance_name = "Clothes_washing";
+            let appliance_map = [(
+                "Clothes_washing",
+                ApplianceUseProfile {
+                    util_unit: 0.0,
+                    use_data: Some(ApplianceUseData {
+                        use_metric: 0,
+                        clothes_use_data: Some(ClothesUseData {
+                            standard_load_kg: 6.0,
+                        }),
+                        _standard_use: None,
+                        duration: 0.0,
+                        duration_deviation: 0.0,
+                    }),
+                    standby: 0.0,
+                    gains_frac: 0.0,
+                    prof: vec![],
+                },
+            )]
+            .into();
+
+            // When appliance_kWhcycle_loadingfactor is called
+            let (kwh_cycle, loadingfactor) =
+                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
+                    .unwrap();
+
+            // Then it normalises to kWh/cycle correctly
+            assert_eq!(kwh_cycle, 0.5);
+            // And loading factor is still applied for laundry appliances
+            assert_eq!(loadingfactor, 1.2); // 6.0 / 5.0
+        }
+    }
 }
