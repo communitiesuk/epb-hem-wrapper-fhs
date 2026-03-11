@@ -21,7 +21,7 @@ use home_energy_model::hem_core::external_conditions::{
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     BuildingElementHeightWidthInput, CustomEnergySourceFactor, EnergySupplyDetails,
-    EnergySupplyType, FuelType, HeatingControlType, Input, MechanicalVentilationForProcessing,
+    EnergySupplyType, FuelType, Input, MechanicalVentilationForProcessing,
     MechanicalVentilationJsonValue, SmartApplianceBattery, TransparentBuildingElement,
     TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
@@ -1147,160 +1147,46 @@ fn weekend_heating_schedule(zone: &JsonValue) -> anyhow::Result<[Option<f64>; 48
 
 /// Space heating.
 fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    // 07:00-09:30 and then 16:30-22:00
-    let mut heating_fhs_weekday = Vec::with_capacity(48);
-    heating_fhs_weekday.extend(repeat_n(false, 14));
-    heating_fhs_weekday.extend(repeat_n(true, 5));
-    heating_fhs_weekday.extend(repeat_n(false, 14));
-    heating_fhs_weekday.extend(repeat_n(true, 11));
-    heating_fhs_weekday.extend(repeat_n(false, 4));
-    let heating_fhs_weekday: [bool; 48] = heating_fhs_weekday.try_into().unwrap();
+    // Fixed heating setback temperature
+    let temp_setback = 18.0;
 
-    // Start all-day HW schedule 1 hour before space heating
-    let mut _sched_allday_weekday = Vec::with_capacity(48);
-    _sched_allday_weekday.extend(repeat_n(false, 13));
-    _sched_allday_weekday.extend(repeat_n(true, 31));
-    _sched_allday_weekday.extend(repeat_n(false, 4));
-    let _sched_allday_weekday: [bool; 48] = _sched_allday_weekday.try_into().unwrap();
+    // Fixed advanced start
+    let advanced_start = 2.;
 
-    // 07:00-09:30 and then 18:30-22:00
-    let mut heating_nonlivingarea_fhs_weekday = Vec::with_capacity(48);
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 14));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true, 5));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 18));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(true, 7));
-    heating_nonlivingarea_fhs_weekday.extend(repeat_n(false, 4));
-    let heating_nonlivingarea_fhs_weekday: [bool; 48] =
-        heating_nonlivingarea_fhs_weekday.try_into().unwrap();
-
-    // 08:30 - 22:00
-    let mut heating_fhs_weekend = Vec::with_capacity(48);
-    heating_fhs_weekend.extend(repeat_n(false, 17));
-    heating_fhs_weekend.extend(repeat_n(true, 27));
-    heating_fhs_weekend.extend(repeat_n(false, 4));
-    let heating_fhs_weekend: [bool; 48] = heating_fhs_weekend.try_into().unwrap();
-
-    // Start all-day HW schedule 1 hour before space heating
-    let mut _hw_sched_allday_weekend = Vec::with_capacity(48);
-    _hw_sched_allday_weekend.extend(repeat_n(false, 15));
-    _hw_sched_allday_weekend.extend(repeat_n(true, 29));
-    _hw_sched_allday_weekend.extend(repeat_n(false, 4));
-    let _hw_sched_allday_weekend: [bool; 48] = _hw_sched_allday_weekend.try_into().unwrap();
-
-    // if there is no separate time control of the non-living rooms
-    // (i.e. control type 3 in SAP 10 terminology),
-    // the heating times are necessarily the same as the living room,
-    // so the evening heating period would also start at 16:30 on weekdays.
-    let control_type = match input.heating_control_type()? {
-        Some(HeatingControlType::SeparateTimeAndTemperatureControl) => ControlType::Type3,
-        Some(HeatingControlType::SeparateTemperatureControl) => ControlType::Type2,
-        None => {
-            bail!("missing HeatingControlType (SeparateTempControl or SeparateTimeAndTempControl)")
+    for zone_key in input.zone_keys()? {
+        input.set_init_temp_setpoint_for_zone(
+            &zone_key,
+            calc_zone_setpoint_fhs(&json!(input.specific_zone(&zone_key)?))?,
+        )?;
+        let space_heat_systems = input.space_heat_system_for_zone(&zone_key)?;
+        if space_heat_systems.is_empty() {
+            continue;
         }
-    };
-
-    for zone in input.zone_keys()? {
-        match (
-            input
-                .space_heat_control_for_zone(zone.as_str())?
-                .as_ref()
-                .map(|v| v.as_str()),
-            control_type,
-        ) {
-            (Some("livingroom"), _) => {
-                input.set_init_temp_setpoint_for_zone(zone.as_str(), LIVING_ROOM_SETPOINT_FHS)?;
-                let space_heat_system_references =
-                    input.space_heat_system_for_zone(zone.as_str())?;
-                for space_heat_system in space_heat_system_references {
-                    let ctrlname = format!("HeatingPattern_{space_heat_system}");
-                    input
-                        .set_control_string_for_space_heat_system(&space_heat_system, &ctrlname)?;
-                    let mut living_room_control = json!(
-                        {
-                            "type": "SetpointTimeControl",
-                            "start_day": 0,
-                            "time_series_step": 0.5,
-                            "schedule": {
-                                "main": [{"repeat": 53, "value": "week"}],
-                                "week": [{"repeat": 5, "value": "weekday"},
-                                        {"repeat": 2, "value": "weekend"}],
-                                "weekday": heating_fhs_weekday.iter().map(|on| on.then_some(LIVING_ROOM_SETPOINT_FHS)).collect::<Vec<Option<f64>>>(),
-                                "weekend": heating_fhs_weekend.iter().map(|on| on.then_some(LIVING_ROOM_SETPOINT_FHS)).collect::<Vec<Option<f64>>>(),
-                            }
-                        }
-                    );
-                    let control_json = living_room_control.as_object_mut().unwrap();
-                    if let Some(temp_setback) =
-                        input.temperature_setback_for_space_heat_system(&space_heat_system)?
-                    {
-                        control_json.insert("setpoint_min".to_string(), temp_setback.into());
-                    }
-                    if let Some(advanced_start) =
-                        input.advanced_start_for_space_heat_system(&space_heat_system)?
-                    {
-                        control_json.insert("advanced_start".to_string(), advanced_start.into());
-                    }
-                    input.add_control(&ctrlname, living_room_control)?;
-                }
-            }
-            (Some("restofdwelling"), control_type) => {
-                input.set_init_temp_setpoint_for_zone(
-                    zone.as_str(),
-                    REST_OF_DWELLING_SETPOINT_FHS,
-                )?;
-                let space_heat_system_references =
-                    input.space_heat_system_for_zone(zone.as_str())?;
-                for space_heat_system in space_heat_system_references {
-                    let ctrlname = format!("HeatingPattern_{space_heat_system}");
-                    input
-                        .set_control_string_for_space_heat_system(&space_heat_system, &ctrlname)?;
-                    let mut rest_of_dwelling_control = json!(
-                        {
-                            "type": "SetpointTimeControl",
-                            "start_day": 0,
-                            "time_series_step": 0.5,
-                            "schedule": {
-                                "main": [{"repeat": 53, "value": "week"}],
-                                "week": [{"repeat": 5, "value": "weekday"},
-                                        {"repeat": 2, "value": "weekend"}],
-                                "weekday": match control_type {
-                                    ControlType::Type2 => heating_fhs_weekday,
-                                    ControlType::Type3 => heating_nonlivingarea_fhs_weekday,
-                                }.iter().map(|on| on.then_some(REST_OF_DWELLING_SETPOINT_FHS)).collect::<Vec<Option<f64>>>(),
-                                "weekend": heating_fhs_weekend.iter().map(|on| on.then_some(REST_OF_DWELLING_SETPOINT_FHS)).collect::<Vec<Option<f64>>>(),
-                            }
-                        }
-                    );
-                    let control_json = rest_of_dwelling_control.as_object_mut().unwrap();
-                    if let Some(temp_setback) =
-                        input.temperature_setback_for_space_heat_system(&space_heat_system)?
-                    {
-                        control_json.insert("setpoint_min".to_string(), temp_setback.into());
-                    }
-                    if let Some(advanced_start) =
-                        input.advanced_start_for_space_heat_system(&space_heat_system)?
-                    {
-                        control_json.insert("advanced_start".to_string(), advanced_start.into());
-                    }
-                    input.add_control(&ctrlname, rest_of_dwelling_control)?;
-                }
-            }
-            (Some(unknown_space_heat_control_type), _) => bail!(
-                "Encountered unknown space heat control type: {unknown_space_heat_control_type}"
-            ),
-            (None, _) => bail!(
-                "FHS does not yet have a condition to deal with zone that doesn't have specified living room/rest of dwelling"
-            ),
+        for space_heat_system in space_heat_systems {
+            let ctrlname = format!("HeatingPattern_{space_heat_system}");
+            input.set_control_string_for_space_heat_system(&space_heat_system, &ctrlname)?;
+            input.add_control(&ctrlname, json!({
+                    "type": "SetpointTimeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "schedule": {
+                        "main": [{"repeat": 53, "value": "week"}],
+                        "week": [
+                            {"repeat": 5, "value": "weekday"},
+                            {"repeat": 2, "value": "weekend"},
+                        ],
+                        "weekday": weekday_heating_schedule(
+                            &json!(input.specific_zone(&zone_key)?), temp_setback, advanced_start, input.input.get("HeatingControlType").and_then(JsonValue::as_str).ok_or_else(|| anyhow!("HeatingControlType must be a valid string"))?
+                        )?.to_vec(),
+                        "weekend": weekend_heating_schedule(&json!(input.specific_zone(&zone_key)?))?.to_vec(),
+                    },
+                    "setpoint_min": temp_setback,
+                    "advanced_start": advanced_start,
+                }))?;
         }
     }
 
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ControlType {
-    Type2,
-    Type3,
 }
 
 /// water heating pattern - if system is not instantaneous, hold at setpoint
@@ -7007,6 +6893,155 @@ mod tests {
             expected_schedule.extend(vec![None; 4]); // unoccupied
 
             assert_eq!(schedule.to_vec(), expected_schedule);
+        }
+    }
+
+    mod create_heating_pattern {
+        use super::*;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "Control": {},
+                    "HeatingControlType": "SeparateTempControl",
+                    "HeatSourceWet": {"combi boiler": {"type": "Boiler"}},
+                    "SpaceHeatSystem": {"boiler": {"type": "WetDistribution"}},
+                    "Zone": {
+                        "whole_dwelling": {
+                            "livingroom_area": 25.0,
+                            "restofdwelling_area": 100.0,
+                            "SpaceHeatSystem": "boiler",
+                        }
+                    },
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_heating_pattern_for_combi_boiler(mut input: InputForProcessing) {
+            // Given a dwelling with a combi boiler heating system
+            // When create heating pattern is called
+            create_heating_pattern(&mut input).unwrap();
+
+            assert_eq!(
+                input.input["Control"]["HeatingPattern_boiler"],
+                json!({
+                    "type": "SetpointTimeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "schedule": {
+                        "main": [{"repeat": 53, "value": "week"}],
+                        "week": [{"repeat": 5, "value": "weekday"}, {"repeat": 2, "value": "weekend"}],
+                        "weekday": [
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            null,
+                            null,
+                            null,
+                            null,
+                        ],
+                        "weekend": [
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            20.2,
+                            null,
+                            null,
+                            null,
+                            null,
+                        ],
+                    },
+                    "setpoint_min": 18.0,
+                    "advanced_start": 2.0,
+                })
+            );
+            assert_eq!(
+                input.input["SpaceHeatSystem"]["boiler"]["Control"],
+                "HeatingPattern_boiler"
+            );
         }
     }
 }

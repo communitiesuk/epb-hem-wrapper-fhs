@@ -200,13 +200,13 @@ impl InputForProcessing {
         self.root_object("Zone")
     }
 
-    fn zone_node_mut(
+    pub fn zone_node_mut(
         &mut self,
     ) -> JsonAccessResult<&mut serde_json::Map<std::string::String, JsonValue>> {
         self.root_object_mut("Zone")
     }
 
-    fn specific_zone(
+    pub fn specific_zone(
         &self,
         zone_key: &str,
     ) -> JsonAccessResult<&serde_json::Map<std::string::String, JsonValue>> {
