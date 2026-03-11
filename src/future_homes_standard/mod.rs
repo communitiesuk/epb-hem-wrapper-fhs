@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+use tracing::error;
 
 mod fhs_appliance;
 mod fhs_compliance_response;
@@ -187,24 +188,19 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    // metric postprocessing here?
     // let filename_prefix = bitflags_match!(*flags, {
     //     FhsFlags::FHS => "FHS",
     //     FhsFlags::FHS_FEE => "FHS_FEE",
     //     FhsFlags::FHS_NOTIONAL => "FHS_notional",
     //     FhsFlags::FHS_FEE_NOTIONAL => "FHS_FEE_notional",
     //     _=> unreachable!()
-    // });
+    // }); // TODO review 1.0.0a4
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
     let filename = format!("{:?}_metrics", flags);
     let writer = output_writer.writer_for_location_key(filename.as_str(), "json")?;
-    // if let Err(e) = serde_json::to_writer_pretty(writer, input) {
-    //     error!("Could not write out pprocess file: {}", e);
-    // }
-    // TODO
-    // metrics_path = results_folder / f"{MODE_FLAGS[mode]}_metrics.json"
-    // with metrics_path.open("w") as metrics_output:
-    //     json.dump(metrics.model_dump(), metrics_output, sort_keys=True, indent=4)
+    if let Err(e) = serde_json::to_writer_pretty(writer, &metrics) {
+        error!("Could not write out metrics postprocess file: {}", e);
+    }
 
     if flags.intersects(FhsFlags::FHS | FhsFlags::FHS_NOTIONAL) {
         let notional = flags.contains(FhsFlags::FHS_NOTIONAL);

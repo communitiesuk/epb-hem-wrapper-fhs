@@ -1,8 +1,9 @@
 use crate::future_homes_standard::project_lookups::FuelOutput;
+use serde::Serialize;
 use std::sync::Arc;
 use strum_macros::Display;
 
-#[derive(Display, Copy, Clone, Debug, PartialEq)]
+#[derive(Display, Copy, Clone, Debug, PartialEq, Serialize)]
 enum Grade {
     A,
     B,
@@ -25,7 +26,7 @@ const EER_GRADE_CUTOFFS: [(Grade, f64); 7] = [
 const ENERGY_COST_DEFLATOR: f64 = 0.36;
 const PENCE_PER_POUND: f64 = 100.;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Metric {
     description: Arc<str>,
     units: Arc<str>,
