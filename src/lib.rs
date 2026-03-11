@@ -32,11 +32,12 @@ pub const FHS_VERSION: &str = "0.27";
 pub const FHS_VERSION_DATE: &str = "2025-06-03";
 
 bitflags! {
+    #[derive(Debug)]
     pub struct FhsFlags: u32 {
-        const FHS_ACTUAL = 0b1;
-        const FHS_ACTUAL_FEE = 0b10;
+        const FHS = 0b1;
+        const FHS_FEE = 0b10;
         const FHS_NOTIONAL = 0b100;
-        const FHS_NOTIONAL_FEE = 0b1000;
+        const FHS_FEE_NOTIONAL = 0b1000;
         const FHS_COMPLIANCE = 0b10000;
     }
 }

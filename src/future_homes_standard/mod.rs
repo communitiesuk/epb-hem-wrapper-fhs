@@ -6,10 +6,12 @@ use crate::future_homes_standard::input::InputForProcessing;
 use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
 
-use future_homes_standard::{apply_fhs_postprocessing};
+use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metric};
+use crate::future_homes_standard::project_lookups::by_fuel;
+use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
-use home_energy_model::input::CustomEnergySourceFactor;
-use home_energy_model::output::{OutputCore, OutputSummary};
+use home_energy_model::input::{CustomEnergySourceFactor, Input};
+use home_energy_model::output::{Output, OutputCore, OutputSummary};
 use home_energy_model::output_writer::OutputWriter;
 use home_energy_model::CalculationResult;
 use home_energy_model::HemResponse;
@@ -34,7 +36,7 @@ pub(crate) mod future_homes_standard_fee;
 pub(crate) mod future_homes_standard_notional;
 pub(crate) mod input;
 pub(crate) mod metrics;
-mod project_lookups;
+pub(crate) mod project_lookups;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsSingleCalcWrapper;
@@ -132,10 +134,10 @@ impl HemWrapper for FhsComplianceWrapper {
 static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
     LazyLock::new(|| {
         [
-            (CalculationKey::Fhs, FhsFlags::FHS_ACTUAL),
-            (CalculationKey::FhsFee, FhsFlags::FHS_ACTUAL_FEE),
+            (CalculationKey::Fhs, FhsFlags::FHS),
+            (CalculationKey::FhsFee, FhsFlags::FHS_FEE),
             (CalculationKey::FhsNotional, FhsFlags::FHS_NOTIONAL),
-            (CalculationKey::FhsNotionalFee, FhsFlags::FHS_NOTIONAL_FEE),
+            (CalculationKey::FhsNotionalFee, FhsFlags::FHS_FEE_NOTIONAL),
         ]
     });
 
@@ -145,7 +147,7 @@ fn do_fhs_preprocessing(
     flags: &FhsFlags,
 ) -> anyhow::Result<()> {
     // Apply required preprocessing steps, if any
-    if flags.contains(FhsFlags::FHS_NOTIONAL_FEE) {
+    if flags.contains(FhsFlags::FHS_FEE_NOTIONAL) {
         apply_fhs_notional_preprocessing(input_for_processing, custom_energy_supply_factors, true)?;
     }
     if flags.contains(FhsFlags::FHS_NOTIONAL) {
@@ -155,11 +157,20 @@ fn do_fhs_preprocessing(
             false,
         )?;
     }
-    if flags.intersects(FhsFlags::FHS_ACTUAL_FEE | FhsFlags::FHS_NOTIONAL_FEE) {
+    if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         apply_fhs_fee_preprocessing(input_for_processing)?;
     }
 
     Ok(())
+}
+
+fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metric> {
+    let energy_by_fuel = by_fuel(input, &core_response.summary)?;
+
+    Ok(energy_efficiency_rating(
+        core_response.summary.total_floor_area,
+        &energy_by_fuel,
+    ))
 }
 
 fn do_fhs_postprocessing(
@@ -176,7 +187,26 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    if flags.intersects(FhsFlags::FHS_ACTUAL | FhsFlags::FHS_NOTIONAL) {
+    // metric postprocessing here?
+    // let filename_prefix = bitflags_match!(*flags, {
+    //     FhsFlags::FHS => "FHS",
+    //     FhsFlags::FHS_FEE => "FHS_FEE",
+    //     FhsFlags::FHS_NOTIONAL => "FHS_notional",
+    //     FhsFlags::FHS_FEE_NOTIONAL => "FHS_FEE_notional",
+    //     _=> unreachable!()
+    // });
+    let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
+    let filename = format!("{:?}_metrics", flags);
+    let writer = output_writer.writer_for_location_key(filename.as_str(), "json")?;
+    // if let Err(e) = serde_json::to_writer_pretty(writer, input) {
+    //     error!("Could not write out pprocess file: {}", e);
+    // }
+    // TODO
+    // metrics_path = results_folder / f"{MODE_FLAGS[mode]}_metrics.json"
+    // with metrics_path.open("w") as metrics_output:
+    //     json.dump(metrics.model_dump(), metrics_output, sort_keys=True, indent=4)
+
+    if flags.intersects(FhsFlags::FHS | FhsFlags::FHS_NOTIONAL) {
         let notional = flags.contains(FhsFlags::FHS_NOTIONAL);
         apply_fhs_postprocessing(
             input,
@@ -187,7 +217,7 @@ fn do_fhs_postprocessing(
             timestep_array,
             notional,
         )?;
-    } else if flags.intersects(FhsFlags::FHS_ACTUAL_FEE | FhsFlags::FHS_NOTIONAL_FEE) {
+    } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         let OutputSummary {
             space_heat_demand_total,
             space_cool_demand_total,
