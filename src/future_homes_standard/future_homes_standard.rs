@@ -89,6 +89,34 @@ pub(crate) fn initial_preprocessing(
     Ok(custom_energy_supply_factors)
 }
 
+/// Apply assumptions and pre-processing steps for the Future Homes Standard
+pub(crate) fn final_preprocessing(
+    input: &mut InputForProcessing,
+) -> anyhow::Result<&InputForProcessing> {
+    // TODO: implement the rest of this method 1.0.0a4
+    create_water_heating_pattern(input)?;
+
+    for (_, hw_source) in input.hot_water_source_mut()? {
+        let hw_source = hw_source
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("Hot water source is not an object"))?;
+
+        let hw_source_type = hw_source
+            .get("type")
+            .ok_or_else(|| anyhow!("Type not found on hot water source"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("Type field on hot water source is not a string"))?;
+
+        if hw_source_type == "StorageTank" || hw_source_type == "SmartHotWaterTank" {
+            hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
+        }
+    }
+
+    // Remove project_dict items that are not permitted by the core schema
+    remove_fhs_only_inputs(input)?;
+    Ok(input)
+}
+
 pub(crate) struct SimSettings {
     heat_balance: bool,
     detailed_output_heating_cooling: bool,

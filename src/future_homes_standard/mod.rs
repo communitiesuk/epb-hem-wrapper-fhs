@@ -6,6 +6,7 @@ use crate::future_homes_standard::input::InputForProcessing;
 use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
 
+use crate::future_homes_standard::future_homes_standard::final_preprocessing;
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metric};
 use crate::future_homes_standard::project_lookups::by_fuel;
 use future_homes_standard::apply_fhs_postprocessing;
@@ -161,7 +162,7 @@ fn do_fhs_preprocessing(
     if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         apply_fhs_fee_preprocessing(input_for_processing)?;
     }
-
+    final_preprocessing(input_for_processing)?;
     Ok(())
 }
 
