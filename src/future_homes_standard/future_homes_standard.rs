@@ -963,6 +963,41 @@ struct DryMetabolicGainsRow {
     weekend: f64,
 }
 
+fn habitable_building_height(input: &InputForProcessing) -> anyhow::Result<f64> {
+    input.habitable_building_height().map_err(Into::into)
+}
+
+fn combined_schedule_setpoint(
+    zone: &JsonValue,
+    temp_setback: f64,
+    heating_livingroom: bool,
+    heating_restofdwelling: bool,
+) -> anyhow::Result<f64> {
+    let livingroom_area = zone
+        .get("livingroom_area")
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| anyhow!("Living room area not found in zone data"))?;
+    let restofdwelling_area = zone
+        .get("restofdwelling_area")
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| anyhow!("Rest of dwelling area not found in zone data"))?;
+    let livingroom_temp = if heating_livingroom {
+        LIVING_ROOM_SETPOINT_FHS
+    } else {
+        temp_setback
+    };
+    let restofdwelling_temp = if heating_restofdwelling {
+        REST_OF_DWELLING_SETPOINT_FHS
+    } else {
+        temp_setback
+    };
+
+    Ok(
+        (livingroom_temp * livingroom_area + restofdwelling_temp * restofdwelling_area)
+            / (livingroom_area + restofdwelling_area),
+    )
+}
+
 /// Space heating.
 fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 07:00-09:30 and then 16:30-22:00
@@ -4182,7 +4217,7 @@ fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Resu
     let building_length = input.building_length()?;
     let building_width = input.building_width()?;
     // Calculate habitable building height
-    let habitable_building_height = input.habitable_building_height()?;
+    let habitable_building_height = habitable_building_height(input)?;
     // Pipe calculations
     let lateral_pipe_factor = 0.0625;
     let vertical_pipe_factor = 0.038;
@@ -4938,6 +4973,38 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use rstest::*;
+
+    #[fixture]
+    fn whole_dwelling_zone() -> JsonValue {
+        json!({
+            "livingroom_area": 25.0,
+            "restofdwelling_area": 100.0,
+            "volume": 250.0,
+            "Lighting": {"bulbs": [{"count": 10, "power": 3, "efficacy": 150}]},
+            "BuildingElement": {
+                "roof": {
+                    "type": "BuildingElementOpaque",
+                    "is_unheated_pitched_roof": true,
+                    "colour": "Intermediate",
+                    "thermal_resistance_construction": 0.7,
+                    "areal_heat_capacity": "Very light",
+                    "mass_distribution_class": "IE: Mass divided over internal and external side",
+                    "pitch": 45,
+                    "orientation360": 90,
+                    "base_height": 2.5,
+                    "height": 2.5,
+                    "width": 10,
+                    "area": 20.0,
+                }
+            },
+            "ThermalBridging": {},
+        })
+    }
+
+    #[fixture]
+    fn temp_setback() -> f64 {
+        18.0
+    }
 
     #[fixture]
     fn input() -> InputForProcessing {
@@ -6524,6 +6591,69 @@ mod tests {
             assert_eq!(kwh_cycle, 0.5);
             // And loading factor is still applied for laundry appliances
             assert_eq!(loadingfactor, 1.2); // 6.0 / 5.0
+        }
+    }
+
+    mod combined_schedule_setpoint {
+        use super::*;
+
+        #[rstest]
+        fn test_unoccupied(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let heating_livingroom = false;
+            let heating_restofdwelling = false;
+            let setpoint = combined_schedule_setpoint(
+                &whole_dwelling_zone,
+                temp_setback,
+                heating_livingroom,
+                heating_restofdwelling,
+            )
+            .unwrap();
+            let expected_setpoint = 18.; // (18 * 25 + 18 * 100) / 125
+            assert_eq!(setpoint, expected_setpoint);
+        }
+
+        #[rstest]
+        fn test_livingroom_only(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let heating_livingroom = true;
+            let heating_restofdwelling = false;
+            let setpoint = combined_schedule_setpoint(
+                &whole_dwelling_zone,
+                temp_setback,
+                heating_livingroom,
+                heating_restofdwelling,
+            )
+            .unwrap();
+            let expected_setpoint = 18.6; // (21 * 25 + 18 * 100) / 125
+            assert_eq!(setpoint, expected_setpoint);
+        }
+
+        #[rstest]
+        fn test_restofdwelling_only(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let heating_livingroom = false;
+            let heating_restofdwelling = true;
+            let setpoint = combined_schedule_setpoint(
+                &whole_dwelling_zone,
+                temp_setback,
+                heating_livingroom,
+                heating_restofdwelling,
+            )
+            .unwrap();
+            let expected_setpoint = 19.6; // (18 * 25 + 20 * 100) / 125
+            assert_eq!(setpoint, expected_setpoint);
+        }
+        #[rstest]
+        fn test_both_occupied(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let heating_livingroom = true;
+            let heating_restofdwelling = true;
+            let setpoint = combined_schedule_setpoint(
+                &whole_dwelling_zone,
+                temp_setback,
+                heating_livingroom,
+                heating_restofdwelling,
+            )
+            .unwrap();
+            let expected_setpoint = 20.2; // (21 * 25 + 20 * 100) / 125
+            assert_eq!(setpoint, expected_setpoint);
         }
     }
 }
