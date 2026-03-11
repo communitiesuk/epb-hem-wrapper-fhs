@@ -27,7 +27,7 @@ use home_energy_model::input::{
 };
 use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use smartstring::alias::String;
@@ -996,6 +996,96 @@ fn combined_schedule_setpoint(
         (livingroom_temp * livingroom_area + restofdwelling_temp * restofdwelling_area)
             / (livingroom_area + restofdwelling_area),
     )
+}
+
+fn separate_time_and_temp_control_weekday_heating_schedule(
+    zone: &JsonValue,
+    temp_setback: f64,
+    advanced_start: f64,
+) -> anyhow::Result<Vec<Option<f64>>> {
+    if advanced_start > 7. {
+        bail!("advanced_start exceeds 7 hours and is therefore incompatible with heating schedule starting at 07:00");
+    }
+    // Each hour of advanced start corresponds to 2 30 min timesteps
+    let advanced_start_offset = (advanced_start * 2.) as usize;
+
+    // 07:00-09:30 and then 16:30-22:00
+    let mut heating_livingroom_weekday = Vec::with_capacity(48);
+    heating_livingroom_weekday.extend(repeat_n(false, 14));
+    heating_livingroom_weekday.extend(repeat_n(true, 5));
+    heating_livingroom_weekday.extend(repeat_n(false, 14));
+    heating_livingroom_weekday.extend(repeat_n(true, 11));
+    heating_livingroom_weekday.extend(repeat_n(false, 4));
+    let heating_livingroom_weekday: [bool; 48] = heating_livingroom_weekday.try_into().unwrap();
+
+    // Adjusted livingroom schedule taking into account advanced start
+    let mut heating_livingroom_weekday_with_advanced_start = Vec::with_capacity(48);
+    heating_livingroom_weekday_with_advanced_start
+        .extend(repeat_n(false, 14 - advanced_start_offset));
+    heating_livingroom_weekday_with_advanced_start
+        .extend(repeat_n(true, 5 + advanced_start_offset));
+    heating_livingroom_weekday_with_advanced_start
+        .extend(repeat_n(false, 14 - advanced_start_offset));
+    heating_livingroom_weekday_with_advanced_start
+        .extend(repeat_n(true, 11 + advanced_start_offset));
+    heating_livingroom_weekday_with_advanced_start.extend(repeat_n(false, 4));
+    let heating_livingroom_weekday_with_advanced_start: [bool; 48] =
+        heating_livingroom_weekday_with_advanced_start
+            .try_into()
+            .unwrap();
+
+    // 07:00-09:30 and then 18:30-22:00
+    let mut heating_restofdwelling_weekday = Vec::with_capacity(48);
+    heating_restofdwelling_weekday.extend(repeat_n(false, 14));
+    heating_restofdwelling_weekday.extend(repeat_n(true, 5));
+    heating_restofdwelling_weekday.extend(repeat_n(false, 18));
+    heating_restofdwelling_weekday.extend(repeat_n(true, 7));
+    heating_restofdwelling_weekday.extend(repeat_n(false, 4));
+    let heating_restofdwelling_weekday: [bool; 48] =
+        heating_restofdwelling_weekday.try_into().unwrap();
+
+    // Adjusted restofdwelling schedule taking into account advanced start
+    let mut heating_restofdwelling_weekday_with_advanced_start = Vec::with_capacity(48);
+    heating_restofdwelling_weekday_with_advanced_start
+        .extend(repeat_n(false, 14 - advanced_start_offset));
+    heating_restofdwelling_weekday_with_advanced_start
+        .extend(repeat_n(true, 5 + advanced_start_offset));
+    heating_restofdwelling_weekday_with_advanced_start
+        .extend(repeat_n(false, 18 - advanced_start_offset));
+    heating_restofdwelling_weekday_with_advanced_start
+        .extend(repeat_n(true, 7 + advanced_start_offset));
+    heating_restofdwelling_weekday_with_advanced_start.extend(repeat_n(false, 4));
+    let heating_restofdwelling_weekday_with_advanced_start: [bool; 48] =
+        heating_restofdwelling_weekday_with_advanced_start
+            .try_into()
+            .unwrap();
+
+    Ok(izip!(
+        heating_livingroom_weekday_with_advanced_start,
+        heating_restofdwelling_weekday_with_advanced_start,
+        heating_livingroom_weekday,
+        heating_restofdwelling_weekday
+    )
+    .map(
+        |(
+            heating_livingroom_with_advanced_start,
+            heating_restofdwelling_with_advanced_start,
+            heating_livingroom,
+            heating_restofdwelling,
+        )| {
+            (heating_livingroom || heating_restofdwelling)
+                .then(|| {
+                    combined_schedule_setpoint(
+                        zone,
+                        temp_setback,
+                        heating_livingroom_with_advanced_start,
+                        heating_restofdwelling_with_advanced_start,
+                    )
+                })
+                .transpose()
+        },
+    )
+    .collect::<Result<_, _>>()?)
 }
 
 /// Space heating.
@@ -6654,6 +6744,110 @@ mod tests {
             .unwrap();
             let expected_setpoint = 20.2; // (21 * 25 + 20 * 100) / 125
             assert_eq!(setpoint, expected_setpoint);
+        }
+    }
+
+    mod separate_time_and_temp_control_weekday_heating_schedule {
+        use super::*;
+
+        #[rstest]
+        fn test_unsupported_large_advanced_start(
+            whole_dwelling_zone: JsonValue,
+            temp_setback: f64,
+        ) {
+            let advanced_start = 8.;
+            let result = separate_time_and_temp_control_weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+            );
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .starts_with("advanced_start exceeds 7 hours"),);
+        }
+
+        #[rstest]
+        fn test_no_advanced_start(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 0.;
+            let schedule = separate_time_and_temp_control_weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+            )
+            .unwrap();
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(18.6); 4]); // livingroom only
+            expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule, expected_schedule);
+        }
+
+        #[rstest]
+        fn test_thirty_min_advanced_start(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 0.5;
+            let schedule = separate_time_and_temp_control_weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+            )
+            .unwrap();
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(18.6); 3]); // livingroom only
+            expected_schedule.extend(vec![Some(20.2)]); // livingroom only, plus restofdwelling advanced start
+            expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule, expected_schedule);
+        }
+
+        #[rstest]
+        fn test_one_hour_advanced_start(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 1.;
+            let schedule = separate_time_and_temp_control_weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+            )
+            .unwrap();
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(18.6); 2]); // livingroom only
+            expected_schedule.extend(vec![Some(20.2); 2]); // livingroom only, plus restofdwelling advanced start
+            expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule, expected_schedule);
+        }
+
+        #[rstest]
+        fn test_two_hour_advanced_start(whole_dwelling_zone: JsonValue, temp_setback: f64) {
+            let advanced_start = 2.;
+            let schedule = separate_time_and_temp_control_weekday_heating_schedule(
+                &whole_dwelling_zone,
+                temp_setback,
+                advanced_start,
+            )
+            .unwrap();
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 5]); // both occupied
+            expected_schedule.extend(vec![None; 14]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 4]); // livingroom only, plus restofdwelling advanced start
+            expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
+
+            assert_eq!(schedule, expected_schedule);
         }
     }
 }
