@@ -1133,6 +1133,18 @@ fn weekday_heating_schedule(
     }
 }
 
+fn weekend_heating_schedule(zone: &JsonValue) -> anyhow::Result<[Option<f64>; 48]> {
+    // 08:30 - 22:00
+    let mut heating_weekend = Vec::with_capacity(48);
+    heating_weekend.extend(repeat_n(false, 17));
+    heating_weekend.extend(repeat_n(true, 27));
+    heating_weekend.extend(repeat_n(false, 4));
+    let heating_weekend: [bool; 48] = heating_weekend.try_into().unwrap();
+
+    let setpoint = calc_zone_setpoint_fhs(zone)?;
+    Ok(heating_weekend.map(|is_heating| is_heating.then_some(setpoint)))
+}
+
 /// Space heating.
 fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 07:00-09:30 and then 16:30-22:00
@@ -6976,6 +6988,23 @@ mod tests {
             expected_schedule.extend(vec![Some(20.2); 2]); // livingroom only, plus restofdwelling advanced start
             expected_schedule.extend(vec![Some(20.2); 7]); // both occupied
             expected_schedule.extend(vec![None; 4]);
+
+            assert_eq!(schedule.to_vec(), expected_schedule);
+        }
+    }
+
+    mod weekend_heating_schedule {
+        use super::*;
+
+        // NB. this test is written in the Python, erroneously, as "test_unknown_heat_control_type"
+        #[rstest]
+        fn test_schedule(whole_dwelling_zone: JsonValue) {
+            let schedule = weekend_heating_schedule(&whole_dwelling_zone).unwrap();
+
+            let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
+            expected_schedule.extend(vec![None; 17]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 27]); // both occupied
+            expected_schedule.extend(vec![None; 4]); // unoccupied
 
             assert_eq!(schedule.to_vec(), expected_schedule);
         }
