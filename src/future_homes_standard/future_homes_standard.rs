@@ -10,7 +10,6 @@ use crate::future_homes_standard::input::{
 };
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
-use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
