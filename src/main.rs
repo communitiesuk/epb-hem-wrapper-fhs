@@ -1,6 +1,8 @@
 use clap::{Args, Parser};
-use home_energy_model::output::FileOutput;
-use home_energy_model::read_weather_file::{weather_data_to_vec, ExternalConditions};
+use home_energy_model::output_writer::FileOutputWriter;
+use home_energy_model::read_weather_file::{
+    epw_weather_data_to_external_conditions, ExternalConditions,
+};
 use home_energy_model_wrapper_fhs::run_wrappers;
 use home_energy_model_wrapper_fhs::FhsFlags;
 use std::ffi::OsStr;
@@ -58,22 +60,12 @@ struct WrapperChoice {
         long = "future-homes-standard-notA",
         help = "Use Future Homes Standard calculation assumptions for notional option A"
     )]
-    future_homes_standard_not_a: bool,
-    #[arg(
-        long = "future-homes-standard-notB",
-        help = "Use Future Homes Standard calculation assumptions for notional option B"
-    )]
-    future_homes_standard_not_b: bool,
+    future_homes_standard_notional: bool,
     #[arg(
         long = "future-homes-standard-FEE-notA",
         help = "Use Future Homes Standard Fabric Energy Efficiency assumptions for notional option A"
     )]
-    future_homes_standard_fee_not_a: bool,
-    #[arg(
-        long = "future-homes-standard-FEE-notB",
-        help = "Use Future Homes Standard Fabric Energy Efficiency assumptions for notional option B"
-    )]
-    future_homes_standard_fee_not_b: bool,
+    future_homes_standard_fee_notional: bool,
     #[arg(
         long = "fhs-compliance",
         help = "Run an FHS compliance calculation. This overrides all other FHS related flags"
@@ -124,7 +116,7 @@ fn main() -> anyhow::Result<()> {
     let input_file_name = input_file_stem.file_name().unwrap().to_str().unwrap();
     // following is rough initial mapping given existing fhs options
     let output_type = output_type_from_wrapper_choice(&args.wrapper_choice);
-    let file_output = FileOutput::new(
+    let file_output = FileOutputWriter::new(
         output_path,
         format!("{input_file_name}__{output_type}__{{}}.{{}}"),
     );
@@ -134,7 +126,8 @@ fn main() -> anyhow::Result<()> {
             epw_file: Some(ref file),
             cibse_weather_file: None,
         } => {
-            let external_conditions_data = weather_data_to_vec(File::open(file)?);
+            let external_conditions_data =
+                epw_weather_data_to_external_conditions(File::open(file)?);
             match external_conditions_data {
                 Ok(data) => Some(data),
                 Err(_) => panic!("Could not parse the weather file!"),
@@ -175,14 +168,10 @@ fn output_type_from_wrapper_choice(wrapper_choice: &WrapperChoice) -> &str {
         "FHS"
     } else if wrapper_choice.future_homes_standard_fee {
         "FHS_FEE"
-    } else if wrapper_choice.future_homes_standard_not_a {
-        "FHS_notA"
-    } else if wrapper_choice.future_homes_standard_not_b {
-        "FHS_notB"
-    } else if wrapper_choice.future_homes_standard_fee_not_a {
-        "FHS_FEE_notA"
-    } else if wrapper_choice.future_homes_standard_fee_not_b {
-        "FHS_FEE_notB"
+    } else if wrapper_choice.future_homes_standard_notional {
+        "FHS_notional"
+    } else if wrapper_choice.future_homes_standard_fee_notional {
+        "FHS_FEE_notional"
     } else {
         "compliance"
     }
@@ -194,22 +183,16 @@ impl From<&WrappersArgs> for FhsFlags {
         {
             let fhs = args.wrapper_choice;
             if fhs.future_homes_standard {
-                flags.insert(FhsFlags::FHS_ASSUMPTIONS);
+                flags.insert(FhsFlags::FHS);
             }
             if fhs.future_homes_standard_fee {
-                flags.insert(FhsFlags::FHS_FEE_ASSUMPTIONS);
+                flags.insert(FhsFlags::FHS_FEE);
             }
-            if fhs.future_homes_standard_not_a {
-                flags.insert(FhsFlags::FHS_NOT_A_ASSUMPTIONS);
+            if fhs.future_homes_standard_notional {
+                flags.insert(FhsFlags::FHS_NOTIONAL);
             }
-            if fhs.future_homes_standard_not_b {
-                flags.insert(FhsFlags::FHS_NOT_B_ASSUMPTIONS);
-            }
-            if fhs.future_homes_standard_fee_not_a {
-                flags.insert(FhsFlags::FHS_FEE_NOT_A_ASSUMPTIONS)
-            }
-            if fhs.future_homes_standard_fee_not_b {
-                flags.insert(FhsFlags::FHS_FEE_NOT_B_ASSUMPTIONS)
+            if fhs.future_homes_standard_fee_notional {
+                flags.insert(FhsFlags::FHS_FEE_NOTIONAL)
             }
             if fhs.fhs_compliance {
                 flags.insert(FhsFlags::FHS_COMPLIANCE);
