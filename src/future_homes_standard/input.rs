@@ -1674,7 +1674,8 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub fn all_building_elements(
+    pub fn all_building_elements_deprecated(
+        // TODO remove once all_building_elements below is used in all places instead
         &self,
     ) -> anyhow::Result<IndexMap<smartstring::alias::String, BuildingElement>> {
         self.zone_node()?
@@ -1687,6 +1688,17 @@ impl InputForProcessing {
                     serde_json::from_value(el.to_owned())?,
                 ))
             })
+            .collect()
+    }
+
+    pub fn all_building_elements(
+        &self,
+    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, &JsonValue>> {
+        self.zone_node()?
+            .values()
+            .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
+            .flatten()
+            .map(|(key, el)| Ok((smartstring::alias::String::from(key), el)))
             .collect()
     }
 

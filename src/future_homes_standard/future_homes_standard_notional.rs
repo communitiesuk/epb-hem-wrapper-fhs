@@ -315,7 +315,7 @@ fn split_glazing_and_walls(
     let mut windows_rooflight: IndexMap<String, BuildingElement> = Default::default();
     let mut walls_roofs: IndexMap<String, BuildingElement> = Default::default();
 
-    let building_elements = input.all_building_elements()?;
+    let building_elements = input.all_building_elements_deprecated()?;
 
     for (name, building_element) in building_elements {
         match building_element {
@@ -422,7 +422,7 @@ fn calc_max_glazing_area_fraction(
     let mut total_rooflight_area = 0.0;
     let mut sum_uval_times_area = 0.0;
 
-    for element in input.all_building_elements()?.values() {
+    for element in input.all_building_elements_deprecated()?.values() {
         if pitch_class(element.pitch()) != HeatFlowDirection::Upwards {
             continue;
         }
@@ -463,7 +463,7 @@ fn edit_glazing_for_glazing_limit(
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
     let total_glazing_area: f64 = input
-        .all_building_elements()?
+        .all_building_elements_deprecated()?
         .values()
         .filter_map(|el| match el {
             BuildingElement::Transparent { area_input, .. } => Some(area_input.area()),

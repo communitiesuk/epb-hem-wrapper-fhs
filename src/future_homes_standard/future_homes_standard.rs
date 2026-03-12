@@ -19,9 +19,8 @@ use home_energy_model::hem_core::external_conditions::{
 };
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    BuildingElementHeightWidthInput, CustomEnergySourceFactor, EnergySupplyDetails,
-    EnergySupplyType, FuelType, Input, TransparentBuildingElement,
-    TransparentBuildingElementJsonValue, WaterHeatingEventType,
+    CustomEnergySourceFactor, EnergySupplyDetails, EnergySupplyType, FuelType, Input,
+    TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
 use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
@@ -4077,25 +4076,37 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
     let data: Vec<Vec<f64>> = input
         .all_building_elements()?
         .values()
-        .filter_map(|el| match el {
-            home_energy_model::input::BuildingElement::Transparent {
-                orientation360: orientation,
-                g_value,
-                frame_area_fraction,
-                base_height,
-                area_input,
-                shading,
-                ..
-            } => {
-                let ff = *frame_area_fraction;
-                let g_val = *g_value;
-                let BuildingElementHeightWidthInput { width, height } = *area_input;
-                let base_height = *base_height;
-                let orientation = *orientation;
-                let w_area = area_input.area();
+        .filter_map(|el| {
+            if el.get("type").and_then(|el_type| el_type.as_str())
+                == Some("BuildingElementTransparent")
+            {
+                let ff = el.get("frame_area_fraction")?.as_f64()?;
+                let g_val = el.get("g_value")?.as_f64()?;
+                let base_height = el.get("base_height")?.as_f64()?;
+                let orientation = el.get("orientation")?.as_f64()?;
+                let width = el.get("width")?.as_f64()?;
+                let height = el.get("height")?.as_f64()?;
+                let w_area = width * height;
+
+                let shading: Vec<WindowShadingObject> = if let Ok(shading) =
+                    serde_json::from_value(json!(el.get("shading").as_ref()))
+                {
+                    shading
+                } else {
+                    return Some(Err(anyhow!(
+                        "Unable to convert JSON into window shading objects."
+                    )));
+                };
+
                 // retrieve half-hourly shading factor
-                let direct_result =
-                    shading_factor(input, base_height, height, width, orientation, shading);
+                let direct_result = shading_factor(
+                    input,
+                    base_height,
+                    height,
+                    width,
+                    Orientation360::from(orientation),
+                    &shading,
+                );
 
                 let area = 0.9 * w_area * (1. - ff) * g_val;
 
@@ -4103,8 +4114,9 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
                     Ok(direct) => Some(Ok(direct.iter().map(|factor| factor * area).collect())),
                     Err(err) => Some(Err(err)),
                 }
+            } else {
+                None
             }
-            _ => None,
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
