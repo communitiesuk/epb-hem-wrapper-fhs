@@ -1001,6 +1001,84 @@ fn habitable_building_height(input: &InputForProcessing) -> anyhow::Result<f64> 
     input.habitable_building_height().map_err(Into::into)
 }
 
+/// A pipework pre-processor module that calculates 22mm main distribution and 15mm heating circuit
+/// lengths for modern buildings with internal shafts and two-pipe systems using BS 15316-3 Annex B
+/// methodology.
+///
+///    Equations used for the installation scenario were defaulted to
+///    "Shafts inside building (two-pipe)"
+///
+///    Args:
+///        input: The main project dictionary where results are stored.
+///
+///    Effects:
+///        Modifies the project_dict in-place by adding space heating distribution pipework.
+fn create_space_heat_distribution(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let building_length = input.building_length()?;
+    let building_width = input.building_width()?;
+    let number_of_storeys = input.storeys_in_dwelling()?;
+    let habitable_building_height = habitable_building_height(input)?;
+    // Section V: 22 mm Mains
+    // standard allowance per floor area for manifold take-offs and routing.
+    let allowance_per_floor_area = 0.0325; //  m/m²
+                                           // service allowance for connection spurs and access risers
+    let service_allowance = 6.;
+    let large_pipe_length = 2. * building_length
+        + allowance_per_floor_area * building_length * building_width
+        + service_allowance;
+    // Section LS: 15 mm vertical shaft runs
+    // pipe per volume of shaft, averaging out typical vertical layouts.
+    let length_per_shaft_volume = 0.025; // m/m³
+    let vertical_shaft_runs =
+        length_per_shaft_volume * building_length * building_width * habitable_building_height;
+    // Section LA: 15 mm lateral floor runs
+    // extra return run needed in two-pipe loops versus the single loop in one-pipe systems.
+    let return_run_factor = 0.55; // m/m²
+    let lateral_floor_runs =
+        return_run_factor * building_length * building_width * number_of_storeys as f64;
+    let small_pipe_length = vertical_shaft_runs + lateral_floor_runs;
+
+    for space_heat_system in input.space_heat_systems_mut()?.values_mut() {
+        if space_heat_system
+            .get("type")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|type_str| type_str != "WetDistribution")
+        {
+            continue;
+        }
+        space_heat_system
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("Failed to get space heat system as object"))?
+            .insert(
+                "pipework".into(),
+                json!([
+                    {
+                        "insulation_thermal_conductivity": 0.035,
+                        "insulation_thickness_mm": 0,
+                        "external_diameter_mm": 15,
+                        "internal_diameter_mm": 13,
+                        "length": (small_pipe_length * 100.0).round() / 100.0,
+                        "location": "internal",
+                        "pipe_contents": "water",
+                        "surface_reflectivity": false,
+                    },
+                    {
+                        "insulation_thermal_conductivity": 0.035,
+                        "insulation_thickness_mm": 0,
+                        "external_diameter_mm": 22,
+                        "internal_diameter_mm": 20,
+                        "length": (large_pipe_length * 100.0).round() / 100.0,
+                        "location": "internal",
+                        "pipe_contents": "water",
+                        "surface_reflectivity": false,
+                    },
+                ]),
+            );
+    }
+
+    Ok(())
+}
+
 fn separate_temp_control_weekday_heating_schedule(
     zone: &JsonValue,
 ) -> anyhow::Result<[Option<f64>; 48]> {
@@ -7232,6 +7310,393 @@ mod tests {
                 input.input["HeatSourceWet"]["heat_battery"]["ControlCharge"],
                 "HeatBattery_Control"
             );
+        }
+    }
+
+    mod create_space_heat_distribution {
+        use super::*;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    // Based on dwelling DESN-H-Det-01
+                    "NumberOfTappedRooms": 4,
+                    "General": {"storeys_in_dwelling": 2},
+                    "BuildingLength": 8.004,
+                    "BuildingWidth": 6.704,
+                    "Zone": {
+                        "whole dwelling": {
+                            "BuildingElement": {
+                                // Three valid walls
+                                "wall_1": {
+                                    "type": "BuildingElementOpaque",
+                                    "base_height": 0,
+                                    "height": 2.68,
+                                },
+                                "wall_2": {
+                                    "type": "BuildingElementOpaque",
+                                    "base_height": 0,
+                                    "height": 2.68,
+                                },
+                                "wall_3": {
+                                    "type": "BuildingElementOpaque",
+                                    "base_height": 2.68,
+                                    "height": 2.68,
+                                },
+                                // One unheated roof (should be ignored)
+                                "roof": {
+                                    "type": "BuildingElementOpaque",
+                                    "is_unheated_pitched_roof": true,
+                                    "base_height": 2.6,
+                                    "height": 3,
+                                },
+                            }
+                        }
+                    },
+                    "SpaceHeatSystem": {
+                        "zone_1": {
+                            "Control": "HeatingPattern_LivingRoom",
+                            "EnergySupply": "mains elec",
+                            "Zone": "zone 1",
+                            "frac_convective": 0.95,
+                            "rated_power": 6.0,
+                            "type": "WetDistribution",
+                        },
+                        "zone_2": {
+                            "Control": "HeatingPattern_RestOfDwelling",
+                            "EnergySupply": "mains elec",
+                            "Zone": "zone 2",
+                            "frac_convective": 0.95,
+                            "rated_power": 6.0,
+                            "type": "WetDistribution",
+                        },
+                    },
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_with_example_dwelling(mut input: InputForProcessing) {
+            // Given the test dwelling defined above
+            // When distribution is created
+            create_space_heat_distribution(&mut input).unwrap();
+            // Then the result should contain 2 pipe entries
+            let distribution = &input.input["SpaceHeatSystem"]["zone_1"]["pipework"];
+            assert!(distribution.as_array().is_some_and(|d| d.len() == 2));
+            // And each pipe should have either 15mm or 22mm diameter
+            let internal_diameters = distribution
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["internal_diameter_mm"].as_f64().unwrap())
+                .collect::<Vec<_>>();
+            let external_diameters = distribution
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["external_diameter_mm"].as_f64().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(internal_diameters, vec![13., 20.]);
+            assert_eq!(external_diameters, vec![15., 22.]);
+            // And the pipes should have the expected lengths
+            for pipe in distribution.as_array().unwrap() {
+                if pipe["internal_diameter_mm"].as_f64().unwrap() == 13. {
+                    assert_eq!(pipe["length"].as_f64().unwrap(), 66.21);
+                } else {
+                    assert_eq!(pipe["length"].as_f64().unwrap(), 23.75);
+                }
+                // And other values get fixed values
+                assert_eq!(pipe["location"].as_str().unwrap(), "internal");
+                assert_eq!(pipe["pipe_contents"].as_str().unwrap(), "water");
+                assert_eq!(pipe["surface_reflectivity"].as_bool().unwrap(), false);
+                assert_eq!(pipe["insulation_thickness_mm"].as_f64().unwrap(), 0.);
+                assert_eq!(
+                    pipe["insulation_thermal_conductivity"].as_f64().unwrap(),
+                    0.035
+                );
+            }
+        }
+
+        #[rstest]
+        fn test_only_wet_distribution_gets_pipework(mut input: InputForProcessing) {
+            // When distribution is created with a zone that is of type other than WetDistribution
+            input.input["SpaceHeatSystem"]["zone_1"]["type"] = json!("InternalElectric");
+            create_space_heat_distribution(&mut input).unwrap();
+            // Then the pipework property doesn't exist
+            assert!(input.input["SpaceHeatSystem"]["zone_1"]
+                .get("pipework")
+                .is_none());
+        }
+
+        #[rstest]
+        fn test_all_zones_get_same_pipework(mut input: InputForProcessing) {
+            // When distribution is created with more than one zone in the SpaceHeatSystem
+            create_space_heat_distribution(&mut input).unwrap();
+            // Then the calculated pipe lengths are as expected
+            let expected_distribution = json!([
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 15,
+                    "internal_diameter_mm": 13,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 66.21,
+                },
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 22,
+                    "internal_diameter_mm": 20,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 23.75,
+                },
+            ]);
+            let zone_1_distribution = input.input["SpaceHeatSystem"]["zone_1"]["pipework"].clone();
+            let zone_2_distribution = input.input["SpaceHeatSystem"]["zone_2"]["pipework"].clone();
+            assert_eq!(zone_1_distribution, expected_distribution);
+            // And each zone gets the same pipework values
+            assert_eq!(zone_1_distribution, zone_2_distribution);
+        }
+
+        #[rstest]
+        fn test_non_zero_base_height(mut input: InputForProcessing) {
+            // Given all walls have non-zero base_height
+            input.input["Zone"]["whole dwelling"]["BuildingElement"] = json!({
+                "wall_1": {"type": "BuildingElementOpaque", "base_height": 2.8, "height": 2.5},
+                "wall_2": {"type": "BuildingElementOpaque", "base_height": 2.8, "height": 2.4},
+                "wall_3": {"type": "BuildingElementOpaque", "base_height": 6, "height": 2.6},
+            });
+            // When distribution is created
+            create_space_heat_distribution(&mut input).unwrap();
+            // Then the calculated pipe lengths are as expected
+            let expected_distribution = json!([
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 15,
+                    "internal_diameter_mm": 13,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 66.81,
+                },
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 22,
+                    "internal_diameter_mm": 20,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 23.75,
+                },
+            ]);
+            let distribution = input.input["SpaceHeatSystem"]["zone_1"]["pipework"].clone();
+            assert_eq!(distribution, expected_distribution);
+        }
+
+        #[rstest]
+        fn test_valid_roof_is_included(mut input: InputForProcessing) {
+            // Given two valid walls and one valid roof (not unheated)
+            input.input["Zone"]["whole dwelling"]["BuildingElement"] = json!({
+                "wall_1": {"type": "BuildingElementOpaque", "base_height": 0, "height": 2.8},
+                "wall_2": {"type": "BuildingElementOpaque", "base_height": 0, "height": 2.8},
+                "roof_1": {
+                    "type": "BuildingElementOpaque",
+                    "base_height": 3.0,
+                    "height": 3.0,
+                    "is_unheated_pitched_roof": false,  // Should be used
+                },
+            });
+            // When distribution is created
+            create_space_heat_distribution(&mut input).unwrap();
+            // Then the roof element should be used to calculate pipe lengths
+            let expected_distribution = json!([
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 15,
+                    "internal_diameter_mm": 13,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 67.07,
+                },
+                {
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 0,
+                    "external_diameter_mm": 22,
+                    "internal_diameter_mm": 20,
+                    "location": "internal",
+                    "pipe_contents": "water",
+                    "surface_reflectivity": false,
+                    "length": 23.75,
+                },
+            ]);
+
+            let distribution = input.input["SpaceHeatSystem"]["zone_1"]["pipework"].clone();
+            assert_eq!(distribution, expected_distribution);
+        }
+
+        #[rstest]
+        fn test_different_main_dwelling_properties(mut input: InputForProcessing) {
+            // Given different known dwelling types with corresponding known
+            // pipework lengths
+            let test_cases = [
+                json!({
+                    "dwelling": "DESN-H-Det-01",
+                    "storeys": 2,
+                    "length": 8.004,
+                    "width": 6.704,
+                    "height": 2.68,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 66.21},
+                        {"internal_diameter_mm": 20, "length": 23.75},
+                    ],
+                }),
+                json!({
+                    "dwelling": "DESN-H-End-02",
+                    "storeys": 2,
+                    "length": 8.004,
+                    "width": 6.606,
+                    "height": 2.68,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 65.25},
+                        {"internal_diameter_mm": 20, "length": 23.73},
+                    ],
+                }),
+                json!({
+                    "dwelling": "DESN-H-Mid-03",
+                    "storeys": 2,
+                    "length": 8.004,
+                    "width": 6.508,
+                    "height": 2.68,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 64.28},
+                        {"internal_diameter_mm": 20, "length": 23.7},
+                    ],
+                }),
+                json!({
+                    "dwelling": "KMHO-H-Det-01",
+                    "storeys": 2,
+                    "length": 8.345,
+                    "width": 6.77,
+                    "height": 2.647,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 69.62},
+                        {"internal_diameter_mm": 20, "length": 24.53},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Gro-01",
+                    "storeys": 1,
+                    "length": 9.3,
+                    "width": 7.37,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 42.5},
+                        {"internal_diameter_mm": 20, "length": 26.83},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Gro-02",
+                    "storeys": 1,
+                    "length": 6.8,
+                    "width": 6.45,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 27.19},
+                        {"internal_diameter_mm": 20, "length": 21.03},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Mid-01",
+                    "storeys": 1,
+                    "length": 9.3,
+                    "width": 7.37,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 42.5},
+                        {"internal_diameter_mm": 20, "length": 26.83},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Mid-02",
+                    "storeys": 1,
+                    "length": 6.8,
+                    "width": 6.45,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 27.19},
+                        {"internal_diameter_mm": 20, "length": 21.03},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Top-01",
+                    "storeys": 1,
+                    "length": 9.3,
+                    "width": 7.37,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 42.5},
+                        {"internal_diameter_mm": 20, "length": 26.83},
+                    ],
+                }),
+                json!({
+                    "dwelling": "AECO-F-Top-02",
+                    "storeys": 1,
+                    "length": 6.8,
+                    "width": 6.45,
+                    "height": 2.8,
+                    "expected": [
+                        {"internal_diameter_mm": 13, "length": 27.19},
+                        {"internal_diameter_mm": 20, "length": 21.03},
+                    ],
+                }),
+            ];
+            for test_case in test_cases {
+                input.input["General"]["storeys_in_dwelling"] = test_case["storeys"].clone();
+                input.input["BuildingLength"] = test_case["length"].clone();
+                input.input["BuildingWidth"] = test_case["width"].clone();
+                input.input["Zone"]["whole dwelling"]["BuildingElement"] = json!({
+                    "wall_1": {
+                        "type": "BuildingElementOpaque",
+                        "base_height": 0,
+                        "height": test_case["height"],
+                    }
+                });
+                if test_case["storeys"] == 2 {
+                    input.input["Zone"]["whole dwelling"]["BuildingElement"]
+                        .as_object_mut()
+                        .unwrap()
+                        .insert(
+                            "wall_2".into(),
+                            json!({
+                                "type": "BuildingElementOpaque",
+                                "base_height": test_case["height"],
+                                "height": test_case["height"],
+                            }),
+                        );
+                }
+                // When the space heat distribution function is called
+                create_space_heat_distribution(&mut input).unwrap();
+                // The pipework distribution matches
+                let distribution = json!(input.input["SpaceHeatSystem"]["zone_1"]["pipework"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pipe| json!({
+                        "length": pipe["length"].clone(),
+                        "internal_diameter_mm": pipe["internal_diameter_mm"].clone(),
+                    }))
+                    .collect_vec());
+                assert_eq!(distribution, test_case["expected"]);
+            }
         }
     }
 }
