@@ -94,7 +94,6 @@ pub(crate) fn initial_preprocessing(
 pub(crate) fn final_preprocessing(
     input: &mut InputForProcessing,
 ) -> anyhow::Result<&InputForProcessing> {
-    // TODO: implement the rest of this method 1.0.0a4
     static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> =
         LazyLock::new(|| {
             load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
@@ -118,10 +117,10 @@ pub(crate) fn final_preprocessing(
     let n_occupants = calc_n_occupants(tfa, nbeds)?;
 
     // construct schedules
-    let (_schedule_occupancy_weekday, _schedule_occupancy_weekend) =
+    let (schedule_occupancy_weekday, schedule_occupancy_weekend) =
         create_occupancy(n_occupants, APPLIANCE_PROPENSITIES.occupied);
 
-    create_metabolic_gains(n_occupants, input)?;
+    create_metabolic_gains(n_occupants, input)?; // TODO: update signature 1.0.0a4
     create_space_heat_distribution(input)?;
     create_water_heating_pattern(input)?;
     create_heating_pattern(input)?;
@@ -142,8 +141,13 @@ pub(crate) fn final_preprocessing(
             .as_str()
             .ok_or_else(|| anyhow!("Type field on hot water source is not a string"))?;
 
-        if hw_source_type == "StorageTank" || hw_source_type == "SmartHotWaterTank" {
+        if hw_source_type == "StorageTank" {
             hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
+        } else if hw_source_type == "SmartHotWaterTank" {
+            hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
+            hw_source.insert("temp_usable".into(), json!(HW_TEMPERATURE));
+        } else if ["PointOfUse", "CombiBoiler", "HIU", "HeatBattery"].contains(&hw_source_type) {
+            hw_source.insert("setpoint_temp".into(), json!(HW_TEMPERATURE));
         }
     }
 
@@ -154,8 +158,8 @@ pub(crate) fn final_preprocessing(
     create_vent_opening_schedule(input)?;
     window_treatment(input)?;
     create_thermal_penetration(input)?;
-    // create_heating(input)?;
-    // create_infiltration_ventilation(input)?;
+    // TODO 1.0.0a4: create_heating(input)?;
+    // TODO 1.0.0a4 : create_infiltration_ventilation(input)?;
     calc_sfp_mech_vent(input)?;
     create_imev_pattern(input, SIMTIME_START, SIMTIME_END, SIMTIME_STEP)?;
 
