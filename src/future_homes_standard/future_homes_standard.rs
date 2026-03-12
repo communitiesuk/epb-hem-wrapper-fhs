@@ -3915,26 +3915,15 @@ impl<'a> CycleMev<'a> {
 }
 
 fn calc_sfp_mech_vent(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    for mut mech_vents_data in input
-        .mechanical_ventilations_for_processing()?
-        .into_iter()
-        .map(MechanicalVentilationJsonValue)
-    {
-        if mech_vents_data.vent_is_type("Centralised continuous MEV")
-            || mech_vents_data.vent_is_type("MVHR")
-        {
-            let measured_fan_power = mech_vents_data.measured_fan_power().ok_or_else(|| anyhow!("Measured fan power was not given for a mechanical ventilation that expected one to be present."))?;
-            let measured_air_flow_rate = mech_vents_data.measured_air_flow_rate().ok_or_else(|| anyhow!("Measured air flow rate was not given for a mechanical ventilation that expected one to be present."))?;
-            // Specific fan power is total measured electrical power in Watts divided by air flow rate
-            let measured_sfp = measured_fan_power / measured_air_flow_rate; // in W/l/s
-            mech_vents_data.set_sfp(measured_sfp);
-        } else if mech_vents_data.vent_is_type("Intermittent MEV")
-            || mech_vents_data.vent_is_type("Decentralised continuous MEV")
-        {
-            continue;
-        } else if mech_vents_data.vent_is_type("PIV") {
-            // PIV will be removed as of FHS 0.25/ HEM 0.36 so remove this clause at this point
-            bail!("Mechanical ventilation type of PIV not recognised");
+    for mech_vents_data in input.mechanical_ventilations_for_processing()? {
+        if !mech_vents_data.contains_key("SFP") {
+            let measured_fan_power = mech_vents_data.get("measured_fan_power").and_then(JsonValue::as_f64).ok_or_else(|| anyhow!("Mechanical ventilation data was missing a numeric 'measured_fan_power' field"))?; // in W
+            let measured_air_flow_rate = mech_vents_data.get("measured_air_flow_rate").and_then(JsonValue::as_f64).ok_or_else(|| anyhow!("Mechanical ventilation data was missing a numeric 'measured_air_flow_rate' field"))?;
+            // in l/s
+            // Specific fan power is total measured electrical power in Watts divided
+            // by air flow rate
+            let measured_sfp = measured_fan_power / measured_air_flow_rate;
+            mech_vents_data.insert("SFP".into(), json!(measured_sfp));
         }
     }
 
@@ -7710,6 +7699,99 @@ mod tests {
                     .collect_vec());
                 assert_eq!(distribution, test_case["expected"]);
             }
+        }
+    }
+
+    mod calc_sfp_mech_vent {
+        use super::*;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "InfiltrationVentilation": {
+                        "MechanicalVentilation": {
+                            "mech1": {
+                                "EnergySupply": "mains elec",
+                                "design_outdoor_air_flow_rate": 111.6,
+                                "measured_air_flow_rate": 30,
+                                "measured_fan_power": 3,
+                                "mid_height_air_flow_path": 5.5,
+                                "orientation360": 0,
+                                "pitch": 90,
+                                "sup_air_flw_ctrl": "ODA",
+                                "sup_air_temp_ctrl": "NO_CTRL",
+                                "vent_type": "Centralised continuous MEV",
+                            }
+                        }
+                    }
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_sfp_calc_cmev(mut input: InputForProcessing) {
+            // Given a dwelling with a cMEV which has a measured_air_flow_rate and measured_fan_power,
+            // but no SFP
+            // When the SFP is calculated
+            calc_sfp_mech_vent(&mut input).unwrap();
+            // Then the correct value is returned (3 / 30)
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"],
+                0.1
+            );
+        }
+
+        #[rstest]
+        fn test_sfp_calc_mvhr(mut input: InputForProcessing) {
+            // Given a dwelling with a MVHR which has a measured_air_flow_rate and measured_fan_power,
+            // but no SFP
+            input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["vent_type"] =
+                json!("MVHR");
+            // When the SFP is calculated
+            calc_sfp_mech_vent(&mut input).unwrap();
+            // Then the correct value is returned (3 / 30)
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"],
+                0.1
+            );
+        }
+
+        #[rstest]
+        fn test_input_sfp_retained(mut input: InputForProcessing) {
+            // Given a dwelling with a cMEV which has a SFP defined
+            input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"] =
+                json!(0.5);
+            // When the SFP is calculated
+            calc_sfp_mech_vent(&mut input).unwrap();
+            // Then the input value is retained
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"],
+                0.5
+            );
+        }
+
+        #[rstest]
+        fn test_input_sfp_retained_with_intermittent(mut input: InputForProcessing) {
+            // Given a dwelling with a iMEV which has a SFP defined (as always required by the schema)
+            input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"] = json!({
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Intermittent MEV",
+                "SFP": 1.5,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 240,
+                "mid_height_air_flow_path": 1.5,
+                "orientation360": 90,
+                "pitch": 60,
+            });
+            // When the SFP is calculated
+            calc_sfp_mech_vent(&mut input).unwrap();
+            // Then the input value is retained
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"],
+                1.5
+            );
         }
     }
 }
