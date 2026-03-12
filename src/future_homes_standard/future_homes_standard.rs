@@ -94,7 +94,11 @@ pub(crate) fn final_preprocessing(
     input: &mut InputForProcessing,
 ) -> anyhow::Result<&InputForProcessing> {
     // TODO: implement the rest of this method 1.0.0a4
+
+    create_space_heat_distribution(input)?;
     create_water_heating_pattern(input)?;
+    create_heating_pattern(input)?;
+    create_charging_pattern(input)?;
 
     for (_, hw_source) in input.hot_water_source_mut()? {
         let hw_source = hw_source
@@ -111,6 +115,15 @@ pub(crate) fn final_preprocessing(
             hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
         }
     }
+
+    create_cooling(input)?;
+    create_window_opening_schedule(input)?;
+    create_vent_opening_schedule(input)?;
+    window_treatment(input)?;
+    create_thermal_penetration(input)?;
+    // create_heating(input)?;
+    // create_infiltration_ventilation(input)?;
+    calc_sfp_mech_vent(input)?;
 
     // Remove project_dict items that are not permitted by the core schema
     remove_fhs_only_inputs(input)?;
