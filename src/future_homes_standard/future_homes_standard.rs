@@ -2,6 +2,7 @@ use crate::future_homes_standard::fhs_appliance::FhsAppliance;
 use crate::future_homes_standard::fhs_hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
+use crate::future_homes_standard::fhs_imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
     json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
@@ -146,6 +147,8 @@ pub(crate) fn final_preprocessing(
         }
     }
 
+    let cold_water_feed_temps = create_cold_water_feed_temps(input)?;
+    create_hot_water_use_pattern(input, n_occupants, &cold_water_feed_temps)?;
     create_cooling(input)?;
     create_window_opening_schedule(input)?;
     create_vent_opening_schedule(input)?;
@@ -154,6 +157,9 @@ pub(crate) fn final_preprocessing(
     // create_heating(input)?;
     // create_infiltration_ventilation(input)?;
     calc_sfp_mech_vent(input)?;
+    create_imev_pattern(input, SIMTIME_START, SIMTIME_END, SIMTIME_STEP)?;
+
+    set_temp_internal_static_calcs(input)?;
 
     // Remove project_dict items that are not permitted by the core schema
     remove_fhs_only_inputs(input)?;
