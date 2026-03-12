@@ -2296,8 +2296,7 @@ impl InputForProcessing {
         }
         if let Ok(Some(ref mut showers)) = self.shower_values_mut() {
             for shower in showers.iter_mut().filter_map(|v| v.as_object_mut()) {
-                shower.remove("advanced_start");
-                shower.remove("temp_setback");
+                shower.remove("allow_low_flowrate");
             }
         }
         if let Ok(ref mut zones) = self.zone_node_mut() {

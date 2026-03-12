@@ -2212,7 +2212,6 @@ fn create_lighting_gains(
 
     input.clear_appliance_gains()?;
     input.set_lighting_gains(json!({
-        "type": "lighting",
         "start_day": 0,
         "time_series_step": 0.5,
         "gains_fraction": 0.85,
@@ -2224,7 +2223,6 @@ fn create_lighting_gains(
     }))?;
 
     input.set_topup_gains(json!({
-        "type": "lighting",
         "start_day": 0,
         "time_series_step": 0.5,
         "gains_fraction": 0.85,
@@ -2385,19 +2383,13 @@ fn create_appliance_gains(
             ),
         ),
     ]);
-
     // add any missing required appliances to the assessment,
     // get default demand figures for any unknown appliances
-    let mut priority: IndexMap<String, (Option<isize>, f64)> = Default::default();
-    let mut power_scheds: IndexMap<String, Vec<f64>> = Default::default();
-    let mut weight_scheds: IndexMap<String, Vec<f64>> = Default::default();
-    let mut loadshifting_flag = false;
-    // loop through appliances in the assessment.
+    let mut appliance_kwhcycle: IndexMap<String, f64> = Default::default();
+
     let input_appliances = input.clone_appliances();
 
-    let mut kwhcycle: f64 = Default::default();
-    let mut loadingfactor;
-
+    // loop through appliances in the assessment.
     for (appliance_key, appliance) in input_appliances {
         // if it needs to be modelled per use
         let map_appliance = appliance_map
@@ -2407,7 +2399,7 @@ fn create_appliance_gains(
         if let Some(use_data) = map_appliance.use_data {
             // value on energy label is defined differently between appliance types
             // TODO (from Python) - translation of efficiencies should be its own function
-            (kwhcycle, loadingfactor) =
+            let (kwhcycle, loadingfactor) =
                 appliance_kwh_cycle_loading_factor(input, &appliance_key, &appliance_map)?;
 
             let app = FhsAppliance::new(
@@ -2426,67 +2418,7 @@ fn create_appliance_gains(
 
             let load_shifting = appliance.get("loadshifting").and_then(|v| v.as_object());
 
-            // if the appliance specifies load shifting, add it to the appliance gains details
-            let load_shifting = if let Some(load_shifting) = load_shifting {
-                loadshifting_flag = true;
-
-                if load_shifting
-                    .get("max_shift_hrs")
-                    .and_then(|e| e.as_f64())
-                    .ok_or(json_error(
-                        "max_shift_hrs field of a load shifting object was expected to be numeric",
-                    ))?
-                    >= 24.
-                {
-                    // could instead change length of buffers/initial simulation match this, but unclear what benefit this would have
-                    bail!(
-                        "{} max_shift_hrs too high, FHS wrapper cannot handle max shift >= 24 hours",
-                        appliance_key
-                    );
-                }
-
-                // establish priority between appliances based on user defined priority,
-                // and failing that, demand per cycle
-                priority.insert(
-                    String::from(&appliance_key),
-                    (
-                        load_shifting
-                            .get("priority")
-                            .and_then(|priority| priority.as_u64())
-                            .map(|u| u as isize),
-                        kwhcycle,
-                    ),
-                );
-
-                let mut load_shifting = load_shifting.clone();
-                load_shifting.insert("Control".into(), json!(SMART_APPLIANCE_CONTROL_NAME));
-
-                // create year long cost profile
-                // loadshifting is also intended to respond to CO2, primary energy factors instead of cost, for example
-                // so the weight timeseries is generic.
-
-                // TODO (Python) - create weight timeseries as combination of PE, CO2, cost factors.
-                // could also multiply by propensity factor
-                let weight_timeseries = reject_nulls(expand_numeric_schedule(
-                    &input.tariff_schedule()?.ok_or_else(|| {
-                        anyhow!(
-                            "A tariff schedule was expected to have been provided in the input."
-                        )
-                    })?,
-                ))?;
-                load_shifting.insert("weight_timeseries".into(), json!(weight_timeseries));
-                weight_scheds.insert(String::from(&appliance_key), weight_timeseries);
-
-                Some(load_shifting)
-            } else {
-                // only add demand from appliances that DO NOT have loadshifting to the demands
-                power_scheds.insert(String::from(&appliance_key), app.flat_schedule.clone());
-                priority.insert(String::from(&appliance_key), (None, kwhcycle));
-                None
-            };
-
             input.set_gains_for_field(String::from(&appliance_key), json!({
-                "type": appliance_key,
                 "EnergySupply": if ["Hobs", "Oven"].contains(&appliance_key.as_str()) {
                     appliance_energy_supply.ok_or_else(|| anyhow!("Could not get energy supply type for appliance with key {appliance_key}"))?.to_string()
                 } else {
@@ -2500,6 +2432,8 @@ fn create_appliance_gains(
                 "Standby": app.standby_w,
                 "loadshifting": load_shifting
             }))?;
+
+            appliance_kwhcycle.insert(appliance_key.into(), kwhcycle);
         } else {
             // model as yearlong time series schedule of demand in W
             let annual_kwh = match appliance.get("kWh_per_annum").and_then(|v| v.as_f64()) {
@@ -2514,14 +2448,10 @@ fn create_appliance_gains(
                 .iter()
                 .map(|&frac| WATTS_PER_KILOWATT as f64 / DAYS_PER_YEAR as f64 * frac * annual_kwh)
                 .collect();
-            power_scheds.insert(String::from(&appliance_key), flat_schedule.clone());
-
-            priority.insert(String::from(&appliance_key), (None, kwhcycle));
 
             let appliance_uses_gas: bool = false; // upstream Python checks appliance key contains substring 'gas', may be erroneous
 
             input.set_gains_for_field(String::from(&appliance_key), json!({
-                "type": appliance_key,
                 "EnergySupply": if appliance_uses_gas { ENERGY_SUPPLY_NAME_GAS } else { ENERGY_SUPPLY_NAME_ELECTRICITY },
                 "start_day": 0,
                 "time_series_step": 1,
@@ -2533,132 +2463,14 @@ fn create_appliance_gains(
             }))?;
         }
     }
-    // sum schedules for use with loadshifting
-    // will this work with variable timestep?
-    let sched_len = power_scheds
-        .values()
-        .next()
-        .ok_or_else(|| anyhow!("Demand schedules are empty"))?
-        .len();
 
-    let sched_zeros: Vec<f64> = vec![0.; sched_len];
+    appliance_kwhcycle.sort_keys();
+    appliance_kwhcycle.reverse();
 
-    let mut main_power_sched: IndexMap<String, Vec<f64>> = IndexMap::from([
-        (ENERGY_SUPPLY_NAME_GAS.into(), sched_zeros.clone()),
-        (ENERGY_SUPPLY_NAME_ELECTRICITY.into(), sched_zeros.clone()),
-    ]);
-
-    let mut main_weight_sched: IndexMap<String, Vec<f64>> = IndexMap::from([
-        (ENERGY_SUPPLY_NAME_GAS.into(), sched_zeros.clone()),
-        (ENERGY_SUPPLY_NAME_ELECTRICITY.into(), sched_zeros.clone()),
-    ]);
-
-    for appliance_key in power_scheds.keys() {
-        let energy_supply_name = input
-            .energy_supply_type_for_appliance_gains_field(appliance_key.as_ref())
-            .ok_or_else(|| {
-                anyhow!(
-                    "No energy supply type for appliance gains for {}",
-                    appliance_key,
-                )
-            })?;
-
-        let main_power_schedule_for_energy_supply: &Vec<f64> =
-            main_power_sched.get(&energy_supply_name).ok_or_else(|| {
-                anyhow!(
-                    "There was no main power schedule for energy supply {}",
-                    energy_supply_name
-                )
-            })?;
-
-        main_power_sched.insert(
-            energy_supply_name,
-            main_power_schedule_for_energy_supply
-                .iter()
-                .enumerate()
-                .map(|(i, main_power)| main_power + power_scheds.get(appliance_key).unwrap()[i])
-                .collect(),
-        );
-    }
-
-    for appliance_key in weight_scheds.keys() {
-        let energy_supply_name = input
-            .energy_supply_type_for_appliance_gains_field(appliance_key.as_ref())
-            .ok_or_else(|| {
-                anyhow!(
-                    "No energy supply type for appliance gains for {}",
-                    appliance_key
-                )
-            })?;
-
-        let main_weight_sched_for_energy_supply: &Vec<f64> =
-            main_weight_sched.get(&energy_supply_name).ok_or_else(|| {
-                anyhow!(
-                    "There was no main power schedule for energy supply {}",
-                    energy_supply_name
-                )
-            })?;
-
-        main_weight_sched.insert(
-            energy_supply_name,
-            main_weight_sched_for_energy_supply
-                .iter()
-                .enumerate()
-                .map(|(i, main_weight)| main_weight + weight_scheds.get(appliance_key).unwrap()[i])
-                .collect(),
-        );
-    }
-
-    if loadshifting_flag {
-        input.remove_all_smart_appliance_controls()?;
-        let appliance_keys = input.appliance_keys()?;
-        input.add_smart_appliance_control(
-            SMART_APPLIANCE_CONTROL_NAME,
-            json!({
-                "power_timeseries": main_power_sched,
-                "time_series_step": 1.,
-                "Appliances": appliance_keys,
-            }),
-        )?;
-    }
-
-    // work out order in which to process loadshifting appliances
-    let defined_priority = priority
-        .iter()
-        .filter_map(|(appliance_name, priorities)| priorities.0.map(|_| appliance_name))
-        .collect::<Vec<_>>();
-
-    let mut first_priority_ranks: Vec<isize> = defined_priority
-        .iter()
-        .filter_map(|appliance_name| priority.get(appliance_name.to_owned()))
-        .filter_map(|p| p.0)
-        .collect_vec();
-
-    first_priority_ranks.append(&mut vec![0]);
-
-    let lowest_priority = first_priority_ranks.iter().max().unwrap();
-
-    let priority_kwhcycle = priority
-        .clone()
-        .sorted_by(|_, (_, kwhcycle1), _, (_, kwhcycle2)| kwhcycle2.total_cmp(kwhcycle1))
-        .filter(|(_, (priority, _))| priority.is_none())
-        .map(|x| x.0)
-        .collect_vec();
-
-    for appliance in priority.keys() {
-        let new_priority = if defined_priority.contains(&appliance) {
-            defined_priority
-                .iter()
-                .position(|&a| a == appliance)
-                .unwrap() as isize
-        } else {
-            priority_kwhcycle
-                .iter()
-                .position(|a| a == appliance)
-                .unwrap() as isize
-                + *lowest_priority
-        };
-        input.set_priority_for_gains_appliance(new_priority, appliance)?;
+    // Assign priority to those with a kWhcycle value, in reverse order
+    // TODO: 1.0.0a4 check that this is equivalent to the Python
+    for (appliance, priority) in appliance_kwhcycle {
+        input.set_priority_for_gains_appliance(priority as isize, &appliance)?;
     }
 
     Ok(())
