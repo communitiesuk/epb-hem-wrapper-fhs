@@ -94,11 +94,41 @@ pub(crate) fn final_preprocessing(
     input: &mut InputForProcessing,
 ) -> anyhow::Result<&InputForProcessing> {
     // TODO: implement the rest of this method 1.0.0a4
+    static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> =
+        LazyLock::new(|| {
+            load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
+                .expect("Could not read and parse appliance_propensities.csv")
+        });
 
+    static EVAP_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> = LazyLock::new(|| {
+        load_evaporative_profile(Cursor::new(include_str!("./evap_loss_profile.csv")))
+            .expect("Could not read evap_loss_profile.csv.")
+    });
+
+    static COLD_WATER_LOSS_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> =
+        LazyLock::new(|| {
+            load_evaporative_profile(Cursor::new(include_str!("./cold_water_loss_profile.csv")))
+                .expect("Could not read cold_water_loss_profile.csv")
+        });
+
+    input.reset_internal_gains()?;
+    let tfa = calc_tfa(input)?;
+    let nbeds = calc_nbeds(input)?;
+    let n_occupants = calc_n_occupants(tfa, nbeds)?;
+
+    // construct schedules
+    let (_schedule_occupancy_weekday, _schedule_occupancy_weekend) =
+        create_occupancy(n_occupants, APPLIANCE_PROPENSITIES.occupied);
+
+    create_metabolic_gains(n_occupants, input)?;
     create_space_heat_distribution(input)?;
     create_water_heating_pattern(input)?;
     create_heating_pattern(input)?;
     create_charging_pattern(input)?;
+    create_evaporative_losses(input, tfa, n_occupants, &EVAP_PROFILE_DATA)?;
+    create_cold_water_losses(input, tfa, n_occupants, &COLD_WATER_LOSS_PROFILE_DATA)?;
+    create_lighting_gains(input, tfa, n_occupants)?;
+    create_appliance_gains(input, tfa, n_occupants, &APPLIANCE_PROPENSITIES)?;
 
     for (_, hw_source) in input.hot_water_source_mut()? {
         let hw_source = hw_source
@@ -1850,7 +1880,7 @@ fn load_appliance_propensities(
                 mut cooking_gas_cooker,
                 mut consumer_electronics,
             ) = acc;
-            hour[i] = item.hour;
+            hour[i] = item.hour as usize;
             occupied[i] = item.occupied;
             cleaning_washing_machine[i] = item.cleaning_washing_machine;
             cleaning_tumble_dryer[i] = item.cleaning_tumble_dryer;
@@ -1973,7 +2003,7 @@ struct Normalised;
 #[derive(Deserialize)]
 struct AppliancePropensityRow {
     #[serde(rename = "Hour")]
-    hour: usize,
+    hour: f64,
     #[serde(rename = "Occupied prop ( Chance the house is occupied)")]
     occupied: f64,
     #[serde(rename = "Cleaning Washing machine Prop")]
