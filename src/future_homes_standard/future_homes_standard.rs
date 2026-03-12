@@ -12,18 +12,15 @@ use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::schedule::{expand_numeric_schedule, reject_nulls};
 use home_energy_model::core::units::{
-    Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, MINUTES_PER_HOUR,
-    WATTS_PER_KILOWATT,
+    Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
-use home_energy_model::corpus::{Corpus, OutputOptions};
 use home_energy_model::hem_core::external_conditions::{
     create_external_conditions, ExternalConditions, WindowShadingObject,
 };
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     BuildingElementHeightWidthInput, CustomEnergySourceFactor, EnergySupplyDetails,
-    EnergySupplyType, FuelType, Input, MechanicalVentilationForProcessing,
-    MechanicalVentilationJsonValue, SmartApplianceBattery, TransparentBuildingElement,
+    EnergySupplyType, FuelType, Input, TransparentBuildingElement,
     TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
 use home_energy_model::output_writer::OutputWriter;
@@ -32,7 +29,6 @@ use itertools::{izip, Itertools};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use smartstring::alias::String;
-use std::collections::HashMap;
 use std::convert::Into;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
@@ -156,13 +152,6 @@ pub(crate) fn final_preprocessing(
     // Remove project_dict items that are not permitted by the core schema
     remove_fhs_only_inputs(input)?;
     Ok(input)
-}
-
-pub(crate) struct SimSettings {
-    heat_balance: bool,
-    detailed_output_heating_cooling: bool,
-    _use_fast_solver: bool,
-    tariff_data_filename: Option<String>,
 }
 
 const SMART_APPLIANCE_CONTROL_NAME: &str = "SmartApplianceControl";
@@ -3056,128 +3045,6 @@ fn get_residual_moisture_adjustment(input: &InputForProcessing) -> anyhow::Resul
     Ok(1.0)
 }
 
-fn sim_24h(input: &mut InputForProcessing, sim_settings: SimSettings) -> anyhow::Result<()> {
-    let mut input_24h = input.clone();
-    let range = (HOURS_PER_DAY as f64 / SIMTIME_STEP).ceil() as usize;
-    let zeros_24h_by_supply = IndexMap::from([
-        (ENERGY_SUPPLY_NAME_ELECTRICITY.into(), vec![0.; range]),
-        (ENERGY_SUPPLY_NAME_GAS.into(), vec![0.; range]),
-    ]);
-
-    input_24h.set_non_appliance_demand_24hr_on_smart_appliance_control(
-        SMART_APPLIANCE_CONTROL_NAME,
-        zeros_24h_by_supply.clone(),
-    )?;
-
-    input_24h.set_battery24hr_on_smart_appliance_control(
-        SMART_APPLIANCE_CONTROL_NAME,
-        SmartApplianceBattery {
-            energy_into_battery_from_generation: zeros_24h_by_supply.clone(),
-            energy_out_of_battery: zeros_24h_by_supply.clone(),
-            energy_into_battery_from_grid: zeros_24h_by_supply.clone(),
-            battery_state_of_charge: zeros_24h_by_supply.clone(),
-        },
-    )?;
-
-    input_24h.set_simulation_time(SimulationTime::new(
-        SIMTIME_START,
-        SIMTIME_START + HOURS_PER_DAY as f64,
-        SIMTIME_STEP,
-    ))?;
-
-    // create a corpus instance
-    let output_options = OutputOptions {
-        print_heat_balance: sim_settings.heat_balance,
-        detailed_output_heating_cooling: sim_settings.detailed_output_heating_cooling,
-    };
-
-    let corpus = Corpus::from_inputs(
-        input_24h.as_input()?.into(),
-        None,
-        sim_settings.tariff_data_filename.as_deref(),
-        &output_options,
-    )?;
-
-    // Run main simulation sim
-    let results = corpus.run()?;
-
-    // sum results for electricity demand other than appliances to get 24h demand buffer for loadshifting
-    let electricity_users = results
-        .core
-        .results_end_user
-        .get(ENERGY_SUPPLY_NAME_ELECTRICITY)
-        .ok_or_else(|| anyhow!("Expected one or more users of mains elec energy supply"))?;
-
-    let min_demand_length = electricity_users
-        .values()
-        .map(|demand| demand.len())
-        .min()
-        .unwrap_or(0);
-
-    let mut non_appliance_electricity_demand = vec![];
-    for i in 0..min_demand_length {
-        for (name, user) in electricity_users {
-            let do_increment = !input.appliances_contain_key(name);
-            if do_increment {
-                if i >= non_appliance_electricity_demand.len() {
-                    non_appliance_electricity_demand.resize(i + 1, 0.0);
-                }
-
-                non_appliance_electricity_demand[i] += user[i];
-            }
-        }
-    }
-
-    let non_appliance_demand_24hr = IndexMap::from([
-        (
-            ENERGY_SUPPLY_NAME_ELECTRICITY.into(),
-            non_appliance_electricity_demand,
-        ),
-        (ENERGY_SUPPLY_NAME_GAS.into(), vec![0.; range]),
-    ]);
-    input.set_non_appliance_demand_24hr_on_smart_appliance_control(
-        SMART_APPLIANCE_CONTROL_NAME,
-        non_appliance_demand_24hr,
-    )?;
-
-    let energy_into_battery_from_generation = results
-        .core
-        .energy_to_storage
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
-    let energy_out_of_battery = results
-        .core
-        .energy_from_storage
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
-    let energy_into_battery_from_grid = results
-        .core
-        .storage_from_grid
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
-    let battery_state_of_charge = results
-        .core
-        .battery_state_of_charge
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<IndexMap<Arc<str>, Vec<f64>>>();
-
-    input.set_battery24hr_on_smart_appliance_control(
-        SMART_APPLIANCE_CONTROL_NAME,
-        SmartApplianceBattery {
-            energy_into_battery_from_generation,
-            energy_out_of_battery,
-            energy_into_battery_from_grid,
-            battery_state_of_charge,
-        },
-    )?;
-
-    Ok(())
-}
-
 /// Check (almost an assert) whether the shower flow rate is not less than the minimum allowed.
 fn check_shower_flowrate(input: &InputForProcessing) -> anyhow::Result<()> {
     let min_flowrate = 8.0;
@@ -3767,151 +3634,6 @@ fn create_vent_opening_schedule(input: &mut InputForProcessing) -> anyhow::Resul
     input.set_vent_adjust_max_control_for_infiltration_ventilation("_vent_adjust_max_ach")?;
 
     Ok(())
-}
-
-fn create_mev_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    // intermittent extract fans are assumed to turn on whenever cooking, bath or shower events occur
-
-    let shower_and_bath_events = input.water_heating_events_of_types(&["Shower", "Bath"])?;
-    let appliance_gains_events = input.appliance_gains_events()?;
-
-    let mut mech_vents = input
-        .keyed_mechanical_ventilations_for_processing()?
-        .into_iter()
-        .map(|(name, vent)| (name, MechanicalVentilationJsonValue(vent)))
-        .collect::<IndexMap<_, _>>();
-    let mut intermittent_mev: IndexMap<String, Vec<f64>> = mech_vents
-        .iter()
-        .filter(|(_, vent)| vent.vent_is_type("Intermittent MEV"))
-        .fold(IndexMap::from([]), |mut acc, (vent, _)| {
-            acc.insert(
-                vent.to_owned(),
-                vec![0.; ((SIMTIME_END - SIMTIME_START) / SIMTIME_STEP).ceil() as usize],
-            );
-            acc
-        });
-
-    let mev_names = intermittent_mev.keys().cloned().collect::<Vec<_>>();
-    if mev_names.is_empty() {
-        return Ok(());
-    }
-
-    let mut cycle_mev = CycleMev::new(mev_names.iter().map(String::as_str).collect());
-
-    for event in shower_and_bath_events {
-        let event_start = event
-            .get("start")
-            .and_then(|v| v.as_f64())
-            .ok_or(json_error(
-                "Event was expected to have a numeric start field",
-            ))?;
-        let event_duration = event
-            .get("duration")
-            .and_then(|v| v.as_f64())
-            .ok_or(json_error(
-                "Event was expected to have a numeric duration field",
-            ))?;
-        let mev_name = cycle_mev.mev();
-        let idx = (event_start / SIMTIME_STEP).floor() as usize;
-        let tsfrac = event_duration / (MINUTES_PER_HOUR as f64 * SIMTIME_STEP);
-        // add fraction of the timestep for which appliance is turned on
-        // to the fraction of the timestep for which the fan is turned on,
-        // and cap that fraction at 1.
-        let mut integralx: f64 = Default::default();
-        let start_offset = event_start / SIMTIME_STEP - idx as f64;
-        while integralx < tsfrac {
-            let segment = (start_offset.ceil() - start_offset).min(tsfrac - integralx);
-            let step_idx = (idx + (start_offset + integralx).floor() as usize)
-                % intermittent_mev[mev_name].len();
-            intermittent_mev[mev_name][step_idx] =
-                (intermittent_mev[mev_name][step_idx] + segment).min(1.);
-            integralx += segment;
-        }
-    }
-
-    // these names are the same as those already defined in create_appliance_gains
-    // NB. have reported possible bug here https://dev.azure.com/BreGroup/SAP%2011/_workitems/edit/45690 as these names don't seem to match with known
-    // TODO (from Python) - define them at top level of wrapper
-    // kettles and microwaves are assumed not to activate the extract fan
-    for cook_enduse in ["Oven", "Hobs"] {
-        if let Some(events) = appliance_gains_events.get(cook_enduse) {
-            for event in events {
-                let mev_name = cycle_mev.mev();
-                let idx = (event.start / SIMTIME_STEP).floor() as usize;
-                let tsfrac = event.duration / (MINUTES_PER_HOUR as f64 * SIMTIME_STEP);
-                // add fraction of the timestep for which appliance is turned on
-                // to the fraction of the timestep for which the fan is turned on,
-                // and cap that fraction at 1.
-                let mut integralx: f64 = Default::default();
-                let start_offset = event.start / SIMTIME_STEP - idx as f64;
-                while integralx < tsfrac {
-                    let segment = (start_offset.ceil() - start_offset).min(tsfrac - integralx);
-                    let step_idx = (idx + (start_offset + integralx).floor() as usize)
-                        % intermittent_mev[mev_name].len();
-                    intermittent_mev[mev_name][step_idx] =
-                        (intermittent_mev[mev_name][step_idx] + segment).min(1.);
-                    integralx += segment;
-                }
-            }
-        }
-    }
-
-    let control_names: HashMap<String, String> = intermittent_mev
-        .keys()
-        .map(|name| {
-            (
-                name.clone(),
-                String::from(["_intermittent_MEV_control: ", name].concat()),
-            )
-        })
-        .collect();
-
-    for vent in intermittent_mev.keys() {
-        let control_name = &control_names[vent];
-        mech_vents.get_mut(vent).unwrap().set_control(control_name);
-    }
-
-    // loop through again as can't write to two different mutable refs based on input in one loop
-    for vent in intermittent_mev.keys() {
-        let control_name = &control_names[vent];
-        input.add_control(
-            control_name,
-            json!({
-                "type": "SetpointTimeControl",
-                "start_day": 0,
-                "time_series_step": SIMTIME_STEP,
-                "schedule": {
-                    "main": intermittent_mev[vent]
-                }
-            }),
-        )?;
-    }
-
-    Ok(())
-}
-
-// if there are multiple extract fans they are cycled sequentially
-// in order that they all be used an approximately equal amount,
-// so a different extract fan could be activated by the same shower,
-// and likewise the same extract fan could be activated by cooking as by a shower
-struct CycleMev<'a> {
-    names: Vec<&'a str>,
-    cycle_count: usize,
-}
-
-impl<'a> CycleMev<'a> {
-    fn new(names: Vec<&'a str>) -> Self {
-        Self {
-            names,
-            cycle_count: Default::default(),
-        }
-    }
-
-    fn mev(&mut self) -> &str {
-        let res = self.names[self.cycle_count];
-        self.cycle_count = (self.cycle_count + 1) % self.names.len();
-        res
-    }
 }
 
 fn calc_sfp_mech_vent(input: &mut InputForProcessing) -> anyhow::Result<()> {

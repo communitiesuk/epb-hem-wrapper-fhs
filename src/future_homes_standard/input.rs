@@ -3,9 +3,8 @@ use anyhow::anyhow;
 use home_energy_model::core::schedule::NumericSchedule;
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    ApplianceGainsEvent, BuildingElement, ColdWaterSourceInput, ExternalConditionsInput,
-    HeatingControlType, Input, SmartApplianceBattery, SpaceHeatSystemHeatSource,
-    WasteWaterHeatRecovery, WaterDistribution, WaterHeatingEvent, WaterPipework,
+    BuildingElement, ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
+    WaterDistribution, WaterHeatingEvent, WaterPipework,
 };
 use home_energy_model::input::{
     Control, EnergySupplyInput, InfiltrationVentilation, InputForCalcHtcHlp, ZoneDictionary,
@@ -44,10 +43,6 @@ impl InputForProcessing {
         let input: JsonValue = serde_json::from_reader(reader)?;
 
         Ok(Self { input })
-    }
-
-    pub(crate) fn as_input(&self) -> anyhow::Result<Input> {
-        serde_json::from_value(self.input.to_owned()).map_err(|err| anyhow!(err))
     }
 
     pub(crate) fn as_input_for_calc_htc_hlp(&self) -> anyhow::Result<ReducedInputForCalcHtcHlp> {
@@ -420,20 +415,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn heating_control_type(&self) -> JsonAccessResult<Option<HeatingControlType>> {
-        self.root()?
-            .get("HeatingControlType")
-            .map(
-                |node| match serde_json::from_value::<HeatingControlType>(node.to_owned()) {
-                    Ok(t) => Ok(t),
-                    Err(_) => Err(json_error(
-                        "Could not parse HeatingControlType into a known value",
-                    )),
-                },
-            )
-            .transpose()
-    }
-
     pub fn set_heating_control_type(
         &mut self,
         heating_control_type_value: JsonValue,
@@ -470,41 +451,6 @@ impl InputForProcessing {
     ) -> JsonAccessResult<&Self> {
         self.smart_appliance_controls_mut()?
             .insert(smart_control_name.into(), control);
-
-        Ok(self)
-    }
-
-    pub fn set_non_appliance_demand_24hr_on_smart_appliance_control(
-        &mut self,
-        smart_control_name: &str,
-        non_appliance_demand_24hr_input: IndexMap<Arc<str>, Vec<f64>>,
-    ) -> JsonAccessResult<&Self> {
-        if let Some(ref mut control) = self
-            .smart_appliance_controls_mut()?
-            .get_mut(smart_control_name)
-            .and_then(|v| v.as_object_mut())
-        {
-            control.insert(
-                "non_appliance_demand_24hr".into(),
-                json!(non_appliance_demand_24hr_input),
-            );
-        }
-
-        Ok(self)
-    }
-
-    pub fn set_battery24hr_on_smart_appliance_control(
-        &mut self,
-        smart_control_name: &str,
-        battery24hr_input: SmartApplianceBattery,
-    ) -> JsonAccessResult<&Self> {
-        if let Some(ref mut control) = self
-            .smart_appliance_controls_mut()?
-            .get_mut(smart_control_name)
-            .and_then(|v| v.as_object_mut())
-        {
-            control.insert("battery24hr".into(), json!(battery24hr_input));
-        }
 
         Ok(self)
     }
@@ -634,16 +580,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    #[cfg(test)]
-    pub(crate) fn lighting_efficacy_for_zone(&self, zone: &str) -> JsonAccessResult<Option<f64>> {
-        Ok(self
-            .specific_zone(zone)?
-            .get("Lighting")
-            .and_then(|v| v.as_object())
-            .and_then(|lighting| lighting.get("efficacy"))
-            .and_then(|efficacy| efficacy.as_f64()))
-    }
-
     pub fn set_lighting_efficacy_for_all_zones(
         &mut self,
         efficacy: f64,
@@ -768,12 +704,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn has_named_smart_appliance_control(&self, name: &str) -> JsonAccessResult<bool> {
-        Ok(self
-            .optional_root_object("SmartApplianceControls")?
-            .is_some_and(|controls| controls.contains_key(name)))
-    }
-
     pub(crate) fn set_efficiency_for_all_space_cool_systems(
         &mut self,
         efficiency: f64,
@@ -842,26 +772,6 @@ impl InputForProcessing {
         self.root_object_mut("SpaceHeatSystem")
     }
 
-    pub fn temperature_setback_for_space_heat_system(
-        &self,
-        space_heat_system: &str,
-    ) -> JsonAccessResult<Option<f64>> {
-        let space_heat_systems = self.optional_root_object("SpaceHeatSystem")?;
-        let space_heat_systems = match space_heat_systems {
-            Some(ref space_heat_systems) => space_heat_systems,
-            None => return Ok(None),
-        };
-        let space_heat_system = space_heat_systems.get(space_heat_system);
-
-        Ok(space_heat_system.and_then(|space_heat_system| {
-            space_heat_system.as_object().and_then(|space_heat_system| {
-                space_heat_system
-                    .get("temp_setback")
-                    .and_then(|temp_setback| temp_setback.as_f64())
-            })
-        }))
-    }
-
     pub fn temperature_setback_for_space_cool_system(
         &self,
         space_cool_system: &str,
@@ -902,57 +812,6 @@ impl InputForProcessing {
         }))
     }
 
-    pub fn advanced_start_for_space_heat_system(
-        &self,
-        space_heat_system: &str,
-    ) -> JsonAccessResult<Option<f64>> {
-        let space_heat_systems = self.optional_root_object("SpaceHeatSystem")?;
-        let space_heat_systems = match space_heat_systems {
-            Some(ref space_heat_systems) => space_heat_systems,
-            None => return Ok(None),
-        };
-        let space_heat_system = space_heat_systems.get(space_heat_system);
-
-        Ok(space_heat_system.and_then(|space_heat_system| {
-            space_heat_system.as_object().and_then(|space_heat_system| {
-                space_heat_system
-                    .get("advanced_start")
-                    .and_then(|temp_setback| temp_setback.as_f64())
-            })
-        }))
-    }
-
-    pub(crate) fn set_advance_start_for_space_heat_system(
-        &mut self,
-        space_heat_system: &str,
-        new_advanced_start: f64,
-    ) -> anyhow::Result<&Self> {
-        self.root_object_entry_mut("SpaceHeatSystem")?
-            .get_mut(space_heat_system)
-            .ok_or(anyhow!(
-                "There is no provided space heat system with the name '{space_heat_system}'"
-            ))?
-            .as_object_mut()
-            .ok_or(json_error(
-                "The indicated space heat system was not an object",
-            ))?
-            .insert("advanced_start".into(), new_advanced_start.into());
-        Ok(self)
-    }
-
-    pub(crate) fn set_temperature_setback_for_space_heat_systems(
-        &mut self,
-        new_temperature_setback: Option<f64>,
-    ) -> anyhow::Result<()> {
-        self.root_object_entry_mut("SpaceHeatSystem")?
-            .values_mut()
-            .flat_map(|system| system.as_object_mut())
-            .for_each(|system_details| {
-                system_details.insert("temp_setback".into(), new_temperature_setback.into());
-            });
-        Ok(())
-    }
-
     pub(crate) fn heat_source_for_space_heat_system(
         &self,
         space_heat_system: &str,
@@ -969,19 +828,6 @@ impl InputForProcessing {
                 .as_object()
                 .and_then(|space_heat_system| space_heat_system.get("HeatSource"))
         }))
-    }
-
-    pub(crate) fn set_heat_source_for_all_space_heat_systems(
-        &mut self,
-        heat_source: SpaceHeatSystemHeatSource,
-    ) -> anyhow::Result<()> {
-        self.root_object_entry_mut("SpaceHeatSystem")?
-            .values_mut()
-            .flat_map(|system| system.as_object_mut())
-            .for_each(|system_details| {
-                system_details.insert("HeatSource".into(), json!(heat_source));
-            });
-        Ok(())
     }
 
     pub(crate) fn set_hot_water_source(
@@ -1869,27 +1715,6 @@ impl InputForProcessing {
             .collect())
     }
 
-    #[cfg(test)]
-    pub(crate) fn building_element_by_key(
-        &self,
-        zone_key: &str,
-        key: &str,
-    ) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
-        self.specific_zone(zone_key)?
-            .get("BuildingElement")
-            .ok_or(json_error("BuildingElement node not present"))?
-            .as_object()
-            .ok_or(json_error("BuildingElement node was not an object"))?
-            .get(key)
-            .ok_or(json_error(format!(
-                "BuildingElement with name {key} was not present"
-            )))?
-            .as_object()
-            .ok_or(json_error(
-                "Building element with name {key} not provided as an object",
-            ))
-    }
-
     pub fn all_energy_supply_fuel_types(
         &self,
     ) -> JsonAccessResult<HashSet<smartstring::alias::String>> {
@@ -2065,43 +1890,6 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub fn keyed_mechanical_ventilations_for_processing(
-        &mut self,
-    ) -> JsonAccessResult<
-        IndexMap<smartstring::alias::String, &mut Map<std::string::String, JsonValue>>,
-    > {
-        let mech_vents = match self
-            .infiltration_ventilation_node_mut()?
-            .get_mut("MechanicalVentilation")
-            .and_then(|v| v.as_object_mut())
-        {
-            None => return Ok(Default::default()),
-            Some(mech_vents) => mech_vents,
-        };
-        Ok(mech_vents
-            .iter_mut()
-            .filter_map(|(name, v)| {
-                let mech_vent = match v.as_object_mut() {
-                    None => return None,
-                    Some(mech_vent) => mech_vent,
-                };
-                Some((smartstring::alias::String::from(name), mech_vent))
-            })
-            .collect())
-    }
-
-    pub fn has_mechanical_ventilation(&self) -> bool {
-        self.root_object("InfiltrationVentilation")
-            .ok()
-            .is_some_and(|node| node.contains_key("MechanicalVentilation"))
-    }
-
-    pub fn reset_mechanical_ventilation(&mut self) -> JsonAccessResult<&Self> {
-        self.root_object_entry_mut("InfiltrationVentilation")?
-            .shift_remove("MechanicalVentilation");
-        Ok(self)
-    }
-
     pub fn add_mechanical_ventilation(
         &mut self,
         vent_name: &str,
@@ -2189,31 +1977,6 @@ impl InputForProcessing {
             mech_vent_key
         )))?;
         Ok(mech_vent_control)
-    }
-
-    pub fn appliance_gains_events(
-        &self,
-    ) -> anyhow::Result<IndexMap<smartstring::alias::String, Vec<ApplianceGainsEvent>>> {
-        let appliance_gains = match self.root_object("ApplianceGains") {
-            Ok(appliance_gains) => appliance_gains,
-            Err(_) => return Ok(IndexMap::new()),
-        };
-        appliance_gains
-            .iter()
-            .map(
-                |(name, gain)| -> Result<(smartstring::alias::String, Vec<ApplianceGainsEvent>), _> {
-                    Ok((
-                        smartstring::alias::String::from(name),
-                        serde_json::from_value(
-                            gain.get("Events")
-                                .and_then(|events| events.is_array().then_some(events))
-                                .cloned()
-                                .unwrap_or(json!([])),
-                        )?,
-                    ))
-                },
-            )
-            .collect::<anyhow::Result<_>>()
     }
 
     pub fn set_window_adjust_control_for_infiltration_ventilation(
@@ -2566,9 +2329,6 @@ pub trait UValueEditableBuildingElement {
     fn is_opaque(&self) -> bool;
     fn is_external_door(&self) -> Option<bool>;
     fn remove_thermal_resistance_construction(&mut self);
-    fn height(&self) -> Option<f64>;
-    fn width(&self) -> Option<f64>;
-    fn u_value(&self) -> Option<f64>;
 }
 
 pub struct UValueEditableBuildingElementJsonValue<'a>(
@@ -2602,18 +2362,6 @@ impl UValueEditableBuildingElement for UValueEditableBuildingElementJsonValue<'_
     fn remove_thermal_resistance_construction(&mut self) {
         self.0.shift_remove("thermal_resistance_construction");
     }
-
-    fn height(&self) -> Option<f64> {
-        self.0.get("height").and_then(|v| v.as_f64())
-    }
-
-    fn width(&self) -> Option<f64> {
-        self.0.get("width").and_then(|v| v.as_f64())
-    }
-
-    fn u_value(&self) -> Option<f64> {
-        self.0.get("u_value").and_then(|v| v.as_f64())
-    }
 }
 
 pub(super) fn set_control_min_name_for_heat_source(
@@ -2635,17 +2383,6 @@ pub(super) fn set_control_max_name_for_heat_source(
         .as_object_mut()
         .ok_or(json_error("Heat source is not an object"))?
         .insert("Controlmax".into(), json!(control_name));
-    Ok(())
-}
-
-pub(super) fn set_control_charge_for_heat_source(
-    heat_source: &mut JsonValue,
-    control_name: &str,
-) -> JsonAccessResult<()> {
-    heat_source
-        .as_object_mut()
-        .ok_or(json_error("Heat source is not an object"))?
-        .insert("ControlCharge".into(), json!(control_name));
     Ok(())
 }
 
