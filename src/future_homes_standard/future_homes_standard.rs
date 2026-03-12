@@ -421,8 +421,6 @@ pub(super) fn calc_final_rates(
     results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     number_of_timesteps: usize,
 ) -> anyhow::Result<FinalRates> {
-    // Add unmet demand to list of EnergySupply objects
-
     // For each EnergySupply object:
     // look up relevant factors for import/export from csv or custom factors
     // from input file
@@ -439,6 +437,7 @@ pub(super) fn calc_final_rates(
         .energy_supply()
         .iter()
         .map(|(key, value)| (key.clone(), value))
+        // adding unmet demand to the energy supplies, rather than mutating the input as the Python does
         .chain(
             [(
                 "_unmet_demand".into(),
@@ -460,7 +459,7 @@ pub(super) fn calc_final_rates(
         let (emis_factor_import_export, emis_oos_factor_import_export, pe_factor_import_export) =
             match fuel_code {
                 FuelType::Custom => {
-                    let factor = energy_supply_details.factor.expect("Expected custom fuel type to have associated factor values as part of energy supply input.");
+                    let factor = energy_supply_details.factor.ok_or_else(|| anyhow!("Expected custom fuel type to have associated factor values as part of energy supply input."))?;
                     (
                         vec![factor.emissions_factor_kg_co2e_k_wh],
                         vec![factor.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions],
@@ -489,9 +488,9 @@ pub(super) fn calc_final_rates(
                 _ => {
                     let factor = EMIS_PE_FACTORS
                         .get(&String::from(fuel_code))
-                        .unwrap_or_else(|| {
-                            panic!("Expected factor values in the table for the fuel code {fuel_code} were not present.");
-                        });
+                        .ok_or_else(|| {
+                            anyhow!("Expected factor values in the table for the fuel code {fuel_code} were not present.")
+                        })?;
                     (
                         vec![factor.emissions_factor],
                         vec![factor.emissions_factor_including_out_of_scope_emissions],
@@ -516,6 +515,29 @@ pub(super) fn calc_final_rates(
                 &energy_import[&energy_supply_key],
                 &pe_factor_import_export,
             )?;
+        } else if fuel_code == FuelType::UnmetDemand {
+            // unmet demand is calculated as a special case where it is only the increase in unmet
+            // demand between timesteps that should be accounted for, not the raw number
+
+            let mut energy_import_increases =
+                Vec::with_capacity(energy_import[&energy_supply_key].len());
+            energy_import_increases.push(0.); // set up the first entry as we're going to use windows to perform inter-timestep comparisons
+            for window in energy_import[&energy_supply_key].windows(2) {
+                energy_import_increases.push((window[1] - window[0]).max(0.));
+            }
+
+            supply_emis_result.import = energy_import_increases
+                .iter()
+                .map(|x| x * emis_factor_import_export[0])
+                .collect::<Vec<_>>();
+            supply_emis_oos_result.import = energy_import_increases
+                .iter()
+                .map(|x| x * emis_oos_factor_import_export[0])
+                .collect::<Vec<_>>();
+            supply_pe_result.import = energy_import_increases
+                .iter()
+                .map(|x| x * pe_factor_import_export[0])
+                .collect::<Vec<_>>();
         } else {
             supply_emis_result.import = energy_import[&energy_supply_key]
                 .iter()
@@ -553,6 +575,32 @@ pub(super) fn calc_final_rates(
                         &pe_factor_import_export,
                     )?,
                 ),
+                FuelType::UnmetDemand => {
+                    // unmet demand is calculated as a special case where it is only the decrease in
+                    // unmet demand between timesteps that should be accounted for, not the raw number
+
+                    let mut energy_import_decreases: Vec<f64> =
+                        Vec::with_capacity(energy_export[&energy_supply_key].len());
+                    energy_import_decreases.push(0.);
+                    for window in energy_export[&energy_supply_key].windows(2) {
+                        energy_import_decreases.push((window[1] - window[0]).min(0.));
+                    }
+
+                    (
+                        energy_import_decreases
+                            .iter()
+                            .map(|x| x * emis_factor_import_export[0])
+                            .collect::<Vec<_>>(),
+                        energy_import_decreases
+                            .iter()
+                            .map(|x| x * emis_oos_factor_import_export[0])
+                            .collect::<Vec<_>>(),
+                        energy_import_decreases
+                            .iter()
+                            .map(|x| x * pe_factor_import_export[0])
+                            .collect::<Vec<_>>(),
+                    )
+                }
                 _ => (
                     energy_export[&energy_supply_key]
                         .iter()
@@ -601,20 +649,47 @@ pub(super) fn calc_final_rates(
                 ..
             } = generated_factor;
 
-            (
-                energy_generated
-                    .iter()
-                    .map(|x| x * emis_factor_generated)
-                    .collect::<Vec<_>>(),
-                energy_generated
-                    .iter()
-                    .map(|x| x * emis_oos_factor_generated)
-                    .collect::<Vec<_>>(),
-                energy_generated
-                    .iter()
-                    .map(|x| x * pe_factor_generated)
-                    .collect::<Vec<_>>(),
-            )
+            if fuel_code == FuelType::UnmetDemand {
+                // unmet demand is calculated as a special case where it is only the increase in unmet
+                // demand between timesteps that should be accounted for, not the raw number
+
+                let mut energy_generation_increases: Vec<f64> =
+                    Vec::with_capacity(energy_generated.len());
+                energy_generation_increases.push(0.);
+                for window in energy_generated.windows(2) {
+                    energy_generation_increases.push((window[1] - window[0]).max(0.));
+                }
+
+                (
+                    energy_generation_increases
+                        .iter()
+                        .map(|x| x * emis_factor_generated)
+                        .collect::<Vec<_>>(),
+                    energy_generation_increases
+                        .iter()
+                        .map(|x| x * emis_oos_factor_generated)
+                        .collect::<Vec<_>>(),
+                    energy_generation_increases
+                        .iter()
+                        .map(|x| x * pe_factor_generated)
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                (
+                    energy_generated
+                        .iter()
+                        .map(|x| x * emis_factor_generated)
+                        .collect::<Vec<_>>(),
+                    energy_generated
+                        .iter()
+                        .map(|x| x * emis_oos_factor_generated)
+                        .collect::<Vec<_>>(),
+                    energy_generated
+                        .iter()
+                        .map(|x| x * pe_factor_generated)
+                        .collect::<Vec<_>>(),
+                )
+            }
         } else {
             (
                 vec![0.; number_of_timesteps],
@@ -641,6 +716,29 @@ pub(super) fn calc_final_rates(
                 apply_energy_factor_series(&energy_unregulated, &emis_oos_factor_import_export)?;
             supply_pe_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &pe_factor_import_export)?;
+        } else if fuel_code == FuelType::UnmetDemand {
+            // unmet demand is calculated as a special case where it is only the increase in unmet
+            // demand between timesteps that should be accounted for, not the raw number
+
+            let mut energy_unregulated_increases: Vec<f64> =
+                Vec::with_capacity(energy_unregulated.len());
+            energy_unregulated_increases.push(0.);
+            for window in energy_unregulated.windows(2) {
+                energy_unregulated_increases.push((window[1] - window[0]).max(0.));
+            }
+
+            supply_emis_result.unregulated = energy_unregulated_increases
+                .iter()
+                .map(|x| x * emis_factor_import_export[0])
+                .collect::<Vec<_>>();
+            supply_emis_oos_result.unregulated = energy_unregulated_increases
+                .iter()
+                .map(|x| x * emis_oos_factor_import_export[0])
+                .collect::<Vec<_>>();
+            supply_pe_result.unregulated = energy_unregulated_increases
+                .iter()
+                .map(|x| x * pe_factor_import_export[0])
+                .collect::<Vec<_>>();
         } else {
             supply_emis_result.unregulated = energy_unregulated
                 .iter()
@@ -4292,7 +4390,6 @@ fn create_custom_energy_supply_factors(
     Ok(custom_energy_supply_factors)
 }
 
-#[allow(dead_code)] // for now!! TODO remove dead_code annotation during 1.0.0a4 migration once function is referenced
 pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // detail of removal of FHS fields is delegated to input here
     input.remove_fhs_only_fields()?;
