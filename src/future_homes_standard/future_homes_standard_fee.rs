@@ -1,4 +1,4 @@
-use super::future_homes_standard::{apply_fhs_preprocessing, calc_tfa};
+use super::future_homes_standard::calc_tfa;
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::fhs_part_f_validation::part_f::{
     minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
@@ -162,14 +162,6 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
         .remove_on_site_generation()?
         .remove_all_diverters_from_energy_supplies()?
         .remove_all_batteries_from_energy_supplies()?;
-
-    // Apply standard FHS preprocessing assumptions. Note these should be applied
-    // after the other adjustments are made, because decisions may be based on
-    // e.g. the heating system type.
-    // Note: In SAP 10.2, different gains assumptions were used for the cooling
-    // calculation compared to the heating calculation. However, only one set of
-    // standardised gains have so far been defined here.
-    apply_fhs_preprocessing(input, Some(true), None)?;
 
     Ok(())
 }

@@ -208,7 +208,7 @@ fn edit_infiltration_ventilation(
     let mechanical_ventilation = create_mechanical_ventilation(input, minimum_air_flow_rate)?;
     let background_vents = create_background_vents(input, minimum_vent_area, minimum_vent_count)?;
 
-    let infiltration_ventilation = input.infiltration_ventilation_mut()?;
+    let infiltration_ventilation = input.infiltration_ventilation_node_mut()?;
 
     let leaks = infiltration_ventilation
         .entry("Leaks")
@@ -1044,7 +1044,6 @@ fn calculate_daily_losses(cylinder_vol: f64) -> f64 {
 fn calc_daily_hw_demand(
     input: &mut InputForProcessing,
     total_floor_area: f64,
-
     cold_water_source_key: &str,
 ) -> anyhow::Result<Vec<f64>> {
     // create SimulationTime
@@ -1104,7 +1103,12 @@ fn calc_daily_hw_demand(
 
     let nbeds = calc_nbeds(input)?;
     let number_of_occupants = calc_n_occupants(total_floor_area, nbeds)?;
-    create_hot_water_use_pattern(input, number_of_occupants, &cold_water_feed_temps)?;
+    create_hot_water_use_pattern(
+        input,
+        number_of_occupants,
+        total_floor_area,
+        &cold_water_feed_temps,
+    )?;
     let sim_timestep = simtime.step;
     let total_timesteps = simtime.total_steps();
     let event_types_names_list: Vec<(&str, &str)> = ["Shower", "Bath", "Other"]

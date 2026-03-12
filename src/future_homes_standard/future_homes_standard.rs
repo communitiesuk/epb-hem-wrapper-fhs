@@ -94,33 +94,16 @@ pub(crate) fn initial_preprocessing(
 pub(crate) fn final_preprocessing(
     input: &mut InputForProcessing,
 ) -> anyhow::Result<&InputForProcessing> {
-    static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> =
-        LazyLock::new(|| {
-            load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
-                .expect("Could not read and parse appliance_propensities.csv")
-        });
-
-    static EVAP_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> = LazyLock::new(|| {
-        load_evaporative_profile(Cursor::new(include_str!("./evap_loss_profile.csv")))
-            .expect("Could not read evap_loss_profile.csv.")
-    });
-
-    static COLD_WATER_LOSS_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> =
-        LazyLock::new(|| {
-            load_evaporative_profile(Cursor::new(include_str!("./cold_water_loss_profile.csv")))
-                .expect("Could not read cold_water_loss_profile.csv")
-        });
-
     input.reset_internal_gains()?;
-    let tfa = calc_tfa(input)?;
-    let nbeds = calc_nbeds(input)?;
+
+    let tfa = calc_tfa(&input)?;
+    let nbeds = calc_nbeds(&input)?;
     let n_occupants = calc_n_occupants(tfa, nbeds)?;
 
     // construct schedules
-    let (schedule_occupancy_weekday, schedule_occupancy_weekend) =
+    let (_schedule_occupancy_weekday, _schedule_occupancy_weekend) =
         create_occupancy(n_occupants, APPLIANCE_PROPENSITIES.occupied);
-
-    create_metabolic_gains(n_occupants, input)?; // TODO: update signature 1.0.0a4
+    create_metabolic_gains(n_occupants, input)?;
     create_space_heat_distribution(input)?;
     create_water_heating_pattern(input)?;
     create_heating_pattern(input)?;
@@ -139,27 +122,32 @@ pub(crate) fn final_preprocessing(
             .get("type")
             .ok_or_else(|| anyhow!("Type not found on hot water source"))?
             .as_str()
-            .ok_or_else(|| anyhow!("Type field on hot water source is not a string"))?;
+            .ok_or_else(|| anyhow!("Type field on hot water source is not a string"))?
+            .to_owned();
 
         if hw_source_type == "StorageTank" {
             hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
         } else if hw_source_type == "SmartHotWaterTank" {
             hw_source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
             hw_source.insert("temp_usable".into(), json!(HW_TEMPERATURE));
-        } else if ["PointOfUse", "CombiBoiler", "HIU", "HeatBattery"].contains(&hw_source_type) {
+        } else if ["PointOfUse", "CombiBoiler", "HIU", "HeatBattery"]
+            .contains(&hw_source_type.as_str())
+        {
             hw_source.insert("setpoint_temp".into(), json!(HW_TEMPERATURE));
         }
     }
 
-    let cold_water_feed_temps = create_cold_water_feed_temps(input)?;
-    create_hot_water_use_pattern(input, n_occupants, &cold_water_feed_temps)?;
+    {
+        let cold_water_feed_temps = create_cold_water_feed_temps(input)?;
+        create_hot_water_use_pattern(input, tfa, n_occupants, &cold_water_feed_temps)?;
+    }
     create_cooling(input)?;
     create_window_opening_schedule(input)?;
     create_vent_opening_schedule(input)?;
     window_treatment(input)?;
     create_thermal_penetration(input)?;
-    // TODO 1.0.0a4: create_heating(input)?;
-    // TODO 1.0.0a4 : create_infiltration_ventilation(input)?;
+    create_heating(input)?;
+    create_infiltration_ventilation(input)?;
     calc_sfp_mech_vent(input)?;
     create_imev_pattern(input, SIMTIME_START, SIMTIME_END, SIMTIME_STEP)?;
 
@@ -179,107 +167,20 @@ pub(crate) struct SimSettings {
 
 const SMART_APPLIANCE_CONTROL_NAME: &str = "SmartApplianceControl";
 
-pub(crate) fn apply_fhs_preprocessing(
-    input: &mut InputForProcessing,
-    is_fee: Option<bool>,
-    sim_settings: Option<SimSettings>,
-) -> anyhow::Result<()> {
-    let is_fee = is_fee.unwrap_or(false);
-    let default_sim_settings = SimSettings {
-        heat_balance: false,
-        detailed_output_heating_cooling: false,
-        _use_fast_solver: false,
-        tariff_data_filename: None,
-    };
+static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> = LazyLock::new(|| {
+    load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
+        .expect("Could not read and parse appliance_propensities.csv")
+});
 
-    let sim_settings = sim_settings.unwrap_or(default_sim_settings);
+static EVAP_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> = LazyLock::new(|| {
+    load_evaporative_profile(Cursor::new(include_str!("./evap_loss_profile.csv")))
+        .expect("Could not read evap_loss_profile.csv.")
+});
 
-    static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> =
-        LazyLock::new(|| {
-            load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
-                .expect("Could not read and parse appliance_propensities.csv")
-        });
-
-    static EVAP_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> = LazyLock::new(|| {
-        load_evaporative_profile(Cursor::new(include_str!("./evap_loss_profile.csv")))
-            .expect("Could not read evap_loss_profile.csv.")
-    });
-
-    static COLD_WATER_LOSS_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> =
-        LazyLock::new(|| {
-            load_evaporative_profile(Cursor::new(include_str!("./cold_water_loss_profile.csv")))
-                .expect("Could not read cold_water_loss_profile.csv")
-        });
-
-    input.set_simulation_time(simtime())?;
-
-    input.reset_internal_gains()?;
-
-    let tfa = calc_tfa(input)?;
-
-    let nbeds = calc_nbeds(input)?;
-
-    let n_occupants = calc_n_occupants(tfa, nbeds)?;
-
-    // construct schedules
-    let (_schedule_occupancy_weekday, _schedule_occupancy_weekend) =
-        create_occupancy(n_occupants, APPLIANCE_PROPENSITIES.occupied);
-
-    create_metabolic_gains(n_occupants, input)?;
-    create_water_heating_pattern(input)?;
-    create_heating_pattern(input)?;
-    create_evaporative_losses(input, tfa, n_occupants, &EVAP_PROFILE_DATA)?;
-    create_cold_water_losses(input, tfa, n_occupants, &COLD_WATER_LOSS_PROFILE_DATA)?;
-    create_lighting_gains(input, tfa, n_occupants)?;
-    create_appliance_gains(input, tfa, n_occupants, &APPLIANCE_PROPENSITIES)?;
-
-    for source in input.hot_water_source_mut()?.values_mut() {
-        let source_type: String = source
-            .get("type")
-            .ok_or(json_error("Hot water source did not have a type field"))?
-            .as_str()
-            .ok_or(json_error("Type field was not a string"))?
-            .into();
-        let source = source
-            .as_object_mut()
-            .ok_or(json_error("Hot water source was not an object"))?;
-        match source_type.as_str() {
-            "StorageTank" => {
-                source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
-            }
-            "SmartHotWaterTank" => {
-                source.insert("init_temp".into(), json!(HW_SETPOINT_MAX));
-                source.insert("temp_usable".into(), json!(HW_TEMPERATURE));
-            }
-            _ => {
-                source.insert("setpoint_temp".into(), json!(HW_TEMPERATURE));
-            }
-        };
-    }
-
-    let cold_water_feed_temps = create_cold_water_feed_temps(input)?;
-    create_hot_water_use_pattern(input, n_occupants, &cold_water_feed_temps)?;
-    create_cooling(input)?;
-    create_window_opening_schedule(input)?;
-    create_vent_opening_schedule(input)?;
-    window_treatment(input)?;
-    create_thermal_penetration(input)?;
-    if !is_fee {
-        calc_sfp_mech_vent(input)?;
-    }
-    if input.has_mechanical_ventilation() {
-        create_mev_pattern(input)?;
-    }
-
-    set_temp_internal_static_calcs(input)?;
-
-    if input.has_named_smart_appliance_control(SMART_APPLIANCE_CONTROL_NAME)? {
-        // run project for 24 hours to obtain initial estimate for daily heating demand
-        sim_24h(input, sim_settings)?;
-    }
-
-    Ok(())
-}
+static COLD_WATER_LOSS_PROFILE_DATA: LazyLock<HalfHourWeeklyProfileData> = LazyLock::new(|| {
+    load_evaporative_profile(Cursor::new(include_str!("./cold_water_loss_profile.csv")))
+        .expect("Could not read cold_water_loss_profile.csv")
+});
 
 fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
     for building_element in input.all_building_element_values_mut()? {
@@ -976,6 +877,7 @@ fn create_occupancy(n_occupants: f64, occupancy_fhs: [f64; 24]) -> ([f64; 24], [
 fn create_metabolic_gains(
     number_of_occupants: f64,
     input: &mut InputForProcessing,
+    // NB. the Python includes two additional parameters here but they are unused
 ) -> anyhow::Result<()> {
     // Calculate total body surface area of occupants
     let a = 2.0001;
@@ -3296,6 +3198,7 @@ fn check_shower_flowrate(input: &InputForProcessing) -> anyhow::Result<()> {
 
 pub(super) fn create_hot_water_use_pattern(
     input: &mut InputForProcessing,
+    _tfa: f64,
     number_of_occupants: f64,
     cold_water_feed_temps: &[f64],
 ) -> anyhow::Result<()> {
@@ -3606,6 +3509,63 @@ fn window_treatment(input: &mut InputForProcessing) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+fn create_heating(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for heating_system in input.space_heat_systems_mut()?.values_mut() {
+        if heating_system
+            .get("type")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|type_str| type_str == "InstantElecHeater")
+        {
+            if let Some(convective_type) = heating_system
+                .get("convective_type")
+                .and_then(JsonValue::as_str)
+            {
+                let frac_convective_value = match convective_type {
+                    "Air heating (convectors, fan coils etc.)" => 0.95,
+                    "Free heating surface (radiators, radiant panels etc.)" => 0.70,
+                    "Floor heating, low temperature radiant tube heaters, luminous heaters, wood stoves" => 0.50,
+                    "Wall heating, radiant ceiling panels, accumulation stoves" => 0.35,
+                    "Ceiling heating, radiant ceiling electric heating" => 0.20,
+                    _ => bail!("Unknown convective type encountered: {convective_type}"),
+                };
+                let heating_system = heating_system
+                    .as_object_mut()
+                    .ok_or_else(|| anyhow!("Expected object"))?;
+                heating_system.insert("frac_convective".into(), json!(frac_convective_value));
+                heating_system.remove("convective_type");
+            }
+        }
+    }
+
+    if let Some(wet_heat_sources) = input.optional_root_object_mut("WetHeatSource")? {
+        for heat_source in wet_heat_sources.values_mut() {
+            if heat_source
+                .get("type")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|type_str| type_str == "HeatBattery")
+            {
+                if let Some(heat_source) = heat_source.as_object_mut() {
+                    heat_source.insert("heat_battery_location".into(), json!("internal"));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn create_infiltration_ventilation(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    let test_pressure_node = input.infiltration_ventilation_node_mut()?.get_mut("Leaks").and_then(JsonValue::as_object_mut).and_then(|node| node.get_mut("test_pressure")).ok_or_else(|| anyhow!("The `test_pressure` field for infiltration ventilation leaks could not be found when expected."))?;
+    let test_pressure_value = match test_pressure_node.as_str() {
+        Some("Standard") => 50,
+        Some("Pulse test only") => 4,
+        _ => bail!("The `test_pressure` field for infiltration ventilation leaks must be either `Standard` or `Pulse test only`."),
+    };
+    *test_pressure_node = json!(test_pressure_value);
 
     Ok(())
 }

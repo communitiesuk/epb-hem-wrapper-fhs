@@ -138,7 +138,8 @@ impl InputForProcessing {
     ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
         Ok(self.root()?.get(root_key).and_then(|v| v.as_object()))
     }
-    fn optional_root_object_mut(
+
+    pub fn optional_root_object_mut(
         &mut self,
         root_key: &str,
     ) -> JsonAccessResult<Option<&mut Map<std::string::String, JsonValue>>> {
@@ -2255,12 +2256,6 @@ impl InputForProcessing {
             .get("ventilation_zone_base_height")
             .and_then(|v| v.as_f64())
             .ok_or_else(|| json_error("ventilation_zone_base_height missing or not a number"))
-    }
-
-    pub(crate) fn infiltration_ventilation_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
-        self.root_object_entry_mut("InfiltrationVentilation")
     }
 
     pub(crate) fn set_heat_source_wet(
