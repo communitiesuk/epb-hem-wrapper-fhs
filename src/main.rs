@@ -3,6 +3,7 @@ use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
 };
+use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::run_wrappers;
 use home_energy_model_wrapper_fhs::FhsFlags;
 use std::ffi::OsStr;
@@ -44,6 +45,13 @@ struct WrappersArgs {
         help = "Whether to output detailed information about heating and cooling"
     )]
     detailed_output_heating_cooling: bool,
+    #[clap(
+        long,
+        value_enum,
+        num_args = 1..=2,
+        help = "output format(s): csv, json, or both; default to csv"
+    )]
+    core_output_formats: Option<Vec<OutputFormat>>,
 }
 
 #[derive(Args, Clone, Copy, Default, Debug)]
@@ -151,6 +159,7 @@ fn main() -> anyhow::Result<()> {
         args.preprocess_only,
         args.heat_balance,
         args.detailed_output_heating_cooling,
+        args.core_output_formats.as_ref(),
     )?;
 
     if let Some(response) = response {

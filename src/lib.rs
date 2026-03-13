@@ -13,8 +13,8 @@ use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output_writer::OutputWriter;
 pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
-use home_energy_model::CalculationResult;
 pub use home_energy_model::HemResponse;
+use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -58,6 +58,9 @@ pub(crate) trait HemWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
+        core_output_formats: Option<&Vec<OutputFormat>>,
+        heat_balance: bool,
+        detailed_output_heating_cooling: bool,
     ) -> anyhow::Result<Option<HemResponse>>;
 }
 
@@ -98,14 +101,27 @@ impl HemWrapper for ChosenWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
+        core_output_formats: Option<&Vec<OutputFormat>>,
+        heat_balance: bool,
+        detailed_output_heating_cooling: bool,
     ) -> anyhow::Result<Option<HemResponse>> {
         match self {
-            ChosenWrapper::FhsSingleCalc(wrapper) => {
-                wrapper.apply_postprocessing(output, results, flags)
-            }
-            ChosenWrapper::FhsCompliance(wrapper) => {
-                wrapper.apply_postprocessing(output, results, flags)
-            }
+            ChosenWrapper::FhsSingleCalc(wrapper) => wrapper.apply_postprocessing(
+                output,
+                results,
+                flags,
+                core_output_formats,
+                heat_balance,
+                detailed_output_heating_cooling,
+            ),
+            ChosenWrapper::FhsCompliance(wrapper) => wrapper.apply_postprocessing(
+                output,
+                results,
+                flags,
+                core_output_formats,
+                heat_balance,
+                detailed_output_heating_cooling,
+            ),
         }
     }
 }
@@ -121,6 +137,7 @@ pub fn run_wrappers(
     preprocess_only: bool,
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
+    core_output_formats: Option<&Vec<OutputFormat>>,
 ) -> Result<Option<HemResponse>, HemError> {
     catch_unwind(AssertUnwindSafe(|| {
         #[instrument(skip_all)]
@@ -234,11 +251,14 @@ pub fn run_wrappers(
             results: &HashMap<CalculationKey, CalculationResult>,
             wrapper: &impl HemWrapper,
             flags: &FhsFlags,
+            core_output_formats: Option<&Vec<OutputFormat>>,
+            heat_balance: bool,
+            detailed_output_heating_cooling: bool,
         ) -> anyhow::Result<Option<HemResponse>> {
-            wrapper.apply_postprocessing(output, results, flags)
+            wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling)
         }
 
-        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags)
+        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
     }))
         .map_err(|e| {

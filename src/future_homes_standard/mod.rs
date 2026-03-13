@@ -16,8 +16,8 @@ use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_prep
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output::{Output, OutputCore, OutputSummary};
 use home_energy_model::output_writer::OutputWriter;
-use home_energy_model::CalculationResult;
-use home_energy_model::HemResponse;
+use home_energy_model::{write_core_output_files, HemResponse};
+use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -73,11 +73,21 @@ impl HemWrapper for FhsSingleCalcWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
+        core_output_formats: Option<&Vec<OutputFormat>>,
+        heat_balance: bool,
+        detailed_output_heating_cooling: bool,
     ) -> anyhow::Result<Option<HemResponse>> {
         let results = results
             .get(&CalculationKey::Primary)
             .expect("A primary calculation was expected in the FHS single calc wrapper");
-        do_fhs_postprocessing(output, results, flags)
+        do_fhs_postprocessing(
+            output,
+            results,
+            flags,
+            core_output_formats,
+            heat_balance,
+            detailed_output_heating_cooling,
+        )
     }
 }
 
@@ -119,11 +129,21 @@ impl HemWrapper for FhsComplianceWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         _flags: &FhsFlags,
+        core_output_formats: Option<&Vec<OutputFormat>>,
+        heat_balance: bool,
+        detailed_output_heating_cooling: bool,
     ) -> anyhow::Result<Option<HemResponse>> {
         FHS_COMPLIANCE_CALCULATIONS
             .par_iter()
             .map(|(key, flags)| {
-                do_fhs_postprocessing(output, &results[key], flags)?;
+                do_fhs_postprocessing(
+                    output,
+                    &results[key],
+                    flags,
+                    core_output_formats,
+                    heat_balance,
+                    detailed_output_heating_cooling,
+                )?;
                 Ok(())
             })
             .collect::<anyhow::Result<()>>()?;
@@ -195,6 +215,9 @@ fn do_fhs_postprocessing(
     output_writer: &impl OutputWriter,
     results: &CalculationResult,
     flags: &FhsFlags,
+    core_output_formats: Option<&Vec<OutputFormat>>,
+    heat_balance: bool,
+    detailed_output_heating_cooling: bool,
 ) -> anyhow::Result<Option<HemResponse>> {
     let input = &results.input.clone();
     let OutputCore {
@@ -204,6 +227,20 @@ fn do_fhs_postprocessing(
         energy_export,
         ..
     } = &results.output.core;
+
+    if let Some(output_formats) = core_output_formats {
+        let steps_in_hours = results.input.simulation_time.step;
+
+        write_core_output_files(
+            &results.output,
+            results.input.as_ref(),
+            output_writer,
+            output_formats,
+            steps_in_hours,
+            heat_balance,
+            detailed_output_heating_cooling,
+        )?;
+    }
 
     // let filename_prefix = bitflags_match!(*flags, {
     //     FhsFlags::FHS => "FHS",
