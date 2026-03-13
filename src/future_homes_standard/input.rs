@@ -347,6 +347,34 @@ impl InputForProcessing {
         }
     }
 
+    pub(crate) fn number_of_bathrooms(&self) -> JsonAccessResult<usize> {
+        Ok(self
+            .input
+            .get("NumberOfBathrooms")
+            .and_then(|n| n.as_u64())
+            .ok_or_else(|| json_error("NumberOfBathrooms not available as positive integer"))?
+            as usize)
+    }
+
+    pub(crate) fn number_of_utility_rooms(&self) -> JsonAccessResult<usize> {
+        Ok(self
+            .input
+            .get("NumberOfUtilityRooms")
+            .and_then(|n| n.as_u64())
+            .ok_or_else(|| json_error("NumberOfUtilityRooms not available as positive integer"))?
+            as usize)
+    }
+
+    pub(crate) fn number_of_sanitary_accommodations(&self) -> JsonAccessResult<usize> {
+        Ok(self
+            .input
+            .get("NumberOfSanitaryAccommodations")
+            .and_then(|n| n.as_u64())
+            .ok_or_else(|| {
+                json_error("NumberOfSanitaryAccommodations not available as positive integer")
+            })? as usize)
+    }
+
     pub(super) fn number_of_tapped_rooms(&self) -> JsonAccessResult<usize> {
         match self.input.get("NumberOfTappedRooms") {
             Some(JsonValue::Number(n)) => Ok(n
@@ -355,6 +383,13 @@ impl InputForProcessing {
                 as usize),
             _ => Err(json_error("NumberOfTappedRooms not found or not a number")),
         }
+    }
+
+    pub(crate) fn kitchen_extractor_hood_external(&self) -> JsonAccessResult<bool> {
+        self.input
+            .get("KitchenExtractorHoodExternal")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| json_error("Extractor hood external not found or not a boolean"))
     }
 
     fn internal_gains_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
@@ -1868,6 +1903,12 @@ impl InputForProcessing {
         }
 
         Ok(())
+    }
+
+    pub fn infiltration_ventilation_node(&self) -> JsonAccessResult<&JsonValue> {
+        self.root()?
+            .get("InfiltrationVentilation")
+            .ok_or_else(|| json_error("InfiltrationVentilation node not found"))
     }
 
     pub fn infiltration_ventilation_node_mut(

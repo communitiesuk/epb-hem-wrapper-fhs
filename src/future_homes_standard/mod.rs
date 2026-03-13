@@ -6,9 +6,11 @@ use crate::future_homes_standard::input::InputForProcessing;
 use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
 
-use crate::future_homes_standard::future_homes_standard::final_preprocessing;
+use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
+use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metric};
 use crate::future_homes_standard::project_lookups::by_fuel;
+use anyhow::anyhow;
 use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
@@ -144,25 +146,39 @@ static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
     });
 
 fn do_fhs_preprocessing(
-    input_for_processing: &mut InputForProcessing,
+    input: &mut InputForProcessing,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     flags: &FhsFlags,
 ) -> anyhow::Result<()> {
-    // Apply required preprocessing steps, if any
-    if flags.contains(FhsFlags::FHS_FEE_NOTIONAL) {
-        apply_fhs_notional_preprocessing(input_for_processing, custom_energy_supply_factors, true)?;
-    }
-    if flags.contains(FhsFlags::FHS_NOTIONAL) {
-        apply_fhs_notional_preprocessing(
-            input_for_processing,
-            custom_energy_supply_factors,
-            false,
+    // Validate ventilation rates against part F
+    if flags.contains(FhsFlags::FHS) {
+        validate_dwelling_ventilation(
+            input.infiltration_ventilation_node()?,
+            calc_tfa(input)?,
+            input.number_of_bedrooms()?,
+            input.number_of_habitable_rooms()?,
+            input
+                .number_of_wet_rooms()?
+                .ok_or_else(|| anyhow!("Expected NumberOfWetRooms to be provided"))?,
+            input.number_of_bathrooms()?,
+            input.number_of_utility_rooms()?,
+            input.number_of_sanitary_accommodations()?,
+            input.storeys_in_dwelling()?,
+            input.kitchen_extractor_hood_external()?,
         )?;
     }
-    if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
-        apply_fhs_fee_preprocessing(input_for_processing)?;
+    if flags.contains(FhsFlags::FHS_FEE_NOTIONAL) {
+        apply_fhs_notional_preprocessing(input, custom_energy_supply_factors, true)?;
     }
-    final_preprocessing(input_for_processing)?;
+    if flags.contains(FhsFlags::FHS_NOTIONAL) {
+        apply_fhs_notional_preprocessing(input, custom_energy_supply_factors, false)?;
+    }
+    if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
+        apply_fhs_fee_preprocessing(input)?;
+    }
+
+    final_preprocessing(input)?;
+
     Ok(())
 }
 
