@@ -2463,13 +2463,13 @@ fn create_appliance_gains(
         }
     }
 
-    appliance_kwhcycle.sort_keys();
-    appliance_kwhcycle.reverse();
-
     // Assign priority to those with a kWhcycle value, in reverse order
-    // TODO: 1.0.0a4 check that this is equivalent to the Python
-    for (appliance, priority) in appliance_kwhcycle {
-        input.set_priority_for_gains_appliance(priority as isize, &appliance)?;
+    for (priority, appliance) in appliance_kwhcycle
+        .sorted_by(|_, v1, _, v2| v1.total_cmp(v2))
+        .rev()
+        .enumerate()
+    {
+        input.set_priority_for_gains_appliance(priority as isize, &appliance.0)?;
     }
 
     Ok(())
