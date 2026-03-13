@@ -181,7 +181,7 @@ pub fn run_wrappers(
         // 2. apply preprocessing from wrappers
         let wrapper = choose_wrapper(flags);
         let custom_energy_supply_factors = initial_preprocessing(&mut input_for_processing)?;
-        // TODO: call validate_dwelling_ventilation if "actual"/"fhs"
+
         let input = match catch_unwind(AssertUnwindSafe(|| {
             apply_preprocessing_from_wrappers(input_for_processing, &custom_energy_supply_factors, &wrapper, flags)
                 .map_err(HemError::InvalidRequest)
