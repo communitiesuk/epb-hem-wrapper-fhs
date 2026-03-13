@@ -61,6 +61,7 @@ pub(crate) trait HemWrapper {
         core_output_formats: Option<&Vec<OutputFormat>>,
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>>;
 }
 
@@ -104,6 +105,7 @@ impl HemWrapper for ChosenWrapper {
         core_output_formats: Option<&Vec<OutputFormat>>,
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
         match self {
             ChosenWrapper::FhsSingleCalc(wrapper) => wrapper.apply_postprocessing(
@@ -113,6 +115,7 @@ impl HemWrapper for ChosenWrapper {
                 core_output_formats,
                 heat_balance,
                 detailed_output_heating_cooling,
+                custom_energy_supply_factors,
             ),
             ChosenWrapper::FhsCompliance(wrapper) => wrapper.apply_postprocessing(
                 output,
@@ -121,6 +124,7 @@ impl HemWrapper for ChosenWrapper {
                 core_output_formats,
                 heat_balance,
                 detailed_output_heating_cooling,
+                custom_energy_supply_factors,
             ),
         }
     }
@@ -254,11 +258,12 @@ pub fn run_wrappers(
             core_output_formats: Option<&Vec<OutputFormat>>,
             heat_balance: bool,
             detailed_output_heating_cooling: bool,
+            custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         ) -> anyhow::Result<Option<HemResponse>> {
-            wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling)
+            wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
         }
 
-        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling)
+        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
     }))
         .map_err(|e| {

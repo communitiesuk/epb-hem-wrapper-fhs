@@ -4,6 +4,7 @@ use crate::future_homes_standard::future_homes_standard::{calc_final_rates, Fina
 use crate::future_homes_standard::future_homes_standard_fee::calc_fabric_energy_efficiency;
 use crate::CalculationKey;
 use anyhow::anyhow;
+use home_energy_model::input::CustomEnergySourceFactor;
 use home_energy_model::CalculationResult;
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -225,10 +226,20 @@ impl FhsComplianceCalculationResult for CalculatedComplianceResult {
     }
 }
 
-impl TryFrom<&HashMap<CalculationKey, CalculationResult>> for CalculatedComplianceResult {
+impl
+    TryFrom<(
+        &HashMap<CalculationKey, CalculationResult>,
+        &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    )> for CalculatedComplianceResult
+{
     type Error = anyhow::Error;
 
-    fn try_from(results: &HashMap<CalculationKey, CalculationResult>) -> Result<Self, Self::Error> {
+    fn try_from(
+        (results, custom_energy_source_factors): (
+            &HashMap<CalculationKey, CalculationResult>,
+            &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        ),
+    ) -> Result<Self, Self::Error> {
         let dwelling_fhs_results = results
             .get(&CalculationKey::Fhs)
             .ok_or_else(|| anyhow!("Results were not available for the FHS calculation key."))?;
@@ -266,6 +277,7 @@ impl TryFrom<&HashMap<CalculationKey, CalculationResult>> for CalculatedComplian
                 &dwelling_fhs_results.output.core.energy_export,
                 &dwelling_fhs_results.output.core.results_end_user,
                 dwelling_fhs_results.output.core.timestep_array.len(),
+                custom_energy_source_factors,
             )?,
             target_final_rates: calc_final_rates(
                 input,
@@ -273,6 +285,7 @@ impl TryFrom<&HashMap<CalculationKey, CalculationResult>> for CalculatedComplian
                 &notional_fhs_results.output.core.energy_export,
                 &notional_fhs_results.output.core.results_end_user,
                 notional_fhs_results.output.core.timestep_array.len(),
+                custom_energy_source_factors,
             )?,
             dwelling_fabric_energy_efficiency: calc_fabric_energy_efficiency(
                 dwelling_fhs_fee_results

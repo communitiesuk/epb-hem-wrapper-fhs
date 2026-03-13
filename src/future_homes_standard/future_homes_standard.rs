@@ -33,9 +33,6 @@ use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 
-const _EMIS_FACTOR_NAME: &str = "Emissions Factor kgCO2e/kWh";
-const _EMIS_OOS_FACTOR_NAME: &str = "Emissions Factor kgCO2e/kWh including out-of-scope emissions";
-const _PE_FACTOR_NAME: &str = "Primary Energy Factor kWh/kWh delivered";
 const HOURS_TO_END_DEC: f64 = 8760.;
 
 pub(crate) const ENERGY_SUPPLY_NAME_GAS: &str = "mains gas";
@@ -381,6 +378,7 @@ pub fn apply_fhs_postprocessing(
     results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     timestep_array: &[f64],
     notional: bool,
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
 
@@ -396,6 +394,7 @@ pub fn apply_fhs_postprocessing(
         energy_export,
         results_end_user,
         no_of_timesteps,
+        custom_energy_supply_factors,
     )?;
 
     // Write results to output files
@@ -418,6 +417,7 @@ pub(super) fn calc_final_rates(
     energy_export: &IndexMap<Arc<str>, Vec<f64>>,
     results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     number_of_timesteps: usize,
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
 ) -> anyhow::Result<FinalRates> {
     // For each EnergySupply object:
     // look up relevant factors for import/export from csv or custom factors
@@ -453,15 +453,20 @@ pub(super) fn calc_final_rates(
 
         let fuel_code = energy_supply_details.fuel;
 
+        let energy_supply_key: Arc<str> = energy_supply_key.as_str().into();
+
         // Get emissions/PE factors for import/export
         let (emis_factor_import_export, emis_oos_factor_import_export, pe_factor_import_export) =
             match fuel_code {
                 FuelType::Custom => {
-                    let factor = energy_supply_details.factor.ok_or_else(|| anyhow!("Expected custom fuel type to have associated factor values as part of energy supply input."))?;
+                    let custom_fuel_data = custom_energy_supply_factors[&energy_supply_key];
                     (
-                        vec![factor.emissions_factor_kg_co2e_k_wh],
-                        vec![factor.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions],
-                        vec![factor.primary_energy_factor_k_wh_k_wh_delivered],
+                        vec![custom_fuel_data.emissions_factor_kg_co2e_k_wh],
+                        vec![
+                            custom_fuel_data
+                                .emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions,
+                        ],
+                        vec![custom_fuel_data.primary_energy_factor_k_wh_k_wh_delivered],
                     )
                 }
                 FuelType::Electricity => {
@@ -496,8 +501,6 @@ pub(super) fn calc_final_rates(
                     )
                 }
             };
-
-        let energy_supply_key: Arc<str> = energy_supply_key.as_str().into();
 
         // Calculate energy imported and associated emissions/PE
         if fuel_code == FuelType::Electricity {

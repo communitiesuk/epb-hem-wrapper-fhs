@@ -76,6 +76,7 @@ impl HemWrapper for FhsSingleCalcWrapper {
         core_output_formats: Option<&Vec<OutputFormat>>,
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
         let results = results
             .get(&CalculationKey::Primary)
@@ -87,6 +88,7 @@ impl HemWrapper for FhsSingleCalcWrapper {
             core_output_formats,
             heat_balance,
             detailed_output_heating_cooling,
+            custom_energy_supply_factors,
         )
     }
 }
@@ -132,6 +134,7 @@ impl HemWrapper for FhsComplianceWrapper {
         core_output_formats: Option<&Vec<OutputFormat>>,
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
+        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
         FHS_COMPLIANCE_CALCULATIONS
             .par_iter()
@@ -143,12 +146,14 @@ impl HemWrapper for FhsComplianceWrapper {
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
+                    custom_energy_supply_factors,
                 )?;
                 Ok(())
             })
             .collect::<anyhow::Result<()>>()?;
 
-        let compliance_result = CalculatedComplianceResult::try_from(results)?;
+        let compliance_result =
+            CalculatedComplianceResult::try_from((results, custom_energy_supply_factors))?;
         let compliance_response = FhsComplianceResponse::build_from(&compliance_result)?;
 
         Ok(Some(HemResponse::new(compliance_response)))
@@ -218,6 +223,7 @@ fn do_fhs_postprocessing(
     core_output_formats: Option<&Vec<OutputFormat>>,
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
+    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
 ) -> anyhow::Result<Option<HemResponse>> {
     let input = &results.input.clone();
     let OutputCore {
@@ -266,6 +272,7 @@ fn do_fhs_postprocessing(
             results_end_user,
             timestep_array,
             notional,
+            custom_energy_supply_factors,
         )?;
     } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         let OutputSummary {
