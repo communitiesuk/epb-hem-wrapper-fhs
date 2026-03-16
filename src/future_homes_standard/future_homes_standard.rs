@@ -641,15 +641,14 @@ pub(super) fn calc_final_rates(
             supply_pe_result.generated,
         ) = if energy_generated.iter().sum::<f64>() > 0. {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
-            let fuel_code_generated = format!("{}_generated", fuel_code);
-            let generated_factor = EMIS_PE_FACTORS.get(&String::from(fuel_code_generated)).unwrap_or_else(|| panic!("Fuel code '{fuel_code}' does not have a generated row in the EMIS factors file."));
+            let generation_factors = EMIS_PE_FACTORS.get(&String::from("generation")).unwrap_or_else(|| panic!("Generation row not found in the EMIS factors file."));
             let FactorData {
                 emissions_factor: emis_factor_generated,
                 emissions_factor_including_out_of_scope_emissions: emis_oos_factor_generated,
                 primary_energy_factor: pe_factor_generated,
                 ..
-            } = generated_factor;
-
+            } = generation_factors;
+            
             if fuel_code == FuelType::UnmetDemand {
                 // unmet demand is calculated as a special case where it is only the increase in unmet
                 // demand between timesteps that should be accounted for, not the raw number
