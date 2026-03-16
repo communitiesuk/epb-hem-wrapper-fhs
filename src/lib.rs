@@ -7,19 +7,23 @@ use crate::future_homes_standard::future_homes_standard::initial_preprocessing;
 use crate::future_homes_standard::input::{ingest_for_processing, InputForProcessing};
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
 use anyhow::anyhow;
+use anyhow::bail;
 use bitflags::bitflags;
 use home_energy_model::errors::{HemError, PostprocessingError};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output_writer::OutputWriter;
 pub use home_energy_model::read_weather_file;
-use home_energy_model::read_weather_file::ExternalConditions as ExternalConditionsFromFile;
+use home_energy_model::read_weather_file::{
+    epw_weather_data_to_external_conditions, ExternalConditions,
+};
 pub use home_energy_model::HemResponse;
 use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::Read;
+use std::fs::File;
+use std::io::{Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use tracing::{error, instrument};
@@ -135,7 +139,7 @@ pub fn run_wrappers(
     // TODO: consider if this should move to main.rs
     input: impl Read,
     output_writer: impl OutputWriter,
-    external_conditions_data: Option<ExternalConditionsFromFile>,
+    external_conditions_data: Option<ExternalConditions>,
     tariff_data_file: Option<&str>,
     flags: &FhsFlags,
     preprocess_only: bool,
@@ -147,11 +151,17 @@ pub fn run_wrappers(
         #[instrument(skip_all)]
         fn ingest_input_and_start_preprocessing(
             input: impl Read,
-            external_conditions_data: Option<&ExternalConditionsFromFile>,
+            external_conditions_data: Option<&ExternalConditions>,
         ) -> anyhow::Result<InputForProcessing> {
             let mut input_for_processing = ingest_for_processing(input)?;
+            let default_weather_file = epw_weather_data_to_external_conditions(File::open("../future_homes_standard/RAF_Bedford_01.epw")?);
+            let default_external_conditions_data = match default_weather_file {
+                Ok(data) => data,
+                Err(_) => bail!("Could not parse the default weather file!"),
+            };
+            let external_conditions_data = external_conditions_data.unwrap_or(&default_external_conditions_data);
             input_for_processing
-                .merge_external_conditions_data(external_conditions_data.map(|x| x.into()))?;
+                .merge_external_conditions_data(external_conditions_data.into())?;
 
             // Validate dwelling storeys is not greater than building storeys
             validate_storeys_in_building_and_dwelling(&input_for_processing)?;

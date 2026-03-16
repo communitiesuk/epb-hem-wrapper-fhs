@@ -164,19 +164,21 @@ impl InputForProcessing {
 
     pub(crate) fn merge_external_conditions_data(
         &mut self,
-        external_conditions_data: Option<ExternalConditionsInput>,
+        external_conditions: ExternalConditionsInput,
     ) -> anyhow::Result<()> {
-        if let Some(external_conditions) = external_conditions_data {
-            let shading_segments = self
-                .root_object("ExternalConditions")?
-                .get("shading_segments")
-                .cloned()
-                .unwrap_or(json!([]));
-            let mut new_external_conditions = serde_json::to_value(external_conditions)?;
-            let new_external_conditions_map = new_external_conditions.as_object_mut().ok_or(json_error("External conditions was not a JSON object when it was expected to be provided as one"))?;
-            new_external_conditions_map.insert("shading_segments".into(), shading_segments);
-            self.set_on_root_key("ExternalConditions", new_external_conditions)?;
-        }
+        let shading_segments = self
+            .root_object("ExternalConditions")?
+            .get("shading_segments")
+            .cloned()
+            .unwrap_or(json!([]));
+        let mut new_external_conditions = serde_json::to_value(external_conditions)?;
+        let new_external_conditions_map = new_external_conditions
+            .as_object_mut()
+            .ok_or(json_error(
+            "External conditions was not a JSON object when it was expected to be provided as one",
+        ))?;
+        new_external_conditions_map.insert("shading_segments".into(), shading_segments);
+        self.set_on_root_key("ExternalConditions", new_external_conditions)?;
 
         Ok(())
     }
