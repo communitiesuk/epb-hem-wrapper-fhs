@@ -87,8 +87,8 @@ pub(crate) fn final_preprocessing(
 ) -> anyhow::Result<&InputForProcessing> {
     input.reset_internal_gains()?;
 
-    let tfa = calc_tfa(&input)?;
-    let nbeds = calc_nbeds(&input)?;
+    let tfa = calc_tfa(input)?;
+    let nbeds = calc_nbeds(input)?;
     let n_occupants = calc_n_occupants(tfa, nbeds)?;
 
     // construct schedules
@@ -149,8 +149,6 @@ pub(crate) fn final_preprocessing(
     Ok(input)
 }
 
-const SMART_APPLIANCE_CONTROL_NAME: &str = "SmartApplianceControl";
-
 static APPLIANCE_PROPENSITIES: LazyLock<AppliancePropensities<Normalised>> = LazyLock::new(|| {
     load_appliance_propensities(Cursor::new(include_str!("./appliance_propensities.csv")))
         .expect("Could not read and parse appliance_propensities.csv")
@@ -181,9 +179,7 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
                     .get("pitch")
                     .and_then(|el| el.as_f64())
                     .ok_or_else(|| anyhow!("Building element pitch not found"))?;
-                if pitch > 120. {
-                    building_element["colour"] = json!("Intermediate");
-                } else if pitch < 60. {
+                if !(60. ..=120.).contains(&pitch) {
                     building_element["colour"] = json!("Intermediate");
                 }
                 if [0., 180.].contains(&pitch) {
@@ -370,6 +366,7 @@ fn apply_energy_factor_series(energy_data: &[f64], factors: &Vec<f64>) -> anyhow
         .collect_vec())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_fhs_postprocessing(
     input: &Input,
     output_writer: &impl OutputWriter,
@@ -1397,7 +1394,7 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
                 .heat_source_wet_by_key_mut(&heat_source_key)?
                 .insert("ControlCharge".into(), json!(&hb_ctrlname));
             input.add_control(
-                &hb_ctrlname,
+                hb_ctrlname,
                 json!({
                     "type": "ChargeControl",
                     "start_day": 0,
@@ -2499,6 +2496,7 @@ impl ApplianceUseProfile {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complex(
         util_unit: f64,
         use_metric: usize,
@@ -2524,6 +2522,7 @@ impl ApplianceUseProfile {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn clothes(
         util_unit: f64,
         use_metric: usize,
@@ -2892,9 +2891,9 @@ fn appliance_kwh_cycle_loading_factor(
 
 fn get_kwh_per_cycle(appliance: &JsonValue, appliance_name: &str) -> anyhow::Result<f64> {
     if let Some(kwh_per_cycle) = appliance.get("kWh_per_cycle") {
-        return Ok(kwh_per_cycle
+        return kwh_per_cycle
             .as_f64()
-            .ok_or_else(|| anyhow!("kWh_per_cycle must be a float"))?);
+            .ok_or_else(|| anyhow!("kWh_per_cycle must be a float"));
     }
 
     if let Some(kwh_per_100cycle) = appliance.get("kWh_per_100cycle") {
@@ -5054,7 +5053,7 @@ mod tests {
                     // main distribution LL + 0.0625 * LL * LW * (Nwr - 1) / f (2) = 8.5275
                     assert_eq!(pipe["length"], 4.93);
                 } else {
-                    assert!(false)
+                    unreachable!();
                 }
             }
         }
@@ -6219,7 +6218,7 @@ mod tests {
         #[test]
         fn test_demand_not_specified_raises() {
             // Given a project dict that has an appliance without a demand property
-            let mut input = InputForProcessing {
+            let input = InputForProcessing {
                 input: json!({"Appliances": {"Clothes_washing": {}}}),
             };
             let appliance_name = "Clothes_washing";
@@ -6227,8 +6226,7 @@ mod tests {
 
             // When appliance_kWhcycle_loadingfactor is called
             // Then an error is returned
-            let result =
-                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map);
+            let result = appliance_kwh_cycle_loading_factor(&input, appliance_name, &appliance_map);
             assert!(result.is_err());
             assert!(
                 result.unwrap_err().to_string().contains("demand must be specified as one of 'kWh_per_cycle', 'kWh_per_100cycle' or 'kWh_per_annum'"),
@@ -6239,7 +6237,7 @@ mod tests {
         fn test_clothes_drying_no_spin_class_applies_no_adjustment() {
             // Given a clothes drying appliance with a kWh/cycle specified
             // and a clothes washing appliance present, but without spin class
-            let mut input = InputForProcessing {
+            let input = InputForProcessing {
                 input: json!({
                     "Appliances": {
                         "Clothes_drying": {"kWh_per_cycle": 1.0, "kg_load": 5.0},
@@ -6272,8 +6270,7 @@ mod tests {
 
             // When appliance_kWhcycle_loadingfactor is called
             let (kwh_cycle, loadingfactor) =
-                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
-                    .unwrap();
+                appliance_kwh_cycle_loading_factor(&input, appliance_name, &appliance_map).unwrap();
             // Then kWh/cycle is unchanged (adjustment = 1.0)
             assert_eq!(kwh_cycle, 1.0);
             // And loading factor is standard_load / kg_load
@@ -6284,7 +6281,7 @@ mod tests {
         fn test_clothes_drying_spin_class_f_applies_adjustment() {
             // Given a clothes drying appliance with kWh/cycle
             // and a clothes washing appliance with spin class F
-            let mut input = InputForProcessing {
+            let input = InputForProcessing {
                 input: json!({
                     "Appliances": {
                         "Clothes_drying": {"kWh_per_cycle": 1.0, "kg_load": 5.0},
@@ -6315,8 +6312,7 @@ mod tests {
 
             // When appliance_kWhcycle_loadingfactor is called
             let (kwh_cycle, loadingfactor) =
-                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
-                    .unwrap();
+                appliance_kwh_cycle_loading_factor(&input, appliance_name, &appliance_map).unwrap();
 
             // Then adjustment = residual_moisture(F) / 0.6 = 0.90 / 0.6 = 1.5
             assert_eq!(kwh_cycle, 1.5); // 1.0 * (0.90 / 0.6)
@@ -6326,7 +6322,7 @@ mod tests {
         #[test]
         fn test_kwh_per_100cycle_is_normalised_to_kwh_per_cycle() {
             // Given an appliance specified in kWh per 100 cycles
-            let mut input = InputForProcessing {
+            let input = InputForProcessing {
                 input: json!({
                     "Appliances": {
                         "Clothes_washing": {
@@ -6359,8 +6355,7 @@ mod tests {
 
             // When appliance_kWhcycle_loadingfactor is called
             let (kwh_cycle, loadingfactor) =
-                appliance_kwh_cycle_loading_factor(&mut input, appliance_name, &appliance_map)
-                    .unwrap();
+                appliance_kwh_cycle_loading_factor(&input, appliance_name, &appliance_map).unwrap();
 
             // Then it normalises to kWh/cycle correctly
             assert_eq!(kwh_cycle, 0.5);
@@ -6966,7 +6961,7 @@ mod tests {
                 // And other values get fixed values
                 assert_eq!(pipe["location"].as_str().unwrap(), "internal");
                 assert_eq!(pipe["pipe_contents"].as_str().unwrap(), "water");
-                assert_eq!(pipe["surface_reflectivity"].as_bool().unwrap(), false);
+                assert!(!pipe["surface_reflectivity"].as_bool().unwrap());
                 assert_eq!(pipe["insulation_thickness_mm"].as_f64().unwrap(), 0.);
                 assert_eq!(
                     pipe["insulation_thermal_conductivity"].as_f64().unwrap(),

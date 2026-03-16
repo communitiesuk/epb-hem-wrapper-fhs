@@ -57,6 +57,8 @@ pub(crate) trait HemWrapper {
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>>;
+
+    #[allow(clippy::too_many_arguments)]
     fn apply_postprocessing(
         &self,
         output: &impl OutputWriter,
@@ -135,6 +137,7 @@ impl HemWrapper for ChosenWrapper {
 }
 
 #[instrument(skip_all)]
+#[allow(clippy::too_many_arguments)]
 pub fn run_wrappers(
     // TODO: consider if this should move to main.rs
     input: impl Read,
@@ -260,6 +263,7 @@ pub fn run_wrappers(
 
         // 7. Run wrapper post-processing and capture any output.
         #[instrument(skip_all)]
+        #[allow(clippy::too_many_arguments)]
         fn run_wrapper_postprocessing(
             output: &impl OutputWriter,
             results: &HashMap<CalculationKey, CalculationResult>,

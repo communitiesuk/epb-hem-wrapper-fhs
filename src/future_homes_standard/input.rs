@@ -1,6 +1,5 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
-use home_energy_model::core::schedule::NumericSchedule;
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
@@ -471,27 +470,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn remove_all_smart_appliance_controls(&mut self) -> JsonAccessResult<&mut Self> {
-        self.set_on_root_key("SmartApplianceControls", json!({}))
-    }
-
-    fn smart_appliance_controls_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
-        self.root_object_entry_mut("SmartApplianceControls")
-    }
-
-    pub fn add_smart_appliance_control(
-        &mut self,
-        smart_control_name: &str,
-        control: JsonValue,
-    ) -> JsonAccessResult<&Self> {
-        self.smart_appliance_controls_mut()?
-            .insert(smart_control_name.into(), control);
-
-        Ok(self)
-    }
-
     pub(crate) fn remove_preheated_water_sources(&mut self) -> JsonAccessResult<&mut Self> {
         self.remove_root_key("PreHeatedWaterSource")
     }
@@ -548,17 +526,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn space_heat_control_for_zone(
-        &self,
-        zone: &str,
-    ) -> anyhow::Result<Option<smartstring::alias::String>> {
-        Ok(self
-            .specific_zone(zone)?
-            .get("SpaceHeatControl")
-            .and_then(|field| field.as_str())
-            .map(smartstring::alias::String::from))
-    }
-
     pub fn space_heat_system_for_zone(
         &self,
         zone: &str,
@@ -589,10 +556,7 @@ impl InputForProcessing {
     }
 
     pub(crate) fn zone_has_space_cool_system(&self, zone: &str) -> JsonAccessResult<bool> {
-        Ok(match self.specific_zone(zone)?.get("SpaceCoolSystem") {
-            Some(_) => true,
-            None => false,
-        })
+        Ok(self.specific_zone(zone)?.get("SpaceCoolSystem").is_some())
     }
 
     pub(crate) fn space_cool_system_for_zone(
@@ -784,7 +748,8 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub(crate) fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
+    #[cfg(test)]
+    fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
         self.root_object_mut("EnergySupply")?
             .retain(|_, energy_supply| match energy_supply.get("fuel") {
                 Some(fuel) if fuel.is_string() => fuel.as_str().unwrap() != "custom",
@@ -949,21 +914,6 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn energy_supply_type_for_appliance_gains_field(
-        &self,
-        field: &str,
-    ) -> Option<smartstring::alias::String> {
-        self.root_object("ApplianceGains")
-            .ok()
-            .and_then(|appliance_gains| appliance_gains.get(field))
-            .and_then(|details| {
-                details
-                    .get("EnergySupply")
-                    .and_then(|energy_supply| energy_supply.as_str())
-                    .map(smartstring::alias::String::from)
-            })
-    }
-
     pub fn clear_appliance_gains(&mut self) -> JsonAccessResult<&mut Self> {
         self.set_on_root_key("ApplianceGains", json!({}))
     }
@@ -1004,7 +954,7 @@ impl InputForProcessing {
 
     pub(crate) fn shower_flowrates(
         &self,
-    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, (Option<f64>, Option<bool>)>> {
+    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, MaybeShowerFlowRateFields>> {
         let showers = match self
             .hot_water_demand()?
             .get("Shower")
@@ -1275,7 +1225,8 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn water_heating_events_of_types(
+    #[cfg(test)]
+    fn water_heating_events_of_types(
         &self,
         event_types: &[&str],
     ) -> JsonAccessResult<Vec<JsonValue>> {
@@ -1817,16 +1768,6 @@ impl InputForProcessing {
             .is_some_and(|appliance_reference| appliance_reference == reference))
     }
 
-    pub fn appliance_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
-        let empty_map = Map::new();
-        Ok(self
-            .root_object("Appliances")
-            .unwrap_or(&empty_map)
-            .keys()
-            .map(smartstring::alias::String::from)
-            .collect())
-    }
-
     pub fn appliance_with_key(&self, key: &str) -> JsonAccessResult<Option<&JsonValue>> {
         Ok(match self.root_object("Appliances") {
             Err(_) => return Ok(None),
@@ -1845,16 +1786,6 @@ impl InputForProcessing {
         self.root_object("Appliances")
             .cloned()
             .unwrap_or(Map::new())
-    }
-
-    pub fn tariff_schedule(&self) -> anyhow::Result<Option<NumericSchedule>> {
-        self.root_object("Tariff")
-            .ok()
-            .cloned()
-            .and_then(|tariff| tariff.get("schedule").cloned())
-            .map(|schedule| serde_json::from_value(schedule.clone()))
-            .transpose()
-            .map_err(|err| anyhow!(err))
     }
 
     pub fn energy_supply_for_appliance(&self, key: &str) -> anyhow::Result<&str> {
@@ -2429,6 +2360,8 @@ pub(super) fn set_control_max_name_for_heat_source(
         .insert("Controlmax".into(), json!(control_name));
     Ok(())
 }
+
+pub(crate) type MaybeShowerFlowRateFields = (Option<f64>, Option<bool>);
 
 pub trait HotWaterSourceDetailsForProcessing {
     fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;

@@ -83,7 +83,16 @@ pub(crate) mod part_f {
         bedrooms + 2 //As per part F section 1.64
     }
 
-    pub fn sufficient_whole_dwelling_ventilation_rate_continuous(
+    fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        vents
+            .iter()
+            .map(|v| {
+                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
+            })
+            .sum()
+    }
+
+    fn sufficient_whole_dwelling_ventilation_rate_continuous(
         vents: Vec<&JsonValue>,
         total_floor_area: f64,
         bedrooms: usize,
@@ -100,7 +109,7 @@ pub(crate) mod part_f {
         Ok(total_design_flow >= min_ventilation)
     }
 
-    pub fn sufficient_whole_dwelling_ventilation_rate_intermittent(
+    fn sufficient_whole_dwelling_ventilation_rate_intermittent(
         vents: &[&JsonValue],
         bathrooms: usize,
         utility_rooms: usize,
@@ -117,16 +126,7 @@ pub(crate) mod part_f {
         Ok(total_design_flow >= min_ventilation)
     }
 
-    fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        vents
-            .iter()
-            .map(|v| {
-                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
-            })
-            .sum()
-    }
-
-    pub fn sufficient_background_ventilation_area_continuous(
+    fn sufficient_background_ventilation_area_continuous(
         vents: &Vec<&JsonValue>,
         habitable_rooms: usize,
     ) -> anyhow::Result<bool> {
@@ -135,7 +135,11 @@ pub(crate) mod part_f {
         Ok(total_vent_area >= min_area)
     }
 
-    pub fn sufficient_background_ventilation_area_intermittent(
+    fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: usize) -> bool {
+        vents.len() >= minimum_background_vent_count_continuous(bedrooms)
+    }
+
+    fn sufficient_background_ventilation_area_intermittent(
         vents: &Vec<&JsonValue>,
         habitable_rooms: usize,
         bathrooms: usize,
@@ -147,18 +151,11 @@ pub(crate) mod part_f {
         Ok(total_vent_area >= min_area)
     }
 
-    fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        vents
-            .iter()
-            .map(|v| {
-                anyhow::Ok(v.get("area_cm2").and_then(|v| v.as_f64()).ok_or_else(|| {
-                    anyhow!("area_cm2 provided as a number is expected for MechanicalVentilation")
-                })?)
-            })
-            .sum()
+    fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: usize) -> bool {
+        vents.len() >= wet_rooms
     }
 
-    pub fn sufficient_large_imev(
+    fn sufficient_large_imev(
         vents: &[&JsonValue],
         is_kitchen_vent_external: bool,
     ) -> anyhow::Result<bool> {
@@ -172,6 +169,175 @@ pub(crate) mod part_f {
             .any(|rate| rate >= min_flow_rate_m3hr))
     }
 
+    fn sufficient_background_vent_count_intermittent(
+        background_vents: &[&JsonValue],
+        bedrooms: usize,
+    ) -> bool {
+        // As per part F section 1.57
+        let background_vents_required = if bedrooms < 2 { 4 } else { 5 };
+
+        background_vents.len() >= background_vents_required
+    }
+
+    fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        vents
+            .iter()
+            .map(|v| {
+                anyhow::Ok(v.get("area_cm2").and_then(|v| v.as_f64()).ok_or_else(|| {
+                    anyhow!("area_cm2 provided as a number is expected for MechanicalVentilation")
+                })?)
+            })
+            .sum()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn validate_intermittent_vents(
+        intermittent_mev_vents: Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+        bathrooms: usize,
+        utility_rooms: usize,
+        sanitary_accommodations: usize,
+        storeys: usize,
+        is_kitchen_vent_external: bool,
+        bedrooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let background_compliant = sufficient_background_ventilation_area_intermittent(
+            background_vents,
+            habitable_rooms,
+            bathrooms,
+            storeys,
+        )?;
+        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_intermittent(
+            &intermittent_mev_vents,
+            bathrooms,
+            utility_rooms,
+            sanitary_accommodations,
+            is_kitchen_vent_external,
+        )?;
+        let mev_count_compliant = sufficient_mev_count(&intermittent_mev_vents, wet_rooms);
+        let large_compliant =
+            sufficient_large_imev(&intermittent_mev_vents, is_kitchen_vent_external)?;
+        let background_count_compliant =
+            sufficient_background_vent_count_intermittent(background_vents, bedrooms);
+
+        let checks = [
+            (
+                background_compliant,
+                "Dwelling lacks sufficient background vent area for intermittent ventilation.",
+            ),
+            (mech_compliant, "Dwelling lacks sufficient intermittent mechanical extract rate."),
+            (mev_count_compliant, "Dwelling lacks sufficient number of intermittent mechanical vents."),
+            (
+                large_compliant,
+                "Dwelling lacks a large enough intermittent mechanical vent for cooking events.",
+            ),
+            (
+                background_count_compliant,
+                "Dwelling lacks sufficient number of background vents for intermittent ventilation.",
+            ),
+        ];
+
+        Ok(checks
+            .iter()
+            .filter(|(passed, _)| !passed)
+            .map(|(_, message)| message.to_string())
+            .collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn validate_continuous_vents(
+        mvhr_vents: &[&JsonValue],
+        centralised_mev_vents: &Vec<&JsonValue>,
+        decentralised_mev_vents: &Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        total_floor_area: f64,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut errors: Vec<String> = Default::default();
+
+        let mut continuous_mev_vents = centralised_mev_vents.clone();
+        continuous_mev_vents.append(&mut decentralised_mev_vents.clone());
+
+        let mut vents = mvhr_vents.to_owned();
+        vents.append(&mut continuous_mev_vents.clone());
+
+        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
+            vents,
+            total_floor_area,
+            bedrooms,
+        );
+
+        if !mech_compliant? {
+            errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
+        }
+
+        // The validation below only applies to continuous_mev_vents, not mvhr_vents. Since only one
+        // validation pathway has to pass for multi system dwellings, if any mvhr_vents are present
+        // we do not carry out the validation below
+        if !continuous_mev_vents.is_empty() && mvhr_vents.is_empty() {
+            errors.append(&mut validate_continuous_mev_vents(
+                centralised_mev_vents,
+                decentralised_mev_vents,
+                background_vents,
+                bedrooms,
+                habitable_rooms,
+                wet_rooms,
+            )?);
+        }
+
+        Ok(errors)
+    }
+
+    fn validate_continuous_mev_vents(
+        centralised_mev_vents: &[&JsonValue],
+        decentralised_mev_vents: &Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let background_area_compliant =
+            sufficient_background_ventilation_area_continuous(background_vents, habitable_rooms)?;
+
+        let background_count_compliant =
+            sufficient_background_vent_count_continuous(background_vents, bedrooms);
+
+        // the number of decentralised continuous vents only needs to be validated for
+        // decentralised systems (when no centralised vents exist)
+        let decentralised_vent_count_compliant =
+            if !decentralised_mev_vents.is_empty() && centralised_mev_vents.is_empty() {
+                sufficient_mev_count(decentralised_mev_vents, wet_rooms)
+            } else {
+                true
+            };
+
+        let checks = [
+            (
+                background_area_compliant,
+                "Dwelling lacks sufficient background vent area for continuous ventilation."
+            ),
+            (
+                background_count_compliant,
+                "Dwelling lacks sufficient number of background vents for continuous ventilation."
+            ),
+            (
+                decentralised_vent_count_compliant,
+                "Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."
+            )
+        ];
+
+        Ok(checks
+            .iter()
+            .filter(|(passed, _)| !passed)
+            .map(|(_, message)| message.to_string())
+            .collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_dwelling_ventilation(
         ventilation: &JsonValue,
         total_floor_area: f64,
@@ -278,169 +444,6 @@ pub(crate) mod part_f {
             "FHS input validation failed, see part F of the building regulations.\nFailure(s):\n{}",
             all_collected_errors.join("\n")
         );
-    }
-
-    fn validate_continuous_vents(
-        mvhr_vents: &[&JsonValue],
-        centralised_mev_vents: &Vec<&JsonValue>,
-        decentralised_mev_vents: &Vec<&JsonValue>,
-        background_vents: &Vec<&JsonValue>,
-        total_floor_area: f64,
-        bedrooms: usize,
-        habitable_rooms: usize,
-        wet_rooms: usize,
-    ) -> anyhow::Result<Vec<String>> {
-        let mut errors: Vec<String> = Default::default();
-
-        let mut continuous_mev_vents = centralised_mev_vents.clone();
-        continuous_mev_vents.append(&mut decentralised_mev_vents.clone());
-
-        let mut vents = mvhr_vents.to_owned();
-        vents.append(&mut continuous_mev_vents.clone());
-
-        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
-            vents,
-            total_floor_area,
-            bedrooms,
-        );
-
-        if !mech_compliant? {
-            errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
-        }
-
-        // The validation below only applies to continuous_mev_vents, not mvhr_vents. Since only one
-        // validation pathway has to pass for multi system dwellings, if any mvhr_vents are present
-        // we do not carry out the validation below
-        if !continuous_mev_vents.is_empty() && mvhr_vents.is_empty() {
-            errors.append(&mut validate_continuous_mev_vents(
-                centralised_mev_vents,
-                decentralised_mev_vents,
-                background_vents,
-                bedrooms,
-                habitable_rooms,
-                wet_rooms,
-            )?);
-        }
-
-        Ok(errors)
-    }
-
-    fn validate_continuous_mev_vents(
-        centralised_mev_vents: &[&JsonValue],
-        decentralised_mev_vents: &Vec<&JsonValue>,
-        background_vents: &Vec<&JsonValue>,
-        bedrooms: usize,
-        habitable_rooms: usize,
-        wet_rooms: usize,
-    ) -> anyhow::Result<Vec<String>> {
-        let background_area_compliant =
-            sufficient_background_ventilation_area_continuous(background_vents, habitable_rooms)?;
-
-        let background_count_compliant =
-            sufficient_background_vent_count_continuous(background_vents, bedrooms);
-
-        // the number of decentralised continuous vents only needs to be validated for
-        // decentralised systems (when no centralised vents exist)
-        let decentralised_vent_count_compliant =
-            if !decentralised_mev_vents.is_empty() && centralised_mev_vents.is_empty() {
-                sufficient_mev_count(decentralised_mev_vents, wet_rooms)
-            } else {
-                true
-            };
-
-        let checks = [
-            (
-                background_area_compliant,
-                "Dwelling lacks sufficient background vent area for continuous ventilation."
-            ),
-            (
-                background_count_compliant,
-                "Dwelling lacks sufficient number of background vents for continuous ventilation."
-            ),
-            (
-                decentralised_vent_count_compliant,
-                "Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."
-            )
-        ];
-
-        Ok(checks
-            .iter()
-            .filter(|(passed, _)| !passed)
-            .map(|(_, message)| message.to_string())
-            .collect())
-    }
-
-    fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: usize) -> bool {
-        vents.len() >= wet_rooms
-    }
-
-    fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: usize) -> bool {
-        vents.len() >= minimum_background_vent_count_continuous(bedrooms)
-    }
-
-    fn validate_intermittent_vents(
-        intermittent_mev_vents: Vec<&JsonValue>,
-        background_vents: &Vec<&JsonValue>,
-        habitable_rooms: usize,
-        wet_rooms: usize,
-        bathrooms: usize,
-        utility_rooms: usize,
-        sanitary_accommodations: usize,
-        storeys: usize,
-        is_kitchen_vent_external: bool,
-        bedrooms: usize,
-    ) -> anyhow::Result<Vec<String>> {
-        let background_compliant = sufficient_background_ventilation_area_intermittent(
-            background_vents,
-            habitable_rooms,
-            bathrooms,
-            storeys,
-        )?;
-        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_intermittent(
-            &intermittent_mev_vents,
-            bathrooms,
-            utility_rooms,
-            sanitary_accommodations,
-            is_kitchen_vent_external,
-        )?;
-        let mev_count_compliant = sufficient_mev_count(&intermittent_mev_vents, wet_rooms);
-        let large_compliant =
-            sufficient_large_imev(&intermittent_mev_vents, is_kitchen_vent_external)?;
-        let background_count_compliant =
-            sufficient_background_vent_count_intermittent(background_vents, bedrooms);
-
-        let checks = [
-            (
-                background_compliant,
-                "Dwelling lacks sufficient background vent area for intermittent ventilation.",
-            ),
-            (mech_compliant, "Dwelling lacks sufficient intermittent mechanical extract rate."),
-            (mev_count_compliant, "Dwelling lacks sufficient number of intermittent mechanical vents."),
-            (
-                large_compliant,
-                "Dwelling lacks a large enough intermittent mechanical vent for cooking events.",
-            ),
-            (
-                background_count_compliant,
-                "Dwelling lacks sufficient number of background vents for intermittent ventilation.",
-            ),
-        ];
-
-        Ok(checks
-            .iter()
-            .filter(|(passed, _)| !passed)
-            .map(|(_, message)| message.to_string())
-            .collect())
-    }
-
-    fn sufficient_background_vent_count_intermittent(
-        background_vents: &[&JsonValue],
-        bedrooms: usize,
-    ) -> bool {
-        // As per part F section 1.57
-        let background_vents_required = if bedrooms < 2 { 4 } else { 5 };
-
-        background_vents.len() >= background_vents_required
     }
 }
 

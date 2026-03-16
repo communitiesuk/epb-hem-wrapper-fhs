@@ -486,19 +486,22 @@ fn edit_glazing_for_glazing_limit(
     let total_glazing_area: f64 = input
         .all_building_elements()?
         .values()
-        .filter_map(|el| {
+        .filter(|el| {
             el.get("type")
                 .and_then(Value::as_str)
                 .is_some_and(|type_str| type_str == "BuildingElementTransparent")
-                .then(|| {
-                    let height = el.get("height").and_then(Value::as_f64);
-                    let width = el.get("width").and_then(Value::as_f64);
-                    if let (Some(height), Some(width)) = (height, width) {
-                        Ok(height * width)
-                    } else {
-                        bail!("Failed to parse height and width as numbers for transparent element: {:?}", el);
-                    }
-                })
+        })
+        .map(|el| {
+            let height = el.get("height").and_then(Value::as_f64);
+            let width = el.get("width").and_then(Value::as_f64);
+            if let (Some(height), Some(width)) = (height, width) {
+                Ok(height * width)
+            } else {
+                bail!(
+                    "Failed to parse height and width as numbers for transparent element: {:?}",
+                    el
+                );
+            }
         })
         .sum::<Result<f64, _>>()?;
 
