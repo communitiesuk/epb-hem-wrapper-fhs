@@ -154,7 +154,7 @@ pub fn run_wrappers(
             external_conditions_data: Option<&ExternalConditions>,
         ) -> anyhow::Result<InputForProcessing> {
             let mut input_for_processing = ingest_for_processing(input)?;
-            let default_weather_file = epw_weather_data_to_external_conditions(File::open("../future_homes_standard/RAF_Bedford_01.epw")?);
+            let default_weather_file = epw_weather_data_to_external_conditions(File::open("src/future_homes_standard/RAF_Bedford_01.epw")?);
             let default_external_conditions_data = match default_weather_file {
                 Ok(data) => data,
                 Err(_) => bail!("Could not parse the default weather file!"),
