@@ -17,23 +17,23 @@ use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
 };
 pub use home_energy_model::HemResponse;
+pub use home_energy_model::HEM_VERSION;
+pub use home_energy_model::HEM_VERSION_DATE;
 use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::{Read};
+use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use tracing::{error, instrument};
 
 pub mod future_homes_standard;
 
-pub const HEM_VERSION: &str = "0.36";
-pub const HEM_VERSION_DATE: &str = "2025-06-03";
-pub const FHS_VERSION: &str = "0.27";
-pub const FHS_VERSION_DATE: &str = "2025-06-03";
+pub const FHS_VERSION: &str = "1.0.0a4";
+pub const FHS_VERSION_DATE: &str = "2026-02-13";
 
 bitflags! {
     #[derive(Debug)]
