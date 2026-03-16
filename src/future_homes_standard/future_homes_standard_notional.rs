@@ -40,9 +40,8 @@ use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculatio
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
-    BuildingElement, BuildingElementHeightWidthInput, CustomEnergySourceFactor,
-    EcoDesignController, GroundBuildingElement, GroundBuildingElementJsonValue, UValueInput,
-    WaterDistribution, WaterPipework,
+    CustomEnergySourceFactor, EcoDesignController, GroundBuildingElement,
+    GroundBuildingElementJsonValue, WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
@@ -308,22 +307,23 @@ fn edit_transparent_element(input: &mut InputForProcessing) -> anyhow::Result<()
 ///Split windows/rooflights and walls/roofs into dictionaries.
 fn split_glazing_and_walls(
     input: &mut InputForProcessing,
-) -> anyhow::Result<(
-    IndexMap<String, BuildingElement>,
-    IndexMap<String, BuildingElement>,
-)> {
-    let mut windows_rooflight: IndexMap<String, BuildingElement> = Default::default();
-    let mut walls_roofs: IndexMap<String, BuildingElement> = Default::default();
+) -> anyhow::Result<(IndexMap<String, Value>, IndexMap<String, Value>)> {
+    let mut windows_rooflight: IndexMap<String, Value> = Default::default();
+    let mut walls_roofs: IndexMap<String, Value> = Default::default();
 
-    let building_elements = input.all_building_elements_deprecated()?;
+    let building_elements = input.all_building_elements()?;
 
     for (name, building_element) in building_elements {
-        match building_element {
-            BuildingElement::Transparent { .. } => {
-                windows_rooflight.insert(String::from(name), building_element);
+        match building_element
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
+            "BuildingElementTransparent" => {
+                windows_rooflight.insert(String::from(name), building_element.to_owned());
             }
-            BuildingElement::Opaque { .. } => {
-                walls_roofs.insert(String::from(name), building_element);
+            "BuildingElementOpaque" => {
+                walls_roofs.insert(String::from(name), building_element.to_owned());
             }
             _ => continue,
         }
@@ -336,57 +336,57 @@ fn split_glazing_and_walls(
 fn calculate_area_diff_and_adjust_glazing_area(
     input: &mut InputForProcessing,
     linear_reduction_factor: f64,
-    window_rooflight_element: &BuildingElement,
+    window_rooflight_element: &Value,
     building_element_reference: &str,
 ) -> anyhow::Result<f64> {
-    if let BuildingElement::Transparent {
-        area_input: BuildingElementHeightWidthInput { height, width },
-        ..
-    } = window_rooflight_element
-    {
-        let old_area = height * width;
-        let new_height = height * linear_reduction_factor;
-        let new_width = width * linear_reduction_factor;
+    // expected to be passed a transparent building element value
+    let height = window_rooflight_element
+        .get("height")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("Height field not found or not a float"))?;
+    let width = window_rooflight_element
+        .get("width")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("Width field not found or not a float"))?;
+    let old_area = height * width;
+    let new_height = height * linear_reduction_factor;
+    let new_width = width * linear_reduction_factor;
 
-        input.set_numeric_field_for_building_element(
-            building_element_reference,
-            "height",
-            new_height,
-        )?;
-        input.set_numeric_field_for_building_element(
-            building_element_reference,
-            "width",
-            new_width,
-        )?;
+    input.set_numeric_field_for_building_element(
+        building_element_reference,
+        "height",
+        new_height,
+    )?;
+    input.set_numeric_field_for_building_element(building_element_reference, "width", new_width)?;
 
-        let new_area = new_height * new_width;
+    let new_area = new_height * new_width;
 
-        Ok(old_area - new_area)
-    } else {
-        panic!("This function expects to be called for a Transparent BuildingElement only.")
-    }
+    Ok(old_area - new_area)
 }
 
-///Find all walls/roofs with same orientation and pitch as this window/rooflight.
+/// Find all walls/roofs with same orientation and pitch as this window/rooflight.
 fn find_walls_roofs_with_same_orientation_and_pitch(
-    wall_roofs: &[&BuildingElement],
-    window_rooflight_element: &BuildingElement,
+    wall_roofs: &[&Value],
+    window_rooflight_element: &Value,
 ) -> anyhow::Result<Vec<usize>> {
-    let window_rooflight_pitch = window_rooflight_element.pitch();
-    let window_rooflight_orientation = window_rooflight_element.orientation();
+    let window_rooflight_orientation = window_rooflight_element
+        .get("orientation360")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("Orientation field not found or not a float"))?;
+    let window_rooflight_pitch = window_rooflight_element
+        .get("pitch")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("Pitch field not found or not a float"))?;
 
     let mut indices: Vec<usize> = Default::default();
 
     for (i, el) in wall_roofs.iter().enumerate() {
-        if match el {
-            BuildingElement::Opaque {
-                pitch,
-                orientation360: orientation,
-                ..
-            } => {
-                window_rooflight_orientation.is_some_and(|window_rooflight_orientation| {
-                    *orientation == Some(window_rooflight_orientation)
-                }) && *pitch == window_rooflight_pitch
+        if match el.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "BuildingElementOpaque" => {
+                let orientation = el.get("orientation360").and_then(Value::as_f64);
+                let pitch = el.get("pitch").and_then(Value::as_f64);
+                Some(window_rooflight_orientation) == orientation
+                    && Some(window_rooflight_pitch) == pitch
             }
             _ => false,
         } {
@@ -422,28 +422,49 @@ fn calc_max_glazing_area_fraction(
     let mut total_rooflight_area = 0.0;
     let mut sum_uval_times_area = 0.0;
 
-    for element in input.all_building_elements_deprecated()?.values() {
-        if pitch_class(element.pitch()) != HeatFlowDirection::Upwards {
+    for element in input.all_building_elements()?.values() {
+        if element
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            != "BuildingElementTransparent"
+        {
+            continue;
+        }
+        let pitch = element
+            .get("pitch")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse pitch as number"))?;
+        if pitch_class(pitch) != HeatFlowDirection::Upwards {
             continue;
         }
 
-        if let BuildingElement::Transparent {
-            area_input: BuildingElementHeightWidthInput { height, width },
-            u_value_input,
-            ..
-        } = element
-        {
-            let rooflight_area = height * width;
-            total_rooflight_area += rooflight_area;
-            let u_value = match *u_value_input {
-                UValueInput::UValue { u_value } => u_value,
-                UValueInput::ThermalResistanceConstruction {
-                    thermal_resistance_construction,
-                } => convert_upwards_element_resistance_to_u_value(thermal_resistance_construction),
-            };
+        let height = element
+            .get("height")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse height as number"))?;
+        let width = element
+            .get("width")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse width as number"))?;
+        let u_value: Option<f64> = element.get("u_value").and_then(Value::as_f64);
 
-            sum_uval_times_area += rooflight_area * u_value;
-        }
+        let rooflight_area = height * width;
+        total_rooflight_area += rooflight_area;
+        let u_value = match u_value {
+            Some(u_value) => u_value,
+            _ => {
+                let thermal_resistance_construction = element
+                    .get("thermal_resistance_construction")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| {
+                        anyhow!("Failed to parse thermal_resistance_construction as number")
+                    })?;
+                convert_upwards_element_resistance_to_u_value(thermal_resistance_construction)
+            }
+        };
+
+        sum_uval_times_area += rooflight_area * u_value;
     }
 
     let rooflight_correction_factor = if total_rooflight_area == 0.0 {
@@ -463,13 +484,23 @@ fn edit_glazing_for_glazing_limit(
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
     let total_glazing_area: f64 = input
-        .all_building_elements_deprecated()?
+        .all_building_elements()?
         .values()
-        .filter_map(|el| match el {
-            BuildingElement::Transparent { area_input, .. } => Some(area_input.area()),
-            _ => None,
+        .filter_map(|el| {
+            el.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|type_str| type_str == "BuildingElementTransparent")
+                .then(|| {
+                    let height = el.get("height").and_then(Value::as_f64);
+                    let width = el.get("width").and_then(Value::as_f64);
+                    if let (Some(height), Some(width)) = (height, width) {
+                        Ok(height * width)
+                    } else {
+                        bail!("Failed to parse height and width as numbers for transparent element: {:?}", el);
+                    }
+                })
         })
-        .sum();
+        .sum::<Result<f64, _>>()?;
 
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
@@ -498,16 +529,15 @@ fn edit_glazing_for_glazing_limit(
 
             let wall_roof_area_total = same_orientation_indices
                 .iter()
-                .filter_map(|i| match walls_roofs.values().nth(*i).unwrap() {
-                    BuildingElement::Opaque { area_input, .. } => Some(area_input.area()),
-                    _ => None,
+                .filter_map(|i| {
+                    let building_element = walls_roofs.values().nth(*i).unwrap();
+                    building_element.get("area").and_then(Value::as_f64)
                 })
                 .sum::<f64>();
 
             for i in same_orientation_indices.iter() {
                 let wall_roof = walls_roofs.values().nth(*i).unwrap();
-                if let BuildingElement::Opaque { area_input, .. } = wall_roof {
-                    let area = area_input.area();
+                if let Some(area) = wall_roof.get("area").and_then(Value::as_f64) {
                     let wall_roof_prop = area / wall_roof_area_total;
 
                     let new_area = area + area_diff * wall_roof_prop;

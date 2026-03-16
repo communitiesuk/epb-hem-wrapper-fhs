@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use home_energy_model::core::schedule::NumericSchedule;
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    BuildingElement, ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
+    ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
     WaterDistribution, WaterHeatingEvent, WaterPipework,
 };
 use home_energy_model::input::{
@@ -1709,23 +1709,6 @@ impl InputForProcessing {
             .ok_or(anyhow!("Could not find field '{field}' on building element with reference '{building_element_reference}'"))? = json!(value);
 
         Ok(())
-    }
-
-    pub fn all_building_elements_deprecated(
-        // TODO remove once all_building_elements below is used in all places instead
-        &self,
-    ) -> anyhow::Result<IndexMap<smartstring::alias::String, BuildingElement>> {
-        self.zone_node()?
-            .values()
-            .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
-            .flatten()
-            .map(|(name, el)| {
-                Ok((
-                    smartstring::alias::String::from(name),
-                    serde_json::from_value(el.to_owned())?,
-                ))
-            })
-            .collect()
     }
 
     pub fn all_building_elements(
