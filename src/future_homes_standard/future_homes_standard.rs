@@ -3568,76 +3568,37 @@ fn calc_sfp_mech_vent(input: &mut InputForProcessing) -> anyhow::Result<()> {
 fn create_cooling(input: &mut InputForProcessing) -> anyhow::Result<()> {
     let zone_keys = input.zone_keys()?;
     for zone_key in &zone_keys {
-        if let Some(space_heat_control) = input.space_heat_control_for_zone(zone_key)? {
-            match space_heat_control.as_str() {
-                "livingroom" => {
-                    for space_cool_system in input.space_cool_system_for_zone(zone_key)?.iter() {
-                        let ctrl_name = format!("Cooling_{space_cool_system}");
-                        input.set_control_string_for_space_cool_system(
-                            space_cool_system,
-                            &ctrl_name,
-                        )?;
-                        let mut living_room_control = json!({
-                            "type": "SetpointTimeControl",
-                            "start_day" : 0,
-                            "time_series_step":0.5,
-                            "schedule": {
-                                "main": [{"repeat": 53, "value": "week"}],
-                                "week": [{"repeat": 5, "value": "weekday"},
-                                            {"repeat": 2, "value": "weekend"}],
-                                "weekday": COOLING_SUBSCHEDULE_LIVINGROOM_WEEKDAY.to_vec(),
-                                "weekend": COOLING_SUBSCHEDULE_LIVINGROOM_WEEKEND.to_vec(),
-                            }
-                        });
-                        let control_json = living_room_control.as_object_mut().unwrap();
-                        if let Some(temp_setback) =
-                            input.temperature_setback_for_space_cool_system(space_cool_system)?
-                        {
-                            control_json.insert("setpoint_max".to_string(), temp_setback.into());
-                        }
-                        if let Some(advanced_start) =
-                            input.advanced_start_for_space_cool_system(space_cool_system)?
-                        {
-                            control_json
-                                .insert("advanced_start".to_string(), advanced_start.into());
-                        }
-                        input.add_control(&ctrl_name, living_room_control)?;
+        if input.zone_has_space_cool_system(zone_key)? {
+            for space_cool_system in input.space_cool_system_for_zone(zone_key)?.iter() {
+                let ctrl_name = format!("Cooling_{space_cool_system}");
+
+                input.set_control_string_for_space_cool_system(space_cool_system, &ctrl_name)?;
+
+                let mut control = json!({
+                    "type": "SetpointTimeControl",
+                    "start_day" : 0,
+                    "time_series_step":0.5,
+                    "schedule": {
+                        "main": [{"repeat": 53, "value": "week"}],
+                        "week": [{"repeat": 5, "value": "weekday"},
+                                    {"repeat": 2, "value": "weekend"}],
+                        "weekday": COOLING_SUBSCHEDULE_WEEKDAY.to_vec(),
+                        "weekend": COOLING_SUBSCHEDULE_WEEKEND.to_vec(),
                     }
+                });
+
+                let control_object = control.as_object_mut().unwrap();
+                if let Some(temp_setback) =
+                    input.temperature_setback_for_space_cool_system(space_cool_system)?
+                {
+                    control_object.insert("setpoint_max".to_string(), temp_setback.into());
                 }
-                "restofdwelling" => {
-                    for space_cool_system in input.space_cool_system_for_zone(zone_key)? {
-                        let ctrl_name = format!("Cooling_{space_cool_system}");
-                        input.set_control_string_for_space_cool_system(
-                            &space_cool_system,
-                            &ctrl_name,
-                        )?;
-                        let mut rest_of_dwelling_control = json!({
-                            "type": "SetpointTimeControl",
-                            "start_day": 0,
-                            "time_series_step": 0.5,
-                            "schedule": {
-                                "main": [{"repeat": 365, "value": "day"}],
-                                "day": COOLING_SUBSCHEDULE_RESTOFDWELLING.to_vec(),
-                            }
-                        });
-                        let control_json = rest_of_dwelling_control.as_object_mut().unwrap();
-                        if let Some(temp_setback) =
-                            input.temperature_setback_for_space_cool_system(&space_cool_system)?
-                        {
-                            control_json.insert("setpoint_max".to_string(), temp_setback.into());
-                        }
-                        if let Some(advanced_start) =
-                            input.advanced_start_for_space_cool_system(&space_cool_system)?
-                        {
-                            control_json
-                                .insert("advanced_start".to_string(), advanced_start.into());
-                        }
-                        input.add_control(&ctrl_name, rest_of_dwelling_control)?;
-                    }
+                if let Some(advanced_start) =
+                    input.advanced_start_for_space_cool_system(space_cool_system)?
+                {
+                    control_object.insert("advanced_start".to_string(), advanced_start.into());
                 }
-                unknown_type => {
-                    bail!("Encountered unknown space heat control type: {unknown_type}")
-                }
+                input.add_control(&ctrl_name, json!(control_object))?;
             }
         }
     }
@@ -3648,7 +3609,7 @@ fn create_cooling(input: &mut InputForProcessing) -> anyhow::Result<()> {
 const COOLING_SETPOINT: f64 = 24.0;
 
 // 07:00-09:30 and then 18:30-22:00
-const COOLING_SUBSCHEDULE_LIVINGROOM_WEEKDAY: [Option<f64>; 48] = [
+const COOLING_SUBSCHEDULE_WEEKDAY: [Option<f64>; 48] = [
     None,
     None,
     None,
@@ -3700,7 +3661,7 @@ const COOLING_SUBSCHEDULE_LIVINGROOM_WEEKDAY: [Option<f64>; 48] = [
 ];
 
 // 08:30-22:30
-const COOLING_SUBSCHEDULE_LIVINGROOM_WEEKEND: [Option<f64>; 48] = [
+const COOLING_SUBSCHEDULE_WEEKEND: [Option<f64>; 48] = [
     None,
     None,
     None,
@@ -3749,58 +3710,6 @@ const COOLING_SUBSCHEDULE_LIVINGROOM_WEEKEND: [Option<f64>; 48] = [
     None,
     None,
     None,
-];
-
-// 22:00-07:00 - i.e. nighttime only
-const COOLING_SUBSCHEDULE_RESTOFDWELLING: [Option<f64>; 48] = [
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
-    Some(COOLING_SETPOINT),
 ];
 
 pub(super) fn create_cold_water_feed_temps(

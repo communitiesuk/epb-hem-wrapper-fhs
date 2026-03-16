@@ -588,7 +588,14 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn space_cool_system_for_zone(
+    pub(crate) fn zone_has_space_cool_system(&self, zone: &str) -> JsonAccessResult<bool> {
+        Ok(match self.specific_zone(zone)?.get("SpaceCoolSystem") {
+            Some(_) => true,
+            None => false,
+        })
+    }
+
+    pub(crate) fn space_cool_system_for_zone(
         &self,
         zone: &str,
     ) -> JsonAccessResult<Vec<smartstring::alias::String>> {
