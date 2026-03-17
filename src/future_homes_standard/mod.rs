@@ -8,7 +8,7 @@ use crate::{CalculationKey, FhsFlags};
 
 use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
-use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metric};
+use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::project_lookups::by_fuel;
 use anyhow::anyhow;
 use future_homes_standard::apply_fhs_postprocessing;
@@ -20,6 +20,9 @@ use home_energy_model::{write_core_output_files, HemResponse};
 use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
 use rayon::prelude::*;
+use serde::Serialize;
+use serde_json::ser::PrettyFormatter;
+use serde_json::Serializer;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use tracing::error;
@@ -207,13 +210,12 @@ fn do_fhs_preprocessing(
     Ok(())
 }
 
-fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metric> {
+fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metrics> {
     let energy_by_fuel = by_fuel(input, &core_response.summary)?;
 
-    Ok(energy_efficiency_rating(
-        core_response.summary.total_floor_area,
-        &energy_by_fuel,
-    ))
+    Ok(Metrics {
+        eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
+    })
 }
 
 fn do_fhs_postprocessing(
@@ -258,7 +260,8 @@ fn do_fhs_postprocessing(
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
     let filename = format!("{:?}_metrics", flags);
     let writer = output_writer.writer_for_location_key(filename.as_str(), "json")?;
-    if let Err(e) = serde_json::to_writer_pretty(writer, &metrics) {
+    let mut serializer = Serializer::with_formatter(writer, PrettyFormatter::with_indent(b"    "));
+    if let Err(e) = metrics.serialize(&mut serializer) {
         error!("Could not write out metrics postprocess file: {}", e);
     }
 

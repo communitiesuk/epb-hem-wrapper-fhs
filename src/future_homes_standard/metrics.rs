@@ -29,9 +29,14 @@ const PENCE_PER_POUND: f64 = 100.;
 #[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Metric {
     description: Arc<str>,
+    grade: Option<Grade>,
     units: Arc<str>,
     value: Option<f64>,
-    grade: Option<Grade>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct Metrics {
+    pub(crate) eer: Metric,
 }
 
 pub(crate) fn energy_efficiency_rating(total_floor_area: f64, by_fuel: &[FuelOutput]) -> Metric {
