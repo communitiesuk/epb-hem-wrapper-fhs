@@ -211,7 +211,6 @@
             "ColdWaterSource": "mains water",
             "HeatSource": {
                 "heat_pump_1": {
-                    "EnergySupply": "mains elec",
                     "heater_position": 0.1,
                     "name": "HeatPump1",
                     "temp_flow_limit_upper": 65,
@@ -314,8 +313,6 @@
                     "orientation360": 270,
                     "pitch": 90
                 },
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "MVHR"
             }
         },
@@ -330,7 +327,7 @@
     "NumberOfBedrooms": 3,
     "NumberOfHabitableRooms": 4,
     "NumberOfSanitaryAccommodations": 0,
-    "NumberOfTappedRooms": 2,
+    "NumberOfHotTappedRooms": 2,
     "NumberOfUtilityRooms": 0,
     "NumberOfWetRooms": 1,
     "OnSiteGeneration": {
@@ -425,11 +422,11 @@
                     "area": 37.45,
                     "areal_heat_capacity": "Heavy",
                     "floor_type": "Unheated_basement",
-                    "depth_basement_floor":3,
-                    "height_basement_walls":3,
-                    "thermal_resist_walls_base":3,
-                    "thermal_transm_envi_base":3,
-                    "thermal_transm_walls":3,
+                    "depth_basement_floor": 3,
+                    "height_basement_walls": 3,
+                    "thermal_resist_walls_base": 3,
+                    "thermal_transm_envi_base": 3,
+                    "thermal_transm_walls": 3,
                     "mass_distribution_class": "IE: Mass divided over internal and external side",
                     "perimeter": 24.8,
                     "psi_wall_floor_junc": 0.16,

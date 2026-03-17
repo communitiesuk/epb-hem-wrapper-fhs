@@ -250,7 +250,6 @@
             "ColdWaterSource": "mains water",
             "HeatSource": {
                 "heat_pump_1": {
-                    "EnergySupply": "mains elec",
                     "heater_position": 0.1,
                     "name": "HeatPump1",
                     "temp_flow_limit_upper": 65,
@@ -302,8 +301,6 @@
                 "mid_height_air_flow_path": 5.5,
                 "orientation360": 0,
                 "pitch": 90,
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV"
             }
         },
@@ -373,7 +370,7 @@
     "NumberOfBedrooms": 3,
     "NumberOfHabitableRooms": 4,
     "NumberOfSanitaryAccommodations": 0,
-    "NumberOfTappedRooms": 2,
+    "NumberOfHotTappedRooms": 2,
     "NumberOfUtilityRooms": 0,
     "NumberOfWetRooms": 1,
     "OnSiteGeneration": {
@@ -942,7 +939,11 @@
             },
             "Lighting": {
                 "bulbs": [
-                    {"count": 8, "efficacy": 120, "power": 6}
+                    {
+                        "count": 8,
+                        "efficacy": 120,
+                        "power": 6
+                    }
                 ]
             },
             "SpaceHeatSystem": "SpaceHeatSystem1",

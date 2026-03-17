@@ -191,8 +191,6 @@
                 "mid_height_air_flow_path": 1.5,
                 "orientation360": 90,
                 "pitch": 60,
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV"
             },
             "mechvent2": {
@@ -203,8 +201,6 @@
                 "mid_height_air_flow_path": 1.5,
                 "orientation360": 90,
                 "pitch": 60,
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV"
             }
         },
@@ -244,7 +240,7 @@
     "NumberOfBedrooms": 2,
     "NumberOfHabitableRooms": 3,
     "NumberOfSanitaryAccommodations": 0,
-    "NumberOfTappedRooms": 3,
+    "NumberOfHotTappedRooms": 3,
     "NumberOfUtilityRooms": 0,
     "NumberOfWetRooms": 2,
     "OnSiteGeneration": {

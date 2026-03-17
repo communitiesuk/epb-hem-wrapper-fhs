@@ -7,7 +7,7 @@
     "NumberOfBedrooms": 2,
     "NumberOfHabitableRooms": 3,
     "NumberOfWetRooms": 2,
-    "NumberOfTappedRooms": 3,
+    "NumberOfHotTappedRooms": 3,
     "NumberOfUtilityRooms": 0,
     "NumberOfBathrooms": 2,
     "NumberOfSanitaryAccommodations": 0,
@@ -15,25 +15,51 @@
     "KitchenExtractorHoodExternal": true,
     "ExternalConditions": {
         "shading_segments": [
-            {"start360": 0, "end360": 45},
-            {"start360": 45, "end360": 90},
-            {"start360": 90, "end360": 135},
-            {"start360": 135, "end360": 180,
+            {
+                "start360": 0,
+                "end360": 45
+            },
+            {
+                "start360": 45,
+                "end360": 90
+            },
+            {
+                "start360": 90,
+                "end360": 135
+            },
+            {
+                "start360": 135,
+                "end360": 180,
                 "shading": [
-                    {"type": "obstacle", "height": 10.5, "distance": 12}
+                    {
+                        "type": "obstacle",
+                        "height": 10.5,
+                        "distance": 12
+                    }
                 ]
             },
-            {"start360": 180, "end360": 225},
-            {"start360": 225, "end360": 270},
-            {"start360": 270, "end360": 315},
-            {"start360": 315, "end360": 360}
+            {
+                "start360": 180,
+                "end360": 225
+            },
+            {
+                "start360": 225,
+                "end360": 270
+            },
+            {
+                "start360": 270,
+                "end360": 315
+            },
+            {
+                "start360": 315,
+                "end360": 360
+            }
         ]
-
     },
     "Appliances": {
         "Dishwasher": "Not Installed",
         "Clothes_washing": "Default",
-        "Clothes_drying":  "Not Installed",
+        "Clothes_drying": "Not Installed",
         "Fridge": "Default",
         "Freezer": "Not Installed",
         "Oven": "Default",
@@ -43,7 +69,16 @@
         "mains water": {
             "start_day": 0,
             "time_series_step": 1,
-            "temperatures": [3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7]
+            "temperatures": [
+                3.0,
+                3.1,
+                3.2,
+                3.3,
+                3.4,
+                3.5,
+                3.6,
+                3.7
+            ]
         }
     },
     "EnergySupply": {
@@ -66,21 +101,22 @@
                     "type": "HeatSourceWet",
                     "name": "hp",
                     "temp_flow_limit_upper": 65,
-                    "EnergySupply": "mains elec",
                     "heater_position": 0.1,
                     "thermostat_position": 0.33
                 }
             },
-            "primary_pipework": [{
-                "location": "internal",
-                "internal_diameter_mm": 25,
-                "external_diameter_mm": 27,
-                "length": 2.0,
-                "insulation_thermal_conductivity": 0.035,
-                "insulation_thickness_mm": 38,
-                "surface_reflectivity": false,
-                "pipe_contents": "water"
-            }]
+            "primary_pipework": [
+                {
+                    "location": "internal",
+                    "internal_diameter_mm": 25,
+                    "external_diameter_mm": 27,
+                    "length": 2.0,
+                    "insulation_thermal_conductivity": 0.035,
+                    "insulation_thickness_mm": 38,
+                    "surface_reflectivity": false,
+                    "pipe_contents": "water"
+                }
+            ]
         }
     },
     "HotWaterDemand": {
@@ -109,12 +145,28 @@
     "Events": {
         "Shower": {
             "IES": [
-                {"start": 4.1, "duration": 6, "temperature": 41.0},
-                {"start": 4.5, "duration": 6, "temperature": 41.0},
-                {"start": 6, "duration": 6, "temperature": 41.0}
+                {
+                    "start": 4.1,
+                    "duration": 6,
+                    "temperature": 41.0
+                },
+                {
+                    "start": 4.5,
+                    "duration": 6,
+                    "temperature": 41.0
+                },
+                {
+                    "start": 6,
+                    "duration": 6,
+                    "temperature": 41.0
+                }
             ],
             "mixer": [
-                {"start": 7, "duration": 6, "temperature": 41.0}
+                {
+                    "start": 7,
+                    "duration": 6,
+                    "temperature": 41.0
+                }
             ]
         }
     },
@@ -134,7 +186,7 @@
             "min_temp_diff_flow_return_for_hp_to_operate": 0.0,
             "var_flow_temp_ctrl_during_test": true,
             "power_heating_circ_pump": 0.015,
-            "power_source_circ_pump": 0.010,
+            "power_source_circ_pump": 0.01,
             "power_standby": 0.015,
             "power_crankcase_heater": 0.01,
             "power_off": 0.015,
@@ -144,7 +196,7 @@
                 "daily_losses": 1.68,
                 "volume": 50,
                 "pump_fixed_flow_rate": 15,
-                "pump_power_at_flow_rate": 0.040
+                "pump_power_at_flow_rate": 0.04
             },
             "test_data_EN14825": [
                 {
@@ -244,7 +296,7 @@
         "radiators": {
             "type": "WetDistribution",
             "thermal_mass": 0.28,
-            "emitters":[
+            "emitters": [
                 {
                     "wet_emitter_type": "radiator",
                     "c": 0.08,
@@ -282,7 +334,8 @@
                 "ecodesign_control_class": 2,
                 "min_outdoor_temp": -4,
                 "max_outdoor_temp": 20,
-                "min_flow_temp": 30},
+                "min_flow_temp": 30
+            },
             "design_flow_temp": 55,
             "Zone": "whole dwelling"
         }
@@ -336,15 +389,13 @@
             "ventilation_zone_height": 6,
             "test_pressure": "Standard",
             "test_result": 1.2,
-            "env_area":220
+            "env_area": 220
         },
         "MechanicalVentilation": {
             "mechvent1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV",
                 "measured_fan_power": 12.26,
-                "measured_air_flow_rate":37,
+                "measured_air_flow_rate": 37,
                 "EnergySupply": "mains elec",
                 "design_outdoor_air_flow_rate": 80,
                 "mid_height_air_flow_path": 1.5,
@@ -352,11 +403,9 @@
                 "pitch": 60
             },
             "mechvent2": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV",
                 "measured_fan_power": 12.26,
-                "measured_air_flow_rate":37,
+                "measured_air_flow_rate": 37,
                 "EnergySupply": "mains elec",
                 "design_outdoor_air_flow_rate": 80,
                 "mid_height_air_flow_path": 1.5,
@@ -374,7 +423,11 @@
             "volume": 500.0,
             "Lighting": {
                 "bulbs": [
-                    {"count": 20, "power": 3, "efficacy": 150}
+                    {
+                        "count": 20,
+                        "power": 3,
+                        "efficacy": 150
+                    }
                 ]
             },
             "BuildingElement": {
@@ -464,13 +517,25 @@
                     "security_risk": true,
                     "window_part_list": [
                         {
-                        "mid_height_air_flow_path":1.5
+                            "mid_height_air_flow_path": 1.5
                         }
                     ],
                     "shading": [
-                        {"type": "overhang", "depth": 0.5, "distance": 0.5},
-                        {"type": "sidefinleft", "depth": 0.25, "distance": 0.1},
-                        {"type": "sidefinright", "depth":0.25, "distance":0.1}
+                        {
+                            "type": "overhang",
+                            "depth": 0.5,
+                            "distance": 0.5
+                        },
+                        {
+                            "type": "sidefinleft",
+                            "depth": 0.25,
+                            "distance": 0.1
+                        },
+                        {
+                            "type": "sidefinright",
+                            "depth": 0.25,
+                            "distance": 0.1
+                        }
                     ]
                 },
                 "ground 0": {
@@ -566,13 +631,25 @@
                     "security_risk": true,
                     "window_part_list": [
                         {
-                        "mid_height_air_flow_path":1.5
+                            "mid_height_air_flow_path": 1.5
                         }
                     ],
                     "shading": [
-                        {"type": "overhang", "depth": 0.5, "distance": 0.5},
-                        {"type": "sidefinleft", "depth": 0.25, "distance": 0.1},
-                        {"type": "sidefinright", "depth":0.25, "distance":0.1}
+                        {
+                            "type": "overhang",
+                            "depth": 0.5,
+                            "distance": 0.5
+                        },
+                        {
+                            "type": "sidefinleft",
+                            "depth": 0.25,
+                            "distance": 0.1
+                        },
+                        {
+                            "type": "sidefinright",
+                            "depth": 0.25,
+                            "distance": 0.1
+                        }
                     ]
                 },
                 "ground 1": {

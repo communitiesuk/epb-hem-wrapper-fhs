@@ -166,8 +166,6 @@ fn create_dmev(
     let default_dmev_sfp = 0.15;
 
     json!({
-        "sup_air_flw_ctrl": "ODA",
-        "sup_air_temp_ctrl": "NO_CTRL",
         "vent_type": "Decentralised continuous MEV",
         "SFP": default_dmev_sfp,
         "EnergySupply": "mains elec",
@@ -286,8 +284,6 @@ mod test {
                 "ventilation_zone_base_height": 0,
                 "MechanicalVentilation": {
                     "mechvent1": {
-                        "sup_air_flw_ctrl": "ODA",
-                        "sup_air_temp_ctrl": "NO_CTRL",
                         "vent_type": "Centralised continuous MEV",
                         "measured_fan_power": 12.26,
                         "measured_air_flow_rate": 37,
@@ -394,8 +390,6 @@ mod test {
         // the positions of the two vents are correctly taken from the windows
         let expected = json!({
             "Decentralised_Continuous_MEV_0": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -405,8 +399,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -440,8 +432,6 @@ mod test {
         // and the largest wall
         let expected = json!({
             "Decentralised_Continuous_MEV_0": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -451,8 +441,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -490,8 +478,6 @@ mod test {
         // walls because dMEVs are not placed in rooflights
         let expected = json!({
             "Decentralised_Continuous_MEV_0": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -501,8 +487,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -543,8 +527,6 @@ mod test {
         // the largest wall has an orientation 270
         let expected = json!({
             "Decentralised_Continuous_MEV_0": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -554,8 +536,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -565,8 +545,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_2": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -576,8 +554,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_3": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -587,8 +563,6 @@ mod test {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_4": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",

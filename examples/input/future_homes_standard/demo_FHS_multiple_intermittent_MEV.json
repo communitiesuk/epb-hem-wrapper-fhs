@@ -7,7 +7,7 @@
     "NumberOfBedrooms": 2,
     "NumberOfHabitableRooms": 3,
     "NumberOfWetRooms": 2,
-    "NumberOfTappedRooms": 3,
+    "NumberOfHotTappedRooms": 3,
     "NumberOfUtilityRooms": 0,
     "NumberOfBathrooms": 2,
     "NumberOfSanitaryAccommodations": 0,
@@ -218,8 +218,6 @@
         },
         "MechanicalVentilation": {
             "mechvent1":{
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Intermittent MEV",
                 "SFP":1.5,
                 "EnergySupply": "mains elec",
@@ -229,8 +227,6 @@
                 "pitch": 60
             },
             "mechvent2":{
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Intermittent MEV",
                 "SFP":1.5,
                 "EnergySupply": "mains elec",
@@ -240,8 +236,6 @@
                 "pitch": 60
             },
             "mechvent3":{
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Intermittent MEV",
                 "SFP":1.5,
                 "EnergySupply": "mains elec",

@@ -310,14 +310,10 @@ mod tests {
         // MechanicalVents must always have:
         project["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
             "vent1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "EnergySupply": "mains elec",
                 "design_outdoor_air_flow_rate": 1,
             },
             "vent2": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "EnergySupply": "mains elec",
                 "design_outdoor_air_flow_rate": 1,
             },

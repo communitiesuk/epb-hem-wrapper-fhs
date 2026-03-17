@@ -237,23 +237,6 @@ impl InputForProcessing {
             .sum::<JsonAccessResult<f64>>()
     }
 
-    pub fn total_zone_volume(&self) -> JsonAccessResult<f64> {
-        Ok(self
-            .zone_node()?
-            .values()
-            .map(|z| {
-                z.get("volume")
-                    .ok_or(json_error("Volume field not found on zone"))?
-                    .as_number()
-                    .ok_or(json_error("Volume field not a number"))?
-                    .as_f64()
-                    .ok_or(json_error("Volume field not a number"))
-            })
-            .collect::<JsonAccessResult<Vec<_>>>()?
-            .into_iter()
-            .sum::<f64>())
-    }
-
     pub fn area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {
         Ok(self
             .zone_node()?
@@ -376,13 +359,15 @@ impl InputForProcessing {
             })? as usize)
     }
 
-    pub(super) fn number_of_tapped_rooms(&self) -> JsonAccessResult<usize> {
-        match self.input.get("NumberOfTappedRooms") {
+    pub(super) fn number_of_hot_tapped_rooms(&self) -> JsonAccessResult<usize> {
+        match self.input.get("NumberOfHotTappedRooms") {
             Some(JsonValue::Number(n)) => Ok(n
                 .as_u64()
-                .ok_or(json_error("NumberOfTappedRooms not a positive integer"))?
+                .ok_or(json_error("NumberOfHotTappedRooms not a positive integer"))?
                 as usize),
-            _ => Err(json_error("NumberOfTappedRooms not found or not a number")),
+            _ => Err(json_error(
+                "NumberOfHotTappedRooms not found or not a number",
+            )),
         }
     }
 
@@ -1155,35 +1140,6 @@ impl InputForProcessing {
             .transpose()?)
     }
 
-    /// Override all the vol_hw_daily_average values on the heat pump hot water only heat sources.
-    pub fn override_vol_hw_daily_average_on_heat_pumps(&mut self, vol_hw_daily_average: f64) {
-        let heat_sources = match self
-            .root_object_mut("HotWaterSource")
-            .ok()
-            .and_then(|hot_water_source| hot_water_source.get_mut("hw cylinder"))
-            .and_then(|cylinder| cylinder.as_object_mut())
-            .and_then(|cylinder| {
-                cylinder
-                    .get("type")
-                    .and_then(|source_type| source_type.as_str())
-                    .is_some_and(|source_type| source_type == "StorageTank")
-                    .then_some(cylinder)
-            }) {
-            None => return,
-            Some(heat_sources) => heat_sources,
-        };
-
-        for heat_source in heat_sources.values_mut().flat_map(|hs| hs.as_object_mut()) {
-            if heat_source
-                .get("type")
-                .and_then(|heat_source_type| heat_source_type.as_str())
-                .is_some_and(|heat_source_type| heat_source_type == "HeatPump_HWOnly")
-            {
-                heat_source.insert("vol_hw_daily_average".into(), json!(vol_hw_daily_average));
-            }
-        }
-    }
-
     pub fn part_g_compliance(&self) -> JsonAccessResult<Option<bool>> {
         self.root()?
             .get("PartGcompliance")
@@ -1594,19 +1550,6 @@ impl InputForProcessing {
         let result = filtered_building_elements.collect();
 
         Ok(result)
-    }
-
-    pub(crate) fn max_base_height_from_building_elements(&self) -> JsonAccessResult<Option<f64>> {
-        Ok(self
-            .zone_node()?
-            .values()
-            .filter_map(|zone| zone.get("BuildingElement"))
-            .filter_map(|building_element| building_element.as_object())
-            .flat_map(|building_element_node| building_element_node.values())
-            .filter_map(|building_element| {
-                building_element.get("base_height").and_then(|h| h.as_f64())
-            })
-            .max_by(|a, b| a.total_cmp(b)))
     }
 
     fn base_height_of_building_element(
@@ -2225,7 +2168,7 @@ impl InputForProcessing {
             "PartO_active_cooling_required",
             "BuildingLength",
             "BuildingWidth",
-            "NumberOfTappedRooms",
+            "NumberOfHotTappedRooms",
             "KitchenExtractorHoodExternal",
         ];
         {

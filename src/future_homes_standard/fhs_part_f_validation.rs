@@ -87,7 +87,7 @@ pub(crate) mod part_f {
         vents
             .iter()
             .map(|v| {
-                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
+                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
             })
             .sum()
     }
@@ -100,7 +100,7 @@ pub(crate) mod part_f {
         let total_design_flow: f64 = vents
             .iter()
             .map(|v| {
-                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
+                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
             })
             .sum::<Result<f64, _>>()?;
 
@@ -162,7 +162,7 @@ pub(crate) mod part_f {
         let min_flow_rate = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l / s
         let min_flow_rate_m3hr = litres_per_second_to_cubic_metres_per_hour(min_flow_rate); // m3/hr
 
-        let vent_flow_rates: Vec<f64> = vents.iter().map(|v| anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()) .ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)).collect::<Result<_, _>>()?;
+        let vent_flow_rates: Vec<f64> = vents.iter().map(|v| anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)).collect::<Result<_, _>>()?;
 
         Ok(vent_flow_rates
             .into_iter()
@@ -246,6 +246,18 @@ pub(crate) mod part_f {
             .collect())
     }
 
+    /// Validates continuous ventilation systems.
+    ///
+    ///    A dwelling may satisfy continuous ventilation requirements via either:
+    ///        - Continuous MEV (centralised or decentralised), or
+    ///        - MVHR.
+    ///
+    ///    If multiple system types are present, at least one validation pathway
+    ///    must pass. However, whole-dwelling mechanical extract rate compliance
+    ///    is always required and evaluated independently of pathway success.
+    ///
+    ///    Returns:
+    ///        A list of validation error messages.
     #[allow(clippy::too_many_arguments)]
     fn validate_continuous_vents(
         mvhr_vents: &[&JsonValue],
@@ -257,29 +269,16 @@ pub(crate) mod part_f {
         habitable_rooms: usize,
         wet_rooms: usize,
     ) -> anyhow::Result<Vec<String>> {
-        let mut errors: Vec<String> = Default::default();
+        let mut all_errors: Vec<String> = Default::default();
 
         let mut continuous_mev_vents = centralised_mev_vents.clone();
         continuous_mev_vents.append(&mut decentralised_mev_vents.clone());
 
-        let mut vents = mvhr_vents.to_owned();
-        vents.append(&mut continuous_mev_vents.clone());
+        // Pathway specific checks for continuous MEV and MVHR systems
+        let mut continuous_mev_errors: Vec<String> = Default::default();
 
-        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
-            vents,
-            total_floor_area,
-            bedrooms,
-        );
-
-        if !mech_compliant? {
-            errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
-        }
-
-        // The validation below only applies to continuous_mev_vents, not mvhr_vents. Since only one
-        // validation pathway has to pass for multi system dwellings, if any mvhr_vents are present
-        // we do not carry out the validation below
-        if !continuous_mev_vents.is_empty() && mvhr_vents.is_empty() {
-            errors.append(&mut validate_continuous_mev_vents(
+        if !continuous_mev_vents.is_empty() {
+            continuous_mev_errors.append(&mut validate_continuous_mev_vents(
                 centralised_mev_vents,
                 decentralised_mev_vents,
                 background_vents,
@@ -289,7 +288,42 @@ pub(crate) mod part_f {
             )?);
         }
 
-        Ok(errors)
+        let mut mvhr_errors: Vec<String> = Default::default();
+
+        if !mvhr_vents.is_empty() && !background_vents.is_empty() {
+            mvhr_errors.push(
+                "Dwelling with MVHR ventilation system should not have background vents.".into(),
+            );
+        }
+
+        // Only one of the validation pathways (continuous MEV or MVHR) needs to pass
+        let mut validation_pathway_errors: Vec<Vec<String>> = Default::default();
+        if !continuous_mev_vents.is_empty() {
+            validation_pathway_errors.push(continuous_mev_errors);
+        }
+        if !mvhr_vents.is_empty() {
+            validation_pathway_errors.push(mvhr_errors);
+        }
+        if validation_pathway_errors.iter().all(|v| !v.is_empty()) {
+            all_errors.append(&mut validation_pathway_errors.into_iter().flatten().collect());
+        }
+
+        // Whole dwelling mechanical extract rate validation always applies
+        let whole_building_vents = {
+            let mut whole_building_vents = continuous_mev_vents.clone();
+            whole_building_vents.append(&mut mvhr_vents.to_vec());
+            whole_building_vents
+        };
+        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
+            whole_building_vents,
+            total_floor_area,
+            bedrooms,
+        )?;
+        if !mech_compliant {
+            all_errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
+        }
+
+        Ok(all_errors)
     }
 
     fn validate_continuous_mev_vents(
@@ -450,6 +484,7 @@ pub(crate) mod part_f {
 #[cfg(test)]
 mod tests {
     use crate::future_homes_standard::fhs_part_f_validation::part_f;
+    use serde_json::json;
 
     #[test]
     fn test_mwdvr_when_bedroom_based_value_is_greater() {
@@ -523,8 +558,6 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -547,8 +580,6 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -613,8 +644,6 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -651,8 +680,6 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "MVHR",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -699,8 +726,6 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "MVHR",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -788,24 +813,18 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 600
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 200
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -827,24 +846,18 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 700
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 200
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -888,24 +901,18 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 10,  # insufficient flow rate
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 10,
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -977,40 +984,30 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 215,
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 215,
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 215,
                 },
                 "mechvent4": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 215,
                 },
                 "mechvent5": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -1071,24 +1068,18 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 107,
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 107,
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -1120,24 +1111,18 @@ mod tests {
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 10,  # insufficient flow rate
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 10,
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -1205,16 +1190,12 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 600,
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -1279,32 +1260,24 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 240
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 60
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 60
                 },
                 "mechvent4": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1354,32 +1327,24 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 240
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 60
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 60
                 },
                 "mechvent4": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1442,32 +1407,24 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 600
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 200
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 200
                 },
                 "mechvent4": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1500,24 +1457,18 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 240
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 60
                 },
                 "mechvent4": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Centralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1574,8 +1525,6 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Decentralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1609,24 +1558,18 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 700
                 },
                 "mechvent2": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
                     "design_outdoor_air_flow_rate": 200
                 },
                 "mechvent3": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
@@ -1675,8 +1618,6 @@ mod tests {
             },
             "MechanicalVentilation": {
                 "mechvent1": {
-                    "sup_air_flw_ctrl": "ODA",
-                    "sup_air_temp_ctrl": "NO_CTRL",
                     "vent_type": "Decentralised continuous MEV",
                     "measured_fan_power": 12.26,
                     "measured_air_flow_rate": 37,
@@ -1694,5 +1635,174 @@ mod tests {
         let _ = result.inspect_err(|e| {
             assert!(e.to_string().contains("Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."));
         });
+    }
+
+    /// Given a dwelling with only MVHR mech vents and one background vent
+    #[test]
+    fn test_raises_if_mvhr_system_with_background_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 1000,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+                "mechvent2": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+            },
+        });
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 0, 2, true);
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling with MVHR ventilation system should not have background vents"
+            ));
+        });
+    }
+
+    /// Given a dwelling with a MVHR mech vent, a decentralised continuous MEV
+    /// and background vents
+    #[test]
+    fn test_does_not_raise_if_mixed_mvhr_system_with_background_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+                "mechvent2": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "Decentralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                },
+            },
+        });
+        assert!(
+            part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 0, 2, true).is_ok()
+        );
     }
 }

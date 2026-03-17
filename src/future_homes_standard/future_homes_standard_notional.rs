@@ -1257,8 +1257,6 @@ fn edit_storagetank(
         "ColdWaterSource": cold_water_source_type,
             "HeatSource": {
                 NOTIONAL_HP: {
-                    "ColdWaterSource": cold_water_source_type,
-                    "EnergySupply": "mains elec",
                     "heater_position": 0.1,
                     "name": NOTIONAL_HP,
                     "temp_flow_limit_upper": 60,
@@ -1520,22 +1518,9 @@ fn add_solar_pv(
         let ground_floor_area = input
             .ground_floor_area()?
             .ok_or_else(|| anyhow!("Notional wrapped expected ground floor area to be set"))?;
-        let (peak_kw, base_height_pv) = match input.build_type()?.as_str() {
-            "house" => {
-                let peak_kw = ground_floor_area * 0.4 / 4.5;
-                let base_height_pv = input.max_base_height_from_building_elements()?.ok_or_else(|| anyhow!("Notional wrapper expected at least one building element with a base height"))?;
-
-                (peak_kw, base_height_pv)
-            }
-            "flat" => {
-                let peak_kw = total_floor_area * 0.4 / (4.5 * storeys_in_building as f64);
-                let zone_total_volume = input.total_zone_volume()?;
-                let zone_total_area = input.total_zone_area()?;
-                let base_height_pv =
-                    (zone_total_volume / zone_total_area + 0.3) * storeys_in_building as f64;
-
-                (peak_kw, base_height_pv)
-            }
+        let peak_kw = match input.build_type()?.as_str() {
+            "house" => ground_floor_area * 0.4 / 4.5,
+            "flat" => total_floor_area * 0.4 / (4.5 * storeys_in_building as f64),
             unknown_type => bail!("Unexpected building type '{unknown_type}' encountered"),
         };
 
@@ -1592,7 +1577,6 @@ fn add_solar_pv(
                             )
                             .into(),
                     ); // default to smaller value than min so always beaten
-                    updated_panel.insert("base_height".to_string(), json!(base_height_pv));
                     updated_panel.insert("height".to_string(), json!(pv_height));
                     updated_panel.insert("width".to_string(), json!(pv_width));
 
@@ -2332,8 +2316,6 @@ mod tests {
                 "ColdWaterSource": cold_water_source_type,
                 "HeatSource": {
                     "notional_HP": {
-                        "ColdWaterSource": cold_water_source_type,
-                        "EnergySupply": "mains elec",
                         "heater_position": 0.1,
                         "name": "notional_HP",
                         "temp_flow_limit_upper": 60,
@@ -2865,7 +2847,7 @@ mod tests {
                 "type": "PhotovoltaicSystem",
                 "ventilation_strategy": "moderately_ventilated",
                 "shading": [],
-                "base_height": 1.,
+                "base_height": 10.,
                 "width": 6.324555320336759,
                 "height": 3.1622776601683795
                 }
@@ -2936,7 +2918,7 @@ mod tests {
                 "type": "PhotovoltaicSystem",
                 "ventilation_strategy": "moderately_ventilated",
                 "shading": [],
-                "base_height": 1,
+                "base_height": 10,
                 "width": 4.1137667560372115,
                 "height": 2.0568833780186058,
             },
@@ -2952,7 +2934,7 @@ mod tests {
                 "type": "PhotovoltaicSystem",
                 "ventilation_strategy": "moderately_ventilated",
                 "shading": [],
-                "base_height": 1,
+                "base_height": 10,
                 "width": 4.803844614152615,
                 "height": 2.4019223070763074,
             },
@@ -3067,7 +3049,7 @@ mod tests {
                 "type": "PhotovoltaicSystem",
                 "ventilation_strategy": "moderately_ventilated",
                 "shading": [],
-                "base_height": 51.375,
+                "base_height": 10,
                 "width": 2.9211869733608857,
                 "height": 1.4605934866804429,
             }
@@ -3236,7 +3218,6 @@ mod tests {
                     "ColdWaterSource": &cold_water_source,
                     "HeatSource": {
                         "notional_HP": {
-                            "EnergySupply": "mains elec",
                             "heater_position": 0.1,
                             "name": "notional_HP",
                             "temp_flow_limit_upper": 60,
@@ -3576,8 +3557,6 @@ mod tests {
     ) {
         test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
             "mechvent1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Centralised continuous MEV",
                 "measured_fan_power": 12.26,
                 "measured_air_flow_rate": 37.,
@@ -3604,8 +3583,6 @@ mod tests {
         // Then two dMEVs are created in the notional with numbered vent names
         let expected_mech_vent = json!({
             "Decentralised_Continuous_MEV_0": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -3615,8 +3592,6 @@ mod tests {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",

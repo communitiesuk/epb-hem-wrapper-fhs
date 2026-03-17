@@ -204,6 +204,10 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
     for vent in input.vents_mut()?.values_mut() {
         vent["pressure_difference_ref"] = json!(20);
     }
+    for mech_vent in input.mechanical_ventilations_for_processing()? {
+        mech_vent.insert("sup_air_flw_ctrl".into(), json!("ODA"));
+        mech_vent.insert("sup_air_temp_ctrl".into(), json!("NO_CTRL"));
+    }
     for energy_supply in input.energy_supplies_mut()? {
         if let Some(electric_battery) = energy_supply.get_mut("ElectricBattery") {
             electric_battery["battery_age"] = json!(0);
@@ -3062,10 +3066,40 @@ pub(super) fn create_hot_water_use_pattern(
         ref_hw_vol += event.volume;
     }
 
-    // Add daily average hot water use to hot water only heat pump (HWOHP) object, if present
+    // Add daily average hot water use to combi boiler and hot water only heat pump (HWOHP) objects,
+    // if present
     // TODO (from Python) This is probably only valid if HWOHP is the only heat source for the
     // storage tank. Make this more robust/flexible in future.
-    input.override_vol_hw_daily_average_on_heat_pumps(vol_hw_daily_average);
+    for hot_water_source in input.hot_water_source_mut()?.values_mut() {
+        let source_type = hot_water_source.get("type").and_then(|t| t.as_str());
+        match source_type {
+            Some("StorageTank") => {
+                if let Some(heat_sources) = hot_water_source
+                    .get_mut("HeatSource")
+                    .and_then(JsonValue::as_object_mut)
+                {
+                    for heat_source in heat_sources.values_mut() {
+                        let heat_source = heat_source
+                            .as_object_mut()
+                            .ok_or_else(|| anyhow!("Heat source is not an object"))?;
+                        if heat_source.get("type").and_then(|t| t.as_str())
+                            == Some("HeatPump_HWOnly")
+                        {
+                            heat_source
+                                .insert("vol_hw_daily_average".into(), json!(vol_hw_daily_average));
+                        }
+                    }
+                }
+            }
+            Some("CombiBoiler") => {
+                let hot_water_source = hot_water_source
+                    .as_object_mut()
+                    .ok_or_else(|| anyhow!("Hot water source is not an object"))?;
+                hot_water_source.insert("daily_HW_usage".into(), json!(vol_hw_daily_average));
+            }
+            _ => {}
+        };
+    }
 
     let fhw = (365. * vol_hw_daily_average) / ref_hw_vol;
 
@@ -4001,17 +4035,8 @@ fn top_up_lighting(
 }
 
 fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    let number_of_tapped_rooms = input.number_of_tapped_rooms()?;
-    // Note: equivalent to Python `non_kitchen_tapped_rooms <= 0` to avoid `attempt to subtract with overflow` panic
-    if number_of_tapped_rooms <= 1 {
-        let distribution = json!([
-            {"internal_diameter_mm": 13, "length": 0, "location": "internal"},
-            {"internal_diameter_mm": 20, "length": 0, "location": "internal"},
-        ]);
-        input.set_water_distribution(distribution)?;
-        return Ok(());
-    }
-    let non_kitchen_tapped_rooms = number_of_tapped_rooms - 1;
+    let number_of_hot_tapped_rooms = input.number_of_hot_tapped_rooms()?;
+    let non_kitchen_tapped_rooms = number_of_hot_tapped_rooms - 1;
     let number_of_storeys = input.storeys_in_dwelling()? as f64;
     let building_length = input.building_length()?;
     let building_width = input.building_width()?;
@@ -4026,15 +4051,16 @@ fn create_hot_water_distribution(input: &mut InputForProcessing) -> anyhow::Resu
         building_length + (lateral_pipe_factor * building_length * building_width);
     let main_shaft_pipe_length =
         building_length * building_width * habitable_building_height * vertical_pipe_factor;
+    let small_vertical_pipe_length = main_shaft_pipe_length * non_kitchen_tapped_rooms as f64;
     let branching_pipe_length =
         building_length * building_width * number_of_storeys * branch_circuit_factor;
 
-    let small_pipe_length = (branching_pipe_length + main_shaft_pipe_length) / reduction_factor;
+    let small_pipe_length = (branching_pipe_length + small_vertical_pipe_length) / reduction_factor;
     let large_pipe_length =
         main_distribution_pipe_length * non_kitchen_tapped_rooms as f64 / reduction_factor;
     let distribution = json!([
-        {"internal_diameter_mm": 13, "length": (small_pipe_length * 100.).round_ties_even() / 100., "location": "internal"},
-        {"internal_diameter_mm": 20, "length": (large_pipe_length * 100.).round_ties_even() / 100., "location": "internal"},
+        {"internal_diameter_mm": 13, "length": 0.1_f64.max((small_pipe_length * 100.).round_ties_even() / 100.), "location": "internal"},
+        {"internal_diameter_mm": 20, "length": 0.1_f64.max((large_pipe_length * 100.).round_ties_even() / 100.), "location": "internal"},
     ]);
     input.set_water_distribution(distribution)?;
     Ok(())
@@ -4984,7 +5010,7 @@ mod tests {
         fn input() -> InputForProcessing {
             let input = json!({
                 // Apartment Type 20
-            "NumberOfTappedRooms": 4,
+            "NumberOfHotTappedRooms": 4,
             "General": {"storeys_in_dwelling": 3},
             "BuildingLength": 11.23,
             "BuildingWidth": 4.55,
@@ -5034,7 +5060,7 @@ mod tests {
             assert_eq!(distribution.len(), 2);
             assert_eq!(distribution[0]["internal_diameter_mm"], 13.);
             assert_eq!(distribution[1]["internal_diameter_mm"], 20.);
-            assert_eq!(distribution[0]["length"], 12.65);
+            assert_eq!(distribution[0]["length"], 28.38);
             assert_eq!(distribution[1]["length"], 21.64);
             assert_eq!(distribution[0]["location"], "internal");
             assert_eq!(distribution[1]["location"], "internal");
@@ -5044,7 +5070,7 @@ mod tests {
         fn test_with_desnz_h_det_01_de_c_mev(mut input: InputForProcessing) {
             // Given a two storey facsimile input corresponding to a JSON sent by QA
             // "DESN-H-Det-01-DE-cMEV.json"
-            input.input["NumberOfTappedRooms"] = 2.into();
+            input.input["NumberOfHotTappedRooms"] = 2.into();
             input.input["BuildingLength"] = 7.2.into();
             input.input["BuildingWidth"] = 5.9.into();
             input.input["General"]["storeys_in_dwelling"] = 2.into();
@@ -5095,7 +5121,7 @@ mod tests {
             create_hot_water_distribution(&mut input).unwrap();
             // Then the calculated pipe lengths are as expected
             let expected_distribution = json!([
-                {"internal_diameter_mm": 13, "length": 10.42, "location": "internal"},
+                {"internal_diameter_mm": 13, "length": 21.68, "location": "internal"},
                 {"internal_diameter_mm": 20, "length": 21.64, "location": "internal"},
             ]);
             let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
@@ -5119,7 +5145,7 @@ mod tests {
             create_hot_water_distribution(&mut input).unwrap();
             // Then the roof element should be used to calculate pipe lengths
             let expected_distribution = json!([
-                {"internal_diameter_mm": 13, "length": 10.62, "location": "internal"},
+                {"internal_diameter_mm": 13, "length": 22.27, "location": "internal"},
                 {"internal_diameter_mm": 20, "length": 21.64, "location": "internal"},
             ]);
             let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
@@ -5132,12 +5158,12 @@ mod tests {
             input.input["General"]["storeys_in_dwelling"] = 3.into();
             input.input["BuildingLength"] = 12.0.into();
             input.input["BuildingWidth"] = 9.0.into();
-            input.input["NumberOfTappedRooms"] = 5.into();
+            input.input["NumberOfHotTappedRooms"] = 5.into();
             // When distribution is created
             create_hot_water_distribution(&mut input).unwrap();
             // Then all pipe lengths have changed to expected results
             let expected_distribution = json!([
-                {"internal_diameter_mm": 13, "length": 26.75, "location": "internal"},
+                {"internal_diameter_mm": 13, "length": 76.61, "location": "internal"},
                 // 22mm pipes have a different length with new general dwelling information
                 {"internal_diameter_mm": 20, "length": 37.5, "location": "internal"},
             ]);
@@ -5145,16 +5171,42 @@ mod tests {
             assert_eq!(actual_distribution, &expected_distribution);
         }
 
+        // #[rstest]
+        // fn test_zero_wet_rooms(mut input: InputForProcessing) {
+        //     // Given a dwelling with zero wet rooms
+        //     input.input["NumberOfTappedRooms"] = 0.into();
+        //     // When distribution is created
+        //     create_hot_water_distribution(&mut input).unwrap();
+        //     // Then all pipelengths are zero
+        //     let expected_distribution = json!([
+        //        {"internal_diameter_mm": 13, "length": 0, "location": "internal"},
+        //         {"internal_diameter_mm": 20, "length": 0, "location": "internal"},
+        //     ]);
+        //     let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
+        //     assert_eq!(actual_distribution, &expected_distribution);
+        // }
+
         #[rstest]
-        fn test_zero_wet_rooms(mut input: InputForProcessing) {
-            // Given a dwelling with zero wet rooms
-            input.input["NumberOfTappedRooms"] = 0.into();
+        fn test_one_hot_tapped_room(mut input: InputForProcessing) {
+            // Given a dwelling with 1 hot tapped room (the minimum allowed value)
+            input.input["General"]["storeys_in_dwelling"] = 3.into();
+            input.input["BuildingLength"] = 12.0.into();
+            input.input["BuildingWidth"] = 9.0.into();
+            input.input["NumberOfHotTappedRooms"] = 1.into();
             // When distribution is created
             create_hot_water_distribution(&mut input).unwrap();
-            // Then all pipelengths are zero
+            // Then the long pipelengths is set to 0.1, as 0 pipe lengths aren't allowed by the core
+            // the small pipework value is calculated correctly
+            // small_vertical_pipe_length = main_shaft_pipe_length * non_kitchen_tapped_rooms = 0
+            // branching_pipe_length = (
+            //     building_length * building_width * number_of_storeys * branch_circuit_factor
+            // )
+            // 12 * 9 * 3 * 0.0625 = 20.25
+            // small_pipe_length=(branching_pipe_length + small_vertical_pipe_length) / reduction_factor
+            // (20.25 + 0) / 2 = 10.12 (2dp)
             let expected_distribution = json!([
-               {"internal_diameter_mm": 13, "length": 0, "location": "internal"},
-                {"internal_diameter_mm": 20, "length": 0, "location": "internal"},
+                {"internal_diameter_mm": 13, "length": 10.12, "location": "internal"},
+                {"internal_diameter_mm": 20, "length": 0.1, "location": "internal"},
             ]);
             let actual_distribution = &input.input["HotWaterDemand"]["Distribution"];
             assert_eq!(actual_distribution, &expected_distribution);
@@ -5906,8 +5958,8 @@ mod tests {
             apply_defaults(&mut input).unwrap();
             // Then vent_opening_ratio_init is added to the InfiltrationVentilation object and set to 1
             assert_eq!(
-                input.input["InfiltrationVentilation"],
-                json!({"vent_opening_ratio_init": 1, "Vents": {}})
+                input.input["InfiltrationVentilation"]["vent_opening_ratio_init"],
+                json!(1),
             );
         }
 
@@ -5929,6 +5981,27 @@ mod tests {
             assert_eq!(
                 input.input["InfiltrationVentilation"]["Vents"]["vent1"],
                 json!({"pressure_difference_ref": 20})
+            );
+        }
+
+        #[test]
+        fn test_adds_sup_air_flw_ctrl_and_sup_air_temp_ctrl() {
+            // Given a project dict with InfiltrationVentilation and one mech vent
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {},
+                    "InfiltrationVentilation": {"Vents": {}, "MechanicalVentilation": {"mechvent1": {}}},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then sup_air_flw_ctrl and sup_air_temp_ctrl are added as "ODA" and "NO_CTRL" respectively
+            assert_eq!(
+                input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mechvent1"],
+                json!({"sup_air_flw_ctrl": "ODA", "sup_air_temp_ctrl": "NO_CTRL"})
             );
         }
 
@@ -6897,7 +6970,7 @@ mod tests {
             InputForProcessing {
                 input: json!({
                     // Based on dwelling DESN-H-Det-01
-                    "NumberOfTappedRooms": 4,
+                    "NumberOfHotTappedRooms": 4,
                     "General": {"storeys_in_dwelling": 2},
                     "BuildingLength": 8.004,
                     "BuildingWidth": 6.704,
@@ -7293,8 +7366,6 @@ mod tests {
                                 "mid_height_air_flow_path": 5.5,
                                 "orientation360": 0,
                                 "pitch": 90,
-                                "sup_air_flw_ctrl": "ODA",
-                                "sup_air_temp_ctrl": "NO_CTRL",
                                 "vent_type": "Centralised continuous MEV",
                             }
                         }
@@ -7349,8 +7420,6 @@ mod tests {
         fn test_input_sfp_retained_with_intermittent(mut input: InputForProcessing) {
             // Given a dwelling with a iMEV which has a SFP defined (as always required by the schema)
             input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"] = json!({
-                "sup_air_flw_ctrl": "ODA",
-                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Intermittent MEV",
                 "SFP": 1.5,
                 "EnergySupply": "mains elec",
@@ -7365,6 +7434,89 @@ mod tests {
             assert_eq!(
                 input.input["InfiltrationVentilation"]["MechanicalVentilation"]["mech1"]["SFP"],
                 1.5
+            );
+        }
+    }
+
+    mod create_hot_water_use_pattern {
+        use super::*;
+
+        #[fixture]
+        fn input() -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "PartGcompliance": false,
+                    "HotWaterSource": {"combi": {"type": "CombiBoiler"}},
+                    "ColdWaterSource": {
+                        "header tank": {
+                            "start_day": 0,
+                            "temperatures": [3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7],
+                            "time_series_step": 1,
+                        }
+                    },
+                    "HotWaterDemand": {
+                        "Shower": {
+                            "mixer": {
+                                "type": "MixerShower",
+                                "flowrate": 8.0,
+                                "ColdWaterSource": "mains water",
+                            },
+                            "IES": {
+                                "type": "InstantElecShower",
+                                "rated_power": 9.0,
+                                "ColdWaterSource": "mains water",
+                                "EnergySupply": "mains elec",
+                            },
+                        },
+                        "Bath": {},
+                        "Other": {},
+                    },
+                    "Events": {},
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_hw_average_applied_to_combiboiler(mut input: InputForProcessing) {
+            // Given a dwelling with a combi boiler hot water source
+            let tfa = 100.0;
+            let n_occupants = 2.;
+            let cold_water_feed_temps = vec![10.0; 8760];
+            // When the hot water use pattern is created
+            create_hot_water_use_pattern(&mut input, tfa, n_occupants, &cold_water_feed_temps)
+                .unwrap();
+            // Then the expected daily_HW_usage is set on the combi boiler
+            // base_hw_usage = 0.70 * 60.3 * (N_occupants ** 0.71)
+            // correction_for_missing_elec_showers = 1 + 0.3 * 0.5
+            // uplifted_prop_hot_water_showers = 0.60685 * correction_for_missing_elec_showers
+            // elec_shower_correction_factor = (1 - 0.60685) + uplifted_prop_hot_water_showers
+            // expected = base_hw_usage * elec_shower_correction_factor = 75.33249413626568
+            assert_relative_eq!(
+                input.input["HotWaterSource"]["combi"]["daily_HW_usage"]
+                    .as_f64()
+                    .unwrap(),
+                75.33249413626568
+            );
+        }
+
+        #[rstest]
+        fn test_hw_average_applied_to_heatpump_hwonly_default(mut input: InputForProcessing) {
+            input.input["HotWaterSource"] = json!({
+                "tank": {"type": "StorageTank", "HeatSource": {"hp": {"type": "HeatPump_HWOnly"}}}
+            });
+            let tfa = 100.0;
+            let n_occupants = 2.;
+            let cold_water_feed_temps = vec![10.0; 8760];
+            // When the hot water use pattern is created
+            create_hot_water_use_pattern(&mut input, tfa, n_occupants, &cold_water_feed_temps)
+                .unwrap();
+            // Then the expected vol_hw_daily_average is set on the HW-only heat pump
+            // By the same calculations as in test_hw_average_applied_to_combiboiler
+            assert_relative_eq!(
+                input.input["HotWaterSource"]["tank"]["HeatSource"]["hp"]["vol_hw_daily_average"]
+                    .as_f64()
+                    .unwrap(),
+                75.33249413626568
             );
         }
     }

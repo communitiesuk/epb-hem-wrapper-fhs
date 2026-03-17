@@ -56,7 +56,7 @@ fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>)
             .space_heat_system()
             .is_some_and(|systems| systems.contains_key(source))
             || source.contains("space_heating")
-            || source.contains("auxillary") // typo reported upstream to DESNZ, should be "auxiliary"
+            || source.contains("auxiliary")
     }
 
     fn is_water_heating(source: &str, project: &Input) -> bool {
@@ -214,7 +214,7 @@ mod tests {
                         "main": 1000,  // heating system counts
                         "Hobs": 100,  // not relevant for EER,
                         "something_space_heating": 200,  // counts as space heating
-                        "auxillary_pump_thing": 300,  // counts as a space heating system pump
+                        "auxiliary_pump_thing": 300,  // counts as a space heating system pump
                     }
                 },
                 "hot_water_demand_daily_75th_percentile": {
@@ -304,7 +304,7 @@ mod tests {
                     "SpaceHeatSystem1": 1000,  // heating system counts
                     "Hobs": 100,  // not relevant for EER,
                     "something_space_heating": 200,  // counts as space heating
-                    "auxillary_pump_thing": 300,  // counts as a space heating system pump
+                    "auxiliary_pump_thing": 300,  // counts as a space heating system pump
                 }
             },
             "hot_water_demand_daily_75th_percentile": {
