@@ -5,10 +5,9 @@ use crate::future_homes_standard::fhs_window_validation::{
 };
 use crate::future_homes_standard::future_homes_standard::initial_preprocessing;
 use crate::future_homes_standard::input::{ingest_for_processing, InputForProcessing};
-use crate::future_homes_standard::{FhsComplianceWrapper, FhsSingleCalcWrapper};
-use anyhow::anyhow;
+use crate::future_homes_standard::{FhsComplianceWrapper, FhsIndividualCalcWrapper};
 use anyhow::bail;
-use bitflags::bitflags;
+use bitflags::{bitflags, bitflags_match};
 use home_energy_model::errors::{HemError, PostprocessingError};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output_writer::OutputWriter;
@@ -36,7 +35,7 @@ pub const FHS_VERSION: &str = "1.0.0a4";
 pub const FHS_VERSION_DATE: &str = "2026-02-13";
 
 bitflags! {
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     pub struct FhsFlags: u32 {
         const FHS = 0b1;
         const FHS_FEE = 0b10;
@@ -73,17 +72,28 @@ pub(crate) trait HemWrapper {
 
 /// An enum to wrap the known wrappers that could be chosen for a given invocation.
 pub enum ChosenWrapper {
-    FhsSingleCalc(FhsSingleCalcWrapper),
+    FhsIndividualCalc(FhsIndividualCalcWrapper),
     FhsCompliance(FhsComplianceWrapper),
 }
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CalculationKey {
-    Primary,
     Fhs,
     FhsFee,
     FhsNotional,
     FhsNotionalFee,
+}
+
+impl From<&FhsFlags> for CalculationKey {
+    fn from(value: &FhsFlags) -> Self {
+        bitflags_match!(*value, {
+            FhsFlags::FHS => CalculationKey::Fhs,
+            FhsFlags::FHS_FEE => CalculationKey::FhsFee,
+            FhsFlags::FHS_NOTIONAL => CalculationKey::FhsNotional,
+            FhsFlags::FHS_FEE_NOTIONAL => CalculationKey::FhsNotionalFee,
+            _ => unreachable!("Unknown flag option(s): {:?}", value),
+        })
+    }
 }
 
 impl HemWrapper for ChosenWrapper {
@@ -94,7 +104,7 @@ impl HemWrapper for ChosenWrapper {
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
         match self {
-            ChosenWrapper::FhsSingleCalc(wrapper) => {
+            ChosenWrapper::FhsIndividualCalc(wrapper) => {
                 wrapper.apply_preprocessing(input, custom_energy_supply_factors, flags)
             }
             ChosenWrapper::FhsCompliance(wrapper) => {
@@ -114,7 +124,7 @@ impl HemWrapper for ChosenWrapper {
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
         match self {
-            ChosenWrapper::FhsSingleCalc(wrapper) => wrapper.apply_postprocessing(
+            ChosenWrapper::FhsIndividualCalc(wrapper) => wrapper.apply_postprocessing(
                 output,
                 results,
                 flags,
@@ -183,7 +193,7 @@ pub fn run_wrappers(
                 if flags.contains(FhsFlags::FHS_COMPLIANCE) {
                     ChosenWrapper::FhsCompliance(FhsComplianceWrapper::new())
                 } else {
-                    ChosenWrapper::FhsSingleCalc(FhsSingleCalcWrapper::new())
+                    ChosenWrapper::FhsIndividualCalc(FhsIndividualCalcWrapper::new())
                 }
             }
         }
@@ -216,7 +226,7 @@ pub fn run_wrappers(
         let wrapper = choose_wrapper(flags);
         let custom_energy_supply_factors = initial_preprocessing(&mut input_for_processing)?;
 
-        let input = match catch_unwind(AssertUnwindSafe(|| {
+        let inputs_by_key = match catch_unwind(AssertUnwindSafe(|| {
             apply_preprocessing_from_wrappers(input_for_processing, &custom_energy_supply_factors, &wrapper, flags)
                 .map_err(HemError::InvalidRequest)
         })) {
@@ -233,10 +243,16 @@ pub fn run_wrappers(
 
         // 2b.(!) If preprocess-only flag is present and there is a primary calculation key, write out preprocess file
         if preprocess_only {
-            if let Some(input) = input.get(&CalculationKey::Primary) {
-                write_preproc_file(&input.clone().finalize()?, &output_writer, "preproc", "json")?;
-            } else {
-                error!("Preprocess-only flag only set up to work with a calculation using a primary calculation key (i.e. not FHS compliance)");
+            for (calculation_key, input_for_processing) in inputs_by_key {
+                let output_mode = match calculation_key {
+                    CalculationKey::Fhs => "FHS",
+                    CalculationKey::FhsFee => "FHS_FEE",
+                    CalculationKey::FhsNotional => "FHS_notional",
+                    CalculationKey::FhsNotionalFee => "FHS_notional_FEE",
+                };
+
+                let location_key = format!("{output_mode}__preproc");
+                write_preproc_file(&input_for_processing.finalize()?, &output_writer, &location_key, "json")?;
             }
 
             return Ok(None);
@@ -244,20 +260,21 @@ pub fn run_wrappers(
 
         let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> = match wrapper {
             ChosenWrapper::FhsCompliance(_) => {
-                input.par_iter()
+                inputs_by_key.par_iter()
                     .map(|(key, input_value)| {
                         let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
                         home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
                             .map(|result_value| (*key, result_value))
                     }).collect()
             }
-            _ => {
-                let input_value = input
-                    .get(&CalculationKey::Primary)
-                    .ok_or_else(|| anyhow!("Primary key missing"))?;
-                let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
-                let calculation_result = home_energy_model::run_project(finalized, None, tariff_data_file, heat_balance, detailed_output_heating_cooling)?;
-                Ok(HashMap::from([(CalculationKey::Primary, calculation_result)]))
+            ChosenWrapper::FhsIndividualCalc(_) => {
+                inputs_by_key.par_iter()
+                    .map(|(key, input_value)| {
+                        let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
+                        // TODO: review passing in None for external conditions, whey were we doing this?
+                        home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
+                            .map(|result_value| (*key, result_value))
+                    }).collect()
             }
         };
 
@@ -274,7 +291,26 @@ pub fn run_wrappers(
             detailed_output_heating_cooling: bool,
             custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         ) -> anyhow::Result<Option<HemResponse>> {
-            wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
+            if flags.contains(FhsFlags::FHS_COMPLIANCE) {
+                return wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
+            }
+
+            let responses: Vec<Option<HemResponse>> = flags
+                .iter()
+                .map(|flag| {
+                    wrapper.apply_postprocessing(
+                        output,
+                        results,
+                        &flag,
+                        core_output_formats,
+                        heat_balance,
+                        detailed_output_heating_cooling,
+                        custom_energy_supply_factors,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            // TODO: fix this, returning first Hem Response is temporary work-aroud
+            Ok(responses.into_iter().next().flatten())
         }
 
         run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)

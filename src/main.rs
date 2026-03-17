@@ -11,6 +11,7 @@ use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -29,8 +30,8 @@ struct WrappersArgs {
         help = "Run preprocessing step only"
     )]
     preprocess_only: bool,
-    #[command(flatten)]
-    wrapper_choice: WrapperChoice,
+    #[clap(long, help = "The mode to run the FHS wrapper in")]
+    mode: Mode,
     #[clap(
         long,
         default_value_t = false,
@@ -54,31 +55,53 @@ struct WrappersArgs {
     core_output_formats: Option<Vec<OutputFormat>>,
 }
 
-#[derive(Args, Clone, Copy, Default, Debug)]
-#[group(required = false, multiple = false)]
-struct WrapperChoice {
-    #[arg(long, help = "Use Future Homes Standard calculation assumptions")]
-    future_homes_standard: bool,
-    #[arg(
-        long = "future-homes-standard-FEE",
-        help = "Use Future Homes Standard Fabric Energy Efficiency assumptions"
-    )]
-    future_homes_standard_fee: bool,
-    #[arg(
-        long = "future-homes-standard-notA",
-        help = "Use Future Homes Standard calculation assumptions for notional option A"
-    )]
-    future_homes_standard_notional: bool,
-    #[arg(
-        long = "future-homes-standard-FEE-notA",
-        help = "Use Future Homes Standard Fabric Energy Efficiency assumptions for notional option A"
-    )]
-    future_homes_standard_fee_notional: bool,
-    #[arg(
-        long = "fhs-compliance",
-        help = "Run an FHS compliance calculation. This overrides all other FHS related flags"
-    )]
-    fhs_compliance: bool,
+#[derive(Clone, Copy, Debug)]
+enum IndividualMode {
+    Actual,
+    ActualFee,
+    Notional,
+    NotionalFee,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ComplianceMode;
+
+#[derive(Clone, Debug)]
+enum Mode {
+    Individual(Vec<IndividualMode>),
+    Compliance(ComplianceMode),
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Self::Compliance(ComplianceMode)
+    }
+}
+
+impl FromStr for Mode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "fhs-compliance" {
+            return Ok(Self::Compliance(ComplianceMode));
+        }
+        let individuals = s
+            .split(" ")
+            .map(|individual| {
+                Ok(match individual {
+                    "actual" => IndividualMode::Actual,
+                    "actual-FEE" => IndividualMode::ActualFee,
+                    "notional" => IndividualMode::Notional,
+                    "notional-FEE" => IndividualMode::NotionalFee,
+                    _ => return Err(format!("Unknown mode '{individual}' referenced")),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>();
+        match individuals {
+            Ok(individuals) => Ok(Self::Individual(individuals)),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[derive(Args, Clone, Default, Debug)]
@@ -122,12 +145,7 @@ fn main() -> anyhow::Result<()> {
     output_path.push(format!("{}__results", input_file_stem.to_str().unwrap()));
     fs::create_dir_all(&output_path)?;
     let input_file_name = input_file_stem.file_name().unwrap().to_str().unwrap();
-    // following is rough initial mapping given existing fhs options
-    let output_type = output_type_from_wrapper_choice(&args.wrapper_choice);
-    let file_output = FileOutputWriter::new(
-        output_path,
-        format!("{input_file_name}__{output_type}__{{}}.{{}}"),
-    );
+    let file_output = FileOutputWriter::new(output_path, format!("{input_file_name}__{{}}.{{}}"));
 
     let external_conditions: Option<ExternalConditions> = match args.weather_file {
         WeatherFileType {
@@ -172,39 +190,24 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn output_type_from_wrapper_choice(wrapper_choice: &WrapperChoice) -> &str {
-    if wrapper_choice.future_homes_standard {
-        "FHS"
-    } else if wrapper_choice.future_homes_standard_fee {
-        "FHS_FEE"
-    } else if wrapper_choice.future_homes_standard_notional {
-        "FHS_notional"
-    } else if wrapper_choice.future_homes_standard_fee_notional {
-        "FHS_FEE_notional"
-    } else {
-        "compliance"
-    }
-}
-
 impl From<&WrappersArgs> for FhsFlags {
     fn from(args: &WrappersArgs) -> Self {
         let mut flags = FhsFlags::empty();
         {
-            let fhs = args.wrapper_choice;
-            if fhs.future_homes_standard {
-                flags.insert(FhsFlags::FHS);
-            }
-            if fhs.future_homes_standard_fee {
-                flags.insert(FhsFlags::FHS_FEE);
-            }
-            if fhs.future_homes_standard_notional {
-                flags.insert(FhsFlags::FHS_NOTIONAL);
-            }
-            if fhs.future_homes_standard_fee_notional {
-                flags.insert(FhsFlags::FHS_FEE_NOTIONAL)
-            }
-            if fhs.fhs_compliance {
-                flags.insert(FhsFlags::FHS_COMPLIANCE);
+            match &args.mode {
+                Mode::Individual(individuals) => {
+                    for individual in individuals {
+                        flags.insert(match individual {
+                            IndividualMode::Actual => FhsFlags::FHS,
+                            IndividualMode::ActualFee => FhsFlags::FHS_FEE,
+                            IndividualMode::Notional => FhsFlags::FHS_NOTIONAL,
+                            IndividualMode::NotionalFee => FhsFlags::FHS_FEE_NOTIONAL,
+                        })
+                    }
+                }
+                Mode::Compliance(_) => {
+                    flags.insert(FhsFlags::FHS_COMPLIANCE);
+                }
             }
         }
 

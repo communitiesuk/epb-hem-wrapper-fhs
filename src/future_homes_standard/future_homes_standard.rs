@@ -375,6 +375,7 @@ pub fn apply_fhs_postprocessing(
     results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     timestep_array: &[f64],
     notional: bool,
+    output_mode: &str,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
@@ -395,15 +396,34 @@ pub fn apply_fhs_postprocessing(
     )?;
 
     // Write results to output files
-    write_postproc_file(output_writer, "emissions", emis_results, no_of_timesteps)?;
     write_postproc_file(
         output_writer,
+        output_mode,
+        "emissions",
+        emis_results,
+        no_of_timesteps,
+    )?;
+    write_postproc_file(
+        output_writer,
+        output_mode,
         "emissions_incl_out_of_scope",
         emis_oos_results,
         no_of_timesteps,
     )?;
-    write_postproc_file(output_writer, "primary_energy", pe_results, no_of_timesteps)?;
-    write_postproc_summary_file(output_writer, total_emissions_rate, total_pe_rate, notional)?;
+    write_postproc_file(
+        output_writer,
+        output_mode,
+        "primary_energy",
+        pe_results,
+        no_of_timesteps,
+    )?;
+    write_postproc_summary_file(
+        output_writer,
+        output_mode,
+        total_emissions_rate,
+        total_pe_rate,
+        notional,
+    )?;
 
     Ok(())
 }
@@ -638,14 +658,16 @@ pub(super) fn calc_final_rates(
             supply_pe_result.generated,
         ) = if energy_generated.iter().sum::<f64>() > 0. {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
-            let generation_factors = EMIS_PE_FACTORS.get(&String::from("generation")).unwrap_or_else(|| panic!("Generation row not found in the EMIS factors file."));
+            let generation_factors = EMIS_PE_FACTORS
+                .get(&String::from("generation"))
+                .unwrap_or_else(|| panic!("Generation row not found in the EMIS factors file."));
             let FactorData {
                 emissions_factor: emis_factor_generated,
                 emissions_factor_including_out_of_scope_emissions: emis_oos_factor_generated,
                 primary_energy_factor: pe_factor_generated,
                 ..
             } = generation_factors;
-            
+
             if fuel_code == FuelType::UnmetDemand {
                 // unmet demand is calculated as a special case where it is only the increase in unmet
                 // demand between timesteps that should be accounted for, not the raw number
@@ -835,11 +857,12 @@ impl FhsCalculationResult {
 
 fn write_postproc_file(
     output_writer: &impl OutputWriter,
-    file_location: &str,
+    output_mode: &str,
+    file_name: &str,
     results: IndexMap<String, FhsCalculationResult>,
     no_of_timesteps: usize,
 ) -> anyhow::Result<()> {
-    let file_location = format!("postproc_{file_location}");
+    let file_location = format!("{output_mode}__postproc_{file_name}");
 
     let mut row_headers: Vec<String> = Default::default();
     let mut rows_results: Vec<Vec<String>> = Default::default();
@@ -876,6 +899,7 @@ fn write_postproc_file(
 
 fn write_postproc_summary_file(
     output_writer: &impl OutputWriter,
+    output_mode: &str,
     total_emissions_rate: f64,
     total_pe_rate: f64,
     notional: bool,
@@ -885,8 +909,8 @@ fn write_postproc_summary_file(
     } else {
         ("DER", "DPER")
     };
-
-    let writer = output_writer.writer_for_location_key("postproc_summary", "csv")?;
+    let file_location = format!("{output_mode}__postproc_summary");
+    let writer = output_writer.writer_for_location_key(&file_location, "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record(["", "", "Total"])?;

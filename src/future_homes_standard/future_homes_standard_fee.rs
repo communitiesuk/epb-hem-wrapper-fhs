@@ -171,6 +171,7 @@ pub fn apply_fhs_fee_postprocessing(
     total_floor_area: f64,
     space_heat_demand_total: f64,
     space_cool_demand_total: f64,
+    output_mode: &str,
 ) -> anyhow::Result<()> {
     // Subtract cooling demand from heating demand because cooling demand is negative by convention
     let fabric_energy_eff = calc_fabric_energy_efficiency(
@@ -178,8 +179,8 @@ pub fn apply_fhs_fee_postprocessing(
         space_cool_demand_total,
         total_floor_area,
     );
-
-    let writer = output_writer.writer_for_location_key("postproc", "csv")?;
+    let location_key = format!("{output_mode}__postproc");
+    let writer = output_writer.writer_for_location_key(&location_key, "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record([

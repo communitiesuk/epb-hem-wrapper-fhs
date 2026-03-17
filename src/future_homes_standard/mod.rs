@@ -11,6 +11,7 @@ use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_prepro
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::project_lookups::by_fuel;
 use anyhow::anyhow;
+use bitflags::bitflags_match;
 use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
@@ -46,29 +47,36 @@ pub(crate) mod metrics;
 pub(crate) mod project_lookups;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
-pub struct FhsSingleCalcWrapper;
+pub struct FhsIndividualCalcWrapper;
 
-impl Default for FhsSingleCalcWrapper {
+impl Default for FhsIndividualCalcWrapper {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FhsSingleCalcWrapper {
+impl FhsIndividualCalcWrapper {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl HemWrapper for FhsSingleCalcWrapper {
+impl HemWrapper for FhsIndividualCalcWrapper {
     fn apply_preprocessing(
         &self,
-        mut input: InputForProcessing,
+        input: InputForProcessing,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
-        do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flags)?;
-        Ok(HashMap::from([(CalculationKey::Primary, input)]))
+        flags
+            .iter()
+            .map(|flag| {
+                let mut input_mut = input.clone();
+                do_fhs_preprocessing(&mut input_mut, custom_energy_supply_factors, &flag)?;
+                let key: CalculationKey = (&flag).into();
+                Ok((key, input_mut))
+            })
+            .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
     }
 
     fn apply_postprocessing(
@@ -81,9 +89,10 @@ impl HemWrapper for FhsSingleCalcWrapper {
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
+        let calculation_key: CalculationKey = flags.into();
         let results = results
-            .get(&CalculationKey::Primary)
-            .expect("A primary calculation was expected in the FHS single calc wrapper");
+            .get(&calculation_key)
+            .expect("A {calculation_key} calculation was expected in the FHS single calc wrapper");
         do_fhs_postprocessing(
             output,
             results,
@@ -236,6 +245,14 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
+    let output_mode = bitflags_match!(*flags, {
+        FhsFlags::FHS => "FHS",
+        FhsFlags::FHS_FEE => "FHS_FEE",
+        FhsFlags::FHS_NOTIONAL => "FHS_notional",
+        FhsFlags::FHS_FEE_NOTIONAL => "FHS_FEE_notional",
+        _=> unreachable!("Unknown flag option(s): {:?}", flags),
+    });
+
     if let Some(output_formats) = core_output_formats {
         let steps_in_hours = results.input.simulation_time.step;
 
@@ -243,6 +260,7 @@ fn do_fhs_postprocessing(
             &results.output,
             results.input.as_ref(),
             output_writer,
+            output_mode,
             output_formats,
             steps_in_hours,
             heat_balance,
@@ -258,8 +276,9 @@ fn do_fhs_postprocessing(
     //     _=> unreachable!()
     // }); // TODO review 1.0.0a4
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
-    let filename = format!("{:?}_metrics", flags);
-    let writer = output_writer.writer_for_location_key(filename.as_str(), "json")?;
+    // TODO: metrics files don't have the input file name prefix
+    let location_key = format!("{output_mode}_metrics");
+    let writer = output_writer.writer_for_location_key(location_key.as_str(), "json")?;
     let mut serializer = Serializer::with_formatter(writer, PrettyFormatter::with_indent(b"    "));
     if let Err(e) = metrics.serialize(&mut serializer) {
         error!("Could not write out metrics postprocess file: {}", e);
@@ -275,6 +294,7 @@ fn do_fhs_postprocessing(
             results_end_user,
             timestep_array,
             notional,
+            output_mode,
             custom_energy_supply_factors,
         )?;
     } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
@@ -289,6 +309,7 @@ fn do_fhs_postprocessing(
             total_floor_area,
             space_heat_demand_total,
             space_cool_demand_total,
+            output_mode,
         )?;
     }
 
