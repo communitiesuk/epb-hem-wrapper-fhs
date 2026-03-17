@@ -89,19 +89,24 @@ impl HemWrapper for FhsIndividualCalcWrapper {
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
-        let calculation_key: CalculationKey = flags.into();
-        let results = results
-            .get(&calculation_key)
-            .expect("A {calculation_key} calculation was expected in the FHS single calc wrapper");
-        do_fhs_postprocessing(
-            output,
-            results,
-            flags,
-            core_output_formats,
-            heat_balance,
-            detailed_output_heating_cooling,
-            custom_energy_supply_factors,
-        )
+        flags
+            .iter()
+            .map(|flag| {
+                let calculation_key: CalculationKey = (&flag).into();
+                let calculation_result = results
+                    .get(&calculation_key)
+                    .expect("A {calculation_key} calculation was expected in the FHS single calc wrapper");
+            do_fhs_postprocessing(
+                output,
+                calculation_result,
+                flags,
+                core_output_formats,
+                heat_balance,
+                detailed_output_heating_cooling,
+                custom_energy_supply_factors,
+            )
+        }).collect::<Result<Vec<_>, _>>()?;
+        Ok(None)
     }
 }
 
@@ -268,13 +273,6 @@ fn do_fhs_postprocessing(
         )?;
     }
 
-    // let filename_prefix = bitflags_match!(*flags, {
-    //     FhsFlags::FHS => "FHS",
-    //     FhsFlags::FHS_FEE => "FHS_FEE",
-    //     FhsFlags::FHS_NOTIONAL => "FHS_notional",
-    //     FhsFlags::FHS_FEE_NOTIONAL => "FHS_FEE_notional",
-    //     _=> unreachable!()
-    // }); // TODO review 1.0.0a4
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
     // TODO: metrics files don't have the input file name prefix
     let location_key = format!("{output_mode}_metrics");

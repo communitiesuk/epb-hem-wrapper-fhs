@@ -258,25 +258,13 @@ pub fn run_wrappers(
             return Ok(None);
         }
 
-        let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> = match wrapper {
-            ChosenWrapper::FhsCompliance(_) => {
-                inputs_by_key.par_iter()
-                    .map(|(key, input_value)| {
-                        let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
-                        home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
-                            .map(|result_value| (*key, result_value))
-                    }).collect()
-            }
-            ChosenWrapper::FhsIndividualCalc(_) => {
-                inputs_by_key.par_iter()
-                    .map(|(key, input_value)| {
-                        let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
-                        // TODO: review passing in None for external conditions, whey were we doing this?
-                        home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
-                            .map(|result_value| (*key, result_value))
-                    }).collect()
-            }
-        };
+        let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> =
+            inputs_by_key.par_iter()
+                .map(|(key, input_value)| {
+                    let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
+                    home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
+                        .map(|result_value| (*key, result_value))
+                    }).collect();
 
         // 7. Run wrapper post-processing and capture any output.
         #[instrument(skip_all)]
@@ -291,26 +279,7 @@ pub fn run_wrappers(
             detailed_output_heating_cooling: bool,
             custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         ) -> anyhow::Result<Option<HemResponse>> {
-            if flags.contains(FhsFlags::FHS_COMPLIANCE) {
-                return wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
-            }
-
-            let responses: Vec<Option<HemResponse>> = flags
-                .iter()
-                .map(|flag| {
-                    wrapper.apply_postprocessing(
-                        output,
-                        results,
-                        &flag,
-                        core_output_formats,
-                        heat_balance,
-                        detailed_output_heating_cooling,
-                        custom_energy_supply_factors,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            // TODO: fix this, returning first Hem Response is temporary work-aroud
-            Ok(responses.into_iter().next().flatten())
+                wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
         }
 
         run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
