@@ -98,7 +98,7 @@ impl HemWrapper for FhsIndividualCalcWrapper {
                 do_fhs_postprocessing(
                     output,
                     calculation_result,
-                    flags,
+                    &flag,
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
