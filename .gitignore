@@ -4,9 +4,7 @@
 .idea
 
 #results files
-**/*_results*.csv
-**/*_postproc*.csv
-**/*_preproc.json
+/**/*__results/*
 
 #weather file in case compilation using this resource is needed
 src/weather.epw
