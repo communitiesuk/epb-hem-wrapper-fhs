@@ -1451,6 +1451,10 @@ fn calc_design_capacity(
 
     // Calculate heat transfer coefficients and heat loss parameters
     set_temp_internal_static_calcs(&mut clone)?;
+
+    // Override the "Standard"/"Pulse" choice value with the "Standard" test pressure (50)
+    clone.set_test_pressure_for_infiltration_ventilation_leaks(50.)?;
+
     let HtcHlpCalculation {
         htc_map: htc_dict, ..
     } = calc_htc_hlp(&clone.as_input_for_calc_htc_hlp()?)?;

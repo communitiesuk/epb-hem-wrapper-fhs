@@ -1982,6 +1982,19 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub fn set_test_pressure_for_infiltration_ventilation_leaks(
+        &mut self,
+        test_pressure: f64,
+    ) -> JsonAccessResult<()> {
+        self.infiltration_ventilation_node_mut()?
+            .get_mut("Leaks")
+            .and_then(|v| v.as_object_mut())
+            .ok_or_else(|| json_error("Leaks node not found or not an object"))?
+            .insert("test_pressure".into(), test_pressure.into());
+
+        Ok(())
+    }
+
     pub fn infiltration_ventilation_is_noise_nuisance(&self) -> bool {
         self.root_object("InfiltrationVentilation")
             .ok()
