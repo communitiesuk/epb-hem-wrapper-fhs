@@ -11,7 +11,6 @@ use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_prepro
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::project_lookups::by_fuel;
 use anyhow::anyhow;
-use bitflags::bitflags_match;
 use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
@@ -93,19 +92,21 @@ impl HemWrapper for FhsIndividualCalcWrapper {
             .iter()
             .map(|flag| {
                 let calculation_key: CalculationKey = (&flag).into();
-                let calculation_result = results
-                    .get(&calculation_key)
-                    .expect("A {calculation_key} calculation was expected in the FHS single calc wrapper");
-            do_fhs_postprocessing(
-                output,
-                calculation_result,
-                flags,
-                core_output_formats,
-                heat_balance,
-                detailed_output_heating_cooling,
-                custom_energy_supply_factors,
-            )
-        }).collect::<Result<Vec<_>, _>>()?;
+                let calculation_result = results.get(&calculation_key).expect(
+                    "A {calculation_key} calculation was expected in the FHS single calc wrapper",
+                );
+                do_fhs_postprocessing(
+                    output,
+                    calculation_result,
+                    flags,
+                    core_output_formats,
+                    heat_balance,
+                    detailed_output_heating_cooling,
+                    custom_energy_supply_factors,
+                )?;
+                Ok(())
+            })
+            .collect::<anyhow::Result<()>>()?;
         Ok(None)
     }
 }
@@ -250,13 +251,7 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    let output_mode = bitflags_match!(*flags, {
-        FhsFlags::FHS => "FHS",
-        FhsFlags::FHS_FEE => "FHS_FEE",
-        FhsFlags::FHS_NOTIONAL => "FHS_notional",
-        FhsFlags::FHS_FEE_NOTIONAL => "FHS_FEE_notional",
-        _=> unreachable!("Unknown flag option(s): {:?}", flags),
-    });
+    let output_mode = <&FhsFlags as std::convert::Into<CalculationKey>>::into(flags.into()).as_str();
 
     if let Some(output_formats) = core_output_formats {
         let steps_in_hours = results.input.simulation_time.step;

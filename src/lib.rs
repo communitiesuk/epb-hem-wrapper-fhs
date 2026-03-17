@@ -84,6 +84,17 @@ pub enum CalculationKey {
     FhsNotionalFee,
 }
 
+impl CalculationKey {
+    fn as_str(&self) -> &'static str {
+        match self {
+            CalculationKey::Fhs => "FHS",
+            CalculationKey::FhsFee => "FHS_FEE",
+            CalculationKey::FhsNotional => "FHS_notional",
+            CalculationKey::FhsNotionalFee => "FHS_notional_FEE",
+        }
+    }
+}
+
 impl From<&FhsFlags> for CalculationKey {
     fn from(value: &FhsFlags) -> Self {
         bitflags_match!(*value, {
@@ -244,14 +255,7 @@ pub fn run_wrappers(
         // 2b.(!) If preprocess-only flag is present and there is a primary calculation key, write out preprocess file
         if preprocess_only {
             for (calculation_key, input_for_processing) in inputs_by_key {
-                let output_mode = match calculation_key {
-                    CalculationKey::Fhs => "FHS",
-                    CalculationKey::FhsFee => "FHS_FEE",
-                    CalculationKey::FhsNotional => "FHS_notional",
-                    CalculationKey::FhsNotionalFee => "FHS_notional_FEE",
-                };
-
-                let location_key = format!("{output_mode}__preproc");
+                let location_key = format!("{}__preproc", calculation_key.as_str());
                 write_preproc_file(&input_for_processing.finalize()?, &output_writer, &location_key, "json")?;
             }
 
