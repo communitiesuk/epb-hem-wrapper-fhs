@@ -1,14 +1,14 @@
 use crate::future_homes_standard::fhs_compliance_response::{
     CalculatedComplianceResult, FhsComplianceResponse,
 };
-use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
-use crate::future_homes_standard::input::InputForProcessing;
-use crate::HemWrapper;
-use crate::{CalculationKey, FhsFlags};
 use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
+use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
+use crate::future_homes_standard::input::InputForProcessing;
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::project_lookups::by_fuel;
+use crate::HemWrapper;
+use crate::{CalculationKey, FhsFlags};
 use anyhow::anyhow;
 use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
@@ -66,13 +66,21 @@ impl HemWrapper for FhsIndividualCalcWrapper {
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
         flags: &FhsFlags,
     ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
-        flags
+        let calculations: Vec<(CalculationKey, FhsFlags)> = flags
             .iter()
             .map(|flag| {
-                let mut input_mut = input.clone();
-                do_fhs_preprocessing(&mut input_mut, custom_energy_supply_factors, &flag)?;
-                let key: CalculationKey = (&flag).into();
-                Ok((key, input_mut))
+                let calculation_key: CalculationKey = (&flag).into();
+                (calculation_key, flag)
+            })
+            .collect();
+
+        vec![input; calculations.len()]
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, mut input)| {
+                let (key, flag) = &calculations[i];
+                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flag)?;
+                Ok((*key, input))
             })
             .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
     }
@@ -87,16 +95,20 @@ impl HemWrapper for FhsIndividualCalcWrapper {
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
     ) -> anyhow::Result<Option<HemResponse>> {
-        flags
+        let calculations: Vec<(CalculationKey, FhsFlags)> = flags
             .iter()
             .map(|flag| {
                 let calculation_key: CalculationKey = (&flag).into();
-                let calculation_result = results.get(&calculation_key).expect(
-                    "A {calculation_key} calculation was expected in the FHS single calc wrapper",
-                );
+                (calculation_key, flag)
+            })
+            .collect();
+
+        calculations
+            .par_iter()
+            .map(|(key, flag)| {
                 do_fhs_postprocessing(
                     output,
-                    calculation_result,
+                    &results[key],
                     &flag,
                     core_output_formats,
                     heat_balance,
@@ -250,7 +262,8 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    let output_mode = <&FhsFlags as std::convert::Into<CalculationKey>>::into(flags.into()).as_str();
+    let output_mode =
+        <&FhsFlags as std::convert::Into<CalculationKey>>::into(flags.into()).as_str();
 
     if let Some(output_formats) = core_output_formats {
         let steps_in_hours = results.input.simulation_time.step;
