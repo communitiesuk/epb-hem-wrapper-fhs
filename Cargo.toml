@@ -41,7 +41,7 @@ doctest = false
 members = ["fhs-compliance-lambda"]
 
 [[bin]]
-name = "fhs-compliance-lambda"
+name = "future-homes-standard"
 path = "src/main.rs"
 doc = false
 required-features = ["clap"]
