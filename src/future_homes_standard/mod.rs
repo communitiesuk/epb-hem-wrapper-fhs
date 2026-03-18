@@ -90,7 +90,7 @@ impl HemWrapper for FhsIndividualCalcWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
-        core_output_formats: Option<&Vec<OutputFormat>>,
+        core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -160,7 +160,7 @@ impl HemWrapper for FhsComplianceWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         _flags: &FhsFlags,
-        core_output_formats: Option<&Vec<OutputFormat>>,
+        core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -248,7 +248,7 @@ fn do_fhs_postprocessing(
     output_writer: &impl OutputWriter,
     results: &CalculationResult,
     flags: &FhsFlags,
-    core_output_formats: Option<&Vec<OutputFormat>>,
+    core_output_formats: &[OutputFormat],
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -265,20 +265,18 @@ fn do_fhs_postprocessing(
     let output_mode =
         <&FhsFlags as std::convert::Into<CalculationKey>>::into(flags.into()).as_str();
 
-    if let Some(output_formats) = core_output_formats {
-        let steps_in_hours = results.input.simulation_time.step;
+    let steps_in_hours = results.input.simulation_time.step;
 
-        write_core_output_files(
-            &results.output,
-            results.input.as_ref(),
-            output_writer,
-            output_mode,
-            output_formats,
-            steps_in_hours,
-            heat_balance,
-            detailed_output_heating_cooling,
-        )?;
-    }
+    write_core_output_files(
+        &results.output,
+        results.input.as_ref(),
+        output_writer,
+        output_mode,
+        core_output_formats,
+        steps_in_hours,
+        heat_balance,
+        detailed_output_heating_cooling,
+    )?;
 
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
     // TODO: metrics files don't have the input file name prefix

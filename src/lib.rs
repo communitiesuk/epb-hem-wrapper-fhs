@@ -63,7 +63,7 @@ pub(crate) trait HemWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
-        core_output_formats: Option<&Vec<OutputFormat>>,
+        core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -129,7 +129,7 @@ impl HemWrapper for ChosenWrapper {
         output: &impl OutputWriter,
         results: &HashMap<CalculationKey, CalculationResult>,
         flags: &FhsFlags,
-        core_output_formats: Option<&Vec<OutputFormat>>,
+        core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
         custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
@@ -169,7 +169,7 @@ pub fn run_wrappers(
     preprocess_only: bool,
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
-    core_output_formats: Option<&Vec<OutputFormat>>,
+    core_output_formats: &[OutputFormat],
 ) -> Result<Option<HemResponse>, HemError> {
     catch_unwind(AssertUnwindSafe(|| {
         #[instrument(skip_all)]
@@ -278,7 +278,7 @@ pub fn run_wrappers(
             results: &HashMap<CalculationKey, CalculationResult>,
             wrapper: &impl HemWrapper,
             flags: &FhsFlags,
-            core_output_formats: Option<&Vec<OutputFormat>>,
+            core_output_formats: &[OutputFormat],
             heat_balance: bool,
             detailed_output_heating_cooling: bool,
             custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,

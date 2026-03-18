@@ -54,9 +54,10 @@ struct WrappersArgs {
         long,
         value_enum,
         num_args = 1..=2,
+        default_value = "csv",
         help = "output format(s): csv, json, or both; default to csv"
     )]
-    core_output_formats: Option<Vec<OutputFormat>>,
+    core_output_formats: Vec<OutputFormat>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -181,7 +182,7 @@ fn main() -> anyhow::Result<()> {
         args.preprocess_only,
         args.heat_balance,
         args.detailed_output_heating_cooling,
-        args.core_output_formats.as_ref(),
+        &args.core_output_formats,
     )?;
 
     if let Some(response) = response {
