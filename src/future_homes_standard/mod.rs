@@ -5,7 +5,6 @@ use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_noti
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
-
 use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
@@ -137,8 +136,8 @@ impl HemWrapper for FhsComplianceWrapper {
             .into_par_iter()
             .enumerate()
             .map(|(i, mut input)| {
-                let (key, flags) = &FHS_COMPLIANCE_CALCULATIONS[i];
-                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flags)?;
+                let (key, flag) = &FHS_COMPLIANCE_CALCULATIONS[i];
+                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flag)?;
                 Ok((*key, input))
             })
             .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
@@ -156,11 +155,11 @@ impl HemWrapper for FhsComplianceWrapper {
     ) -> anyhow::Result<Option<HemResponse>> {
         FHS_COMPLIANCE_CALCULATIONS
             .par_iter()
-            .map(|(key, flags)| {
+            .map(|(key, flag)| {
                 do_fhs_postprocessing(
                     output,
                     &results[key],
-                    flags,
+                    flag,
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
@@ -191,10 +190,10 @@ static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
 fn do_fhs_preprocessing(
     input: &mut InputForProcessing,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
-    flags: &FhsFlags,
+    flag: &FhsFlags,
 ) -> anyhow::Result<()> {
     // Validate ventilation rates against part F
-    if flags.contains(FhsFlags::FHS) {
+    if flag.contains(FhsFlags::FHS) {
         validate_dwelling_ventilation(
             input.infiltration_ventilation_node()?,
             calc_tfa(input)?,
@@ -210,13 +209,13 @@ fn do_fhs_preprocessing(
             input.kitchen_extractor_hood_external()?,
         )?;
     }
-    if flags.contains(FhsFlags::FHS_FEE_NOTIONAL) {
+    if flag.contains(FhsFlags::FHS_FEE_NOTIONAL) {
         apply_fhs_notional_preprocessing(input, custom_energy_supply_factors, true)?;
     }
-    if flags.contains(FhsFlags::FHS_NOTIONAL) {
+    if flag.contains(FhsFlags::FHS_NOTIONAL) {
         apply_fhs_notional_preprocessing(input, custom_energy_supply_factors, false)?;
     }
-    if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
+    if flag.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         apply_fhs_fee_preprocessing(input)?;
     }
 
