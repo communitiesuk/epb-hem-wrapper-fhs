@@ -30,7 +30,11 @@ struct WrappersArgs {
         help = "Run preprocessing step only"
     )]
     preprocess_only: bool,
-    #[clap(long, help = "The mode to run the FHS wrapper in")]
+    #[clap(
+        long,
+        default_value = "fhs-compliance",
+        help = "The mode to run the FHS wrapper in"
+    )]
     mode: Mode,
     #[clap(
         long,
