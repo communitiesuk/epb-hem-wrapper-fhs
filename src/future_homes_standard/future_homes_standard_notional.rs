@@ -3541,7 +3541,6 @@ mod tests {
     }
 
     #[rstest]
-    // #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_actual_with_centralised_mechanical_ventilation_system(
         mut test_input: InputForProcessing,
     ) {
@@ -3573,6 +3572,8 @@ mod tests {
         // Then two dMEVs are created in the notional with numbered vent names
         let expected_mech_vent = json!({
             "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
@@ -3582,6 +3583,8 @@ mod tests {
                 "pitch": 90.,
             },
             "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
                 "vent_type": "Decentralised continuous MEV",
                 "SFP": 0.15,
                 "EnergySupply": "mains elec",
