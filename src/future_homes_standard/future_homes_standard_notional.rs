@@ -1,8 +1,8 @@
 use super::future_homes_standard::{
     calc_n_occupants, calc_nbeds, calc_tfa, create_cold_water_feed_temps,
-    create_hot_water_use_pattern, set_temp_internal_static_calcs, ENERGY_SUPPLY_NAME_ELECTRICITY,
-    HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS, REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END,
-    SIMTIME_START, SIMTIME_STEP,
+    create_hot_water_use_pattern, create_thermal_penetration, set_temp_internal_static_calcs,
+    ENERGY_SUPPLY_NAME_ELECTRICITY, HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS,
+    REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END, SIMTIME_START, SIMTIME_STEP,
 };
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::fhs_part_f_validation::part_f::{
@@ -1447,17 +1447,25 @@ fn calc_design_capacity(
 ) -> anyhow::Result<(IndexMap<String, f64>, f64)> {
     // Create a deep copy as init_resistance_or_uvalue() will add u_value & r_c
     // which will raise warning when called second time
-    let mut clone = input.clone();
+    let mut input = input.clone();
 
     // Calculate heat transfer coefficients and heat loss parameters
-    set_temp_internal_static_calcs(&mut clone)?;
+    set_temp_internal_static_calcs(&mut input)?;
 
     // Override the "Standard"/"Pulse" choice value with the "Standard" test pressure (50)
-    clone.set_test_pressure_for_infiltration_ventilation_leaks(50.)?;
+    input.set_test_pressure_for_infiltration_ventilation_leaks(50.)?;
+
+    // following scope massages the zone JSON values to get them into a shape where they can be successfully deserialised into a HEM ZoneDictionary
+    {
+        create_thermal_penetration(&mut input)?;
+        for zone_key in input.zone_keys()? {
+            input.set_init_temp_setpoint_for_zone(&zone_key, 20.)?; // set a temp of 20ºC just to give it a valid value
+        }
+    }
 
     let HtcHlpCalculation {
         htc_map: htc_dict, ..
-    } = calc_htc_hlp(&clone.as_input_for_calc_htc_hlp()?)?;
+    } = calc_htc_hlp(&input.as_input_for_calc_htc_hlp()?)?;
 
     // Calculate design capacity
     let min_air_temp = *input.external_conditions()?.air_temperatures().as_ref().ok_or_else(|| anyhow!("FHS Notional wrapper expected to have air temperatures merged onto the input structure."))?.iter().min_by(|a, b| a.total_cmp(b)).ok_or_else(|| anyhow!("FHS Notional wrapper expects air temperature list set on input structure not to be empty."))?;
