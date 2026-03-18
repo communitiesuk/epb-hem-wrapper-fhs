@@ -799,7 +799,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_35["A"],
                     "cop": 2.79,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 35,
                     "temp_outlet": 34,
                     "temp_source": -7,
@@ -809,7 +808,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_35["B"],
                     "cop": 4.29,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 35,
                     "temp_outlet": 30,
                     "temp_source": 2,
@@ -819,7 +817,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_35["C"],
                     "cop": 5.91,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 35,
                     "temp_outlet": 27,
                     "temp_source": 7,
@@ -829,7 +826,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_35["D"],
                     "cop": 8.02,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 35,
                     "temp_outlet": 24,
                     "temp_source": 12,
@@ -839,7 +835,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_35["F"],
                     "cop": 2.49,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 35,
                     "temp_outlet": 35,
                     "temp_source": -10,
@@ -849,7 +844,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_55["A"],
                     "cop": 2.03,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 55,
                     "temp_outlet": 52,
                     "temp_source": -7,
@@ -859,7 +853,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_55["B"],
                     "cop": 3.12,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 55,
                     "temp_outlet": 42,
                     "temp_source": 2,
@@ -869,7 +862,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_55["C"],
                     "cop": 4.41,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 55,
                     "temp_outlet": 36,
                     "temp_source": 7,
@@ -879,7 +871,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_55["D"],
                     "cop": 6.30,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 55,
                     "temp_outlet": 30,
                     "temp_source": 12,
@@ -889,7 +880,6 @@ fn edit_add_heatpump_heating(
                 {
                     "capacity": capacity_results_dict_55["F"],
                     "cop": 1.87,
-                    "degradation_coeff": 0.9,
                     "design_flow_temp": 55,
                     "temp_outlet": 55,
                     "temp_source": -10,

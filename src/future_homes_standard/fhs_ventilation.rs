@@ -166,6 +166,8 @@ fn create_dmev(
     let default_dmev_sfp = 0.15;
 
     json!({
+        "sup_air_flw_ctrl": "ODA",
+        "sup_air_temp_ctrl": "NO_CTRL",
         "vent_type": "Decentralised continuous MEV",
         "SFP": default_dmev_sfp,
         "EnergySupply": "mains elec",
