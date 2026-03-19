@@ -1037,7 +1037,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-7"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#d83f87c99ff067af229640c8cae9bb17b97f0c65"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#561506bb095ca0571db984390d180c33457e0d9e"
 dependencies = [
  "anyhow",
  "arc-swap",

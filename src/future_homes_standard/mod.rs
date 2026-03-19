@@ -278,9 +278,9 @@ fn do_fhs_postprocessing(
     )?;
 
     let metrics = metric_postprocessing(results.input.as_ref(), &results.output)?;
-    // TODO: metrics files don't have the input file name prefix
     let location_key = format!("{output_mode}_metrics");
-    let writer = output_writer.writer_for_location_key(location_key.as_str(), "json")?;
+    let no_prefix_output_writer = output_writer.with_file_template("{}.{}".into());
+    let writer = no_prefix_output_writer.writer_for_location_key(location_key.as_str(), "json")?;
     let mut serializer = Serializer::with_formatter(writer, PrettyFormatter::with_indent(b"    "));
     if let Err(e) = metrics.serialize(&mut serializer) {
         error!("Could not write out metrics postprocess file: {}", e);
