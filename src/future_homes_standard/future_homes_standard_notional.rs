@@ -1180,7 +1180,7 @@ fn calc_daily_hw_demand(
             .map(|showers| {
                 // we need to remove allow_low_flowrate from all the showers so they can be turned into HEM inputs
                 let mut showers = showers.clone();
-                for shower in showers.values_mut().map(Value::as_object_mut).flatten() {
+                for shower in showers.values_mut().filter_map(Value::as_object_mut) {
                     shower.remove("allow_low_flowrate");
                 }
                 serde_json::from_value(json!(showers))

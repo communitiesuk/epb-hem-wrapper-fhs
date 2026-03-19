@@ -109,7 +109,7 @@ impl HemWrapper for FhsIndividualCalcWrapper {
                 do_fhs_postprocessing(
                     output,
                     &results[key],
-                    &flag,
+                    flag,
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
@@ -262,8 +262,7 @@ fn do_fhs_postprocessing(
         ..
     } = &results.output.core;
 
-    let output_mode =
-        <&FhsFlags as std::convert::Into<CalculationKey>>::into(flags.into()).as_str();
+    let output_mode = <&FhsFlags as Into<CalculationKey>>::into(flags).as_str();
 
     let steps_in_hours = results.input.simulation_time.step;
 
