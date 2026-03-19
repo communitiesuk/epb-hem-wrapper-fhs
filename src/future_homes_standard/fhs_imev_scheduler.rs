@@ -411,12 +411,7 @@ pub(crate) fn create_imev_pattern(
         .chain(non_kitchen_imevs.imevs.iter())
     {
         let controlname = format!("_intermittent_MEV_control: {}", vent.name);
-        input.add_mechanical_ventilation(
-            &vent.name,
-            json!({
-                "Control": controlname,
-            }),
-        )?;
+        input.set_control_for_mechanical_ventilation(&vent.name, &controlname)?;
         input.add_control(
             &controlname,
             json!({

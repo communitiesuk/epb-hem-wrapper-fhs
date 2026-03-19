@@ -1809,27 +1809,6 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub fn add_mechanical_ventilation(
-        &mut self,
-        vent_name: &str,
-        mech_vent: JsonValue,
-    ) -> anyhow::Result<()> {
-        let infiltration_ventilation_node = self
-            .input
-            .get_mut("InfiltrationVentilation")
-            .ok_or(json_error("InfiltrationVentilation node not found"))?
-            .as_object_mut()
-            .ok_or(json_error("InfiltrationVentilation node is not an object"))?;
-        let mech_vent_map = infiltration_ventilation_node
-            .entry("MechanicalVentilation")
-            .or_insert(json!({}))
-            .as_object_mut()
-            .ok_or(json_error("MechanicalVentilation node is not an object"))?;
-        mech_vent_map.insert(vent_name.into(), mech_vent);
-
-        Ok(())
-    }
-
     pub fn set_mechanical_ventilations(
         &mut self,
         mech_vents: JsonValue,
@@ -1862,6 +1841,28 @@ impl InputForProcessing {
             .get_mut("Vents")
             .and_then(|v| v.as_object_mut())
             .ok_or(json_error("Vents node not available"))
+    }
+
+    pub fn set_control_for_mechanical_ventilation(
+        &mut self,
+        mech_vent_key: &str,
+        control: &str,
+    ) -> JsonAccessResult<&Self> {
+        let infiltration_ventilation = self.infiltration_ventilation_node_mut()?;
+        let mech_vent_map = infiltration_ventilation
+            .get_mut("MechanicalVentilation")
+            .ok_or(json_error("MechanicalVentilation node not found"))?
+            .as_object_mut()
+            .ok_or(json_error("MechanicalVentilation node is not an object"))?;
+        let mech_vent = mech_vent_map
+            .get_mut(mech_vent_key)
+            .and_then(JsonValue::as_object_mut)
+            .ok_or(json_error(format!(
+                "Mechanical ventilation '{mech_vent_key}' not found"
+            )))?;
+        mech_vent.insert("Control".into(), json!(control));
+
+        Ok(self)
     }
 
     #[cfg(test)]
