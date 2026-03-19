@@ -1177,7 +1177,14 @@ fn calc_daily_hw_demand(
     let dhw_demand = DomesticHotWaterDemand::<_, HotWaterStorageTank>::new(
         &input
             .showers()?
-            .map(|showers| serde_json::from_value(json!(showers)))
+            .map(|showers| {
+                // we need to remove allow_low_flowrate from all the showers so they can be turned into HEM inputs
+                let mut showers = showers.clone();
+                for shower in showers.values_mut().map(Value::as_object_mut).flatten() {
+                    shower.remove("allow_low_flowrate");
+                }
+                serde_json::from_value(json!(showers))
+            })
             .transpose()?
             .unwrap_or_default(),
         &input
