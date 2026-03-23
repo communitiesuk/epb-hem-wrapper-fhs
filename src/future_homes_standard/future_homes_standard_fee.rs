@@ -1,9 +1,15 @@
-use super::future_homes_standard::{apply_fhs_preprocessing, calc_tfa, minimum_air_change_rate};
+use super::future_homes_standard::calc_tfa;
 use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
+use crate::future_homes_standard::fhs_part_f_validation::part_f::{
+    minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
+    minimum_whole_dwelling_ventilation_rate_continuous,
+};
+use crate::future_homes_standard::fhs_ventilation::{
+    create_background_vents, create_mechanical_ventilation,
+};
 use crate::future_homes_standard::input::InputForProcessing;
-use anyhow::anyhow;
 use csv::WriterBuilder;
-use home_energy_model::output::Output;
+use home_energy_model::output_writer::OutputWriter;
 use serde_json::json;
 
 /// This module provides functions to implement pre- and post-processing
@@ -32,30 +38,20 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
     //  - passive vents
     //  - flueless gas fires
 
-    // Retrieve the number of bedrooms and total volume
-    let number_of_bedrooms = input
-        .number_of_bedrooms()?
-        .ok_or_else(|| anyhow!("Expected number of bedrooms to be indicated."))?;
-    let total_volume = input.total_zone_volume()?;
+    // Use continuous decentralised mechanical extract ventilation
+    let minimum_air_flow_rate = minimum_whole_dwelling_ventilation_rate_continuous(
+        calc_tfa(input)?,
+        input.number_of_bedrooms()?,
+    );
+    let mechanical_ventilation = create_mechanical_ventilation(input, minimum_air_flow_rate)?;
+    input.set_mechanical_ventilations(mechanical_ventilation)?;
 
-    let total_floor_area = calc_tfa(input)?;
-    let req_ach =
-        minimum_air_change_rate(input, total_floor_area, total_volume, number_of_bedrooms);
-    // convert to m3/h
-    let design_outdoor_air_flow_rate = req_ach * total_volume;
-
-    input.reset_mechanical_ventilation()?;
-    input.add_mechanical_ventilation(
-        "Decentralised_Continuous_MEV_for_FEE_calc",
-        json!({
-            "sup_air_flw_ctrl": "ODA",
-            "sup_air_temp_ctrl": "CONST",
-            "vent_type": "Decentralised continuous MEV",
-            "SFP": 0.15,
-            "EnergySupply": "mains elec",
-            "design_outdoor_air_flow_rate": design_outdoor_air_flow_rate
-        }),
-    )?;
+    // Assign minimum background ventilation
+    let minimum_vent_area =
+        minimum_background_ventilation_area_continuous(input.number_of_habitable_rooms()?);
+    let minimum_vent_count = minimum_background_vent_count_continuous(input.number_of_bedrooms()?);
+    let background_vents = create_background_vents(input, minimum_vent_area, minimum_vent_count)?;
+    input.set_vents(background_vents)?;
 
     // Use instantaneous electric water heater
     // Set power such that it should always be sufficient for any realistic demand
@@ -73,24 +69,11 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
         "EnergySupply": "mains elec",
         "ColdWaterSource": cold_water_source_name,
     }))?;
+    // Remove any PreHeatedWaterSource (if present) used by the actual building's
+    // original "hw cylinder" HotWaterSource
+    input.remove_preheated_water_sources()?;
     // No hot water distribution pipework for point of use water heaters
-    // NB. writing empty water distribution here as believe setting this has no effect as hot water cylinder is point of use,
-    // and shape here is now not as expected - reported to BRE as https://dev.azure.com/BreGroup/SAP%2011/_workitems/edit/45862
-    // let pipework_none = json!({
-    //     "internal_diameter_mm": 0.01,
-    //     "external_diameter_mm": 0.02,
-    //     "length": 0.0,
-    //     "insulation_thermal_conductivity": 0.01,
-    //     "insulation_thickness_mm": 0.0,
-    //     "surface_reflectivity": false,
-    //     "pipe_contents": "water",
-    // });
-    input.set_water_distribution(json!([
-        // {
-        //     // "internal": pipework_none,
-        //     // "external": pipework_none,
-        // }
-        ]))?;
+    input.set_water_distribution(json!([]))?;
 
     // One 9.3 kW InstantElecShower, one bath
     input.set_shower(json!({
@@ -142,11 +125,14 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
             json!({
                 "type": "InstantElecHeater",
                 "rated_power": 10000.0,
-                "frac_convective": 0.95,
+                "convective_type": "Air heating (convectors, fan coils etc.)",
                 "EnergySupply": "mains elec",
             }),
         )?;
     }
+    // delete any actual HeatSourceWet as it is no longer referenced
+    // either by a SpaceHeatSystem or a HotWaterSource under FEE
+    input.remove_heat_source_wet()?;
 
     // Cooling from air conditioning
     // Set capacity such that it should always be sufficient for any realistic demand
@@ -177,22 +163,15 @@ pub fn apply_fhs_fee_preprocessing(input: &mut InputForProcessing) -> anyhow::Re
         .remove_all_diverters_from_energy_supplies()?
         .remove_all_batteries_from_energy_supplies()?;
 
-    // Apply standard FHS preprocessing assumptions. Note these should be applied
-    // after the other adjustments are made, because decisions may be based on
-    // e.g. the heating system type.
-    // Note: In SAP 10.2, different gains assumptions were used for the cooling
-    // calculation compared to the heating calculation. However, only one set of
-    // standardised gains have so far been defined here.
-    apply_fhs_preprocessing(input, Some(true), None)?;
-
     Ok(())
 }
 
 pub fn apply_fhs_fee_postprocessing(
-    output: &impl Output,
+    output_writer: &impl OutputWriter,
     total_floor_area: f64,
     space_heat_demand_total: f64,
     space_cool_demand_total: f64,
+    output_mode: &str,
 ) -> anyhow::Result<()> {
     // Subtract cooling demand from heating demand because cooling demand is negative by convention
     let fabric_energy_eff = calc_fabric_energy_efficiency(
@@ -200,8 +179,8 @@ pub fn apply_fhs_fee_postprocessing(
         space_cool_demand_total,
         total_floor_area,
     );
-
-    let writer = output.writer_for_location_key("postproc", "csv")?;
+    let location_key = format!("{output_mode}__postproc");
+    let writer = output_writer.writer_for_location_key(&location_key, "csv")?;
     let mut writer = WriterBuilder::new().flexible(true).from_writer(writer);
 
     writer.write_record([

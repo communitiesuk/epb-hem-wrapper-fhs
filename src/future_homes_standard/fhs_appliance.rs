@@ -10,10 +10,10 @@ pub(super) struct FhsAppliance {
     pub(super) standby_w: f64,
     pub(super) gains_frac: f64,
     pub(super) event_list: Vec<ApplianceGainsEvent>,
-    pub(super) flat_schedule: Vec<f64>,
 }
 
 impl FhsAppliance {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         util_unit: f64,
         annual_use_per_unit: f64,
@@ -32,7 +32,7 @@ impl FhsAppliance {
             + standby_w
                 * ((HOURS_PER_DAY * DAYS_PER_YEAR) as f64 - annual_expected_uses * event_duration)
                 / WATTS_PER_KILOWATT as f64;
-        let (event_list, flat_schedule) = Self::build_sched(
+        let (event_list, _flat_schedule) = Self::build_sched(
             flat_profile,
             seed,
             annual_expected_uses,
@@ -46,10 +46,10 @@ impl FhsAppliance {
             standby_w,
             gains_frac,
             event_list,
-            flat_schedule,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_sched(
         flat_profile: &[f64],
         seed: usize,
@@ -128,6 +128,9 @@ impl FhsAppliance {
                 let duration =
                     event_duration * (1. + event_size_deviations[event_count]) / f_appliance;
                 event_count += 1;
+                if duration == 0. {
+                    continue;
+                }
                 // step will depend on timestep of flatprofile, always hourly so no adjustment
                 eventlist.push(ApplianceGainsEvent {
                     start: step as f64 + start_offset,
