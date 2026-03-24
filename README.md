@@ -25,11 +25,57 @@ To run tests:
 cargo test
 ```
 
-Fully running the engine requires a weather file in EPW format and an input JSON file (format not yet documented/
-stable):
+Running the engine requires an input JSON file that conforms to the [FHS input schema](schema/input_fhs.schema.json).
+
+Example input files for demonstration purposes can be found at 
+[examples/input/future_homes_standard](examples/input/future_homes_standard).
+
+#### FHS Compliance mode
+
+The default way to run the FHS wrapper is to run the `fhs-compliance` mode i.e. to run all of:
+
+* The actual building
+* The actual building with FEE assumptions
+* The notional building
+* The notional building with FEE assumptions
+
+This will return an FHS compliance response.
+
+To do this, run:
 
 ```
-cargo run --release --features="clap indicatif" -- path/to/input.json -e path/to/weather_file.epw --future-homes-standard
+cargo run --release --features="clap indicatif" -- path/to/input.json
+```
+
+#### Individual modes
+
+Any of the individual modes listed above may be run using the `--mode` option:
+
+* The actual building: `--mode actual`
+* The actual building with FEE assumptions: `--mode actual-FEE`
+* The notional building: `--mode notional`
+* The notional building with FEE assumptions: `--mode notional-FEE`
+
+The individual modes can be combined, e.g.:
+
+```
+cargo run --release --features="clap indicatif" -- path/to/input.json --mode "actual actual-FEE"
+```
+
+#### Weather file option
+
+The wrapper uses a representative weather file by default but there is also the option to provide a weather file, for example:
+
+```bash
+cargo run --release --features="clap indicatif" -- path/to/input.json -e path/to/weather_file.epw
+```
+
+#### Core output formats
+
+Optionally, the core output format can be specified. Valid values are `csv` (default), `json` or `json csv`: 
+
+```
+cargo run --release --features="clap indicatif" -- path/to/input.json --core-output-formats "json"
 ```
 
 The `clap` feature above is mandatory. The `indicatif` feature switches on the output of a progress bar.
