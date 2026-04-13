@@ -31,8 +31,8 @@ use tracing::{error, instrument};
 
 pub mod future_homes_standard;
 
-pub const FHS_VERSION: &str = "1.0.0a4";
-pub const FHS_VERSION_DATE: &str = "2026-02-13";
+pub const FHS_VERSION: &str = "1.0.0a7";
+pub const FHS_VERSION_DATE: &str = "2026-03-09";
 
 bitflags! {
     #[derive(Debug, PartialEq)]
