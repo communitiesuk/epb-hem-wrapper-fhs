@@ -23,8 +23,7 @@ use indexmap::IndexMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Cursor, Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use tracing::{error, instrument};
@@ -178,7 +177,9 @@ pub fn run_wrappers(
             external_conditions_data: Option<&ExternalConditions>,
         ) -> anyhow::Result<InputForProcessing> {
             let mut input_for_processing = ingest_for_processing(input)?;
-            let default_weather_file = epw_weather_data_to_external_conditions(File::open("src/future_homes_standard/RAF_Bedford_01.epw")?);
+
+            let default_weather_file = epw_weather_data_to_external_conditions(BufReader::new(Cursor::new(include_str!("future_homes_standard/RAF_Bedford_01.epw"))));
+
             let default_external_conditions_data = match default_weather_file {
                 Ok(data) => data,
                 Err(_) => bail!("Could not parse the default weather file!"),
@@ -235,6 +236,7 @@ pub fn run_wrappers(
 
         // 2. apply preprocessing from wrappers
         let wrapper = choose_wrapper(flags);
+
         let custom_energy_supply_factors = initial_preprocessing(&mut input_for_processing)?;
 
         let inputs_by_key = match catch_unwind(AssertUnwindSafe(|| {
