@@ -8,9 +8,10 @@ use crate::future_homes_standard::input::{ingest_for_processing, InputForProcess
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsIndividualCalcWrapper};
 use anyhow::bail;
 use bitflags::{bitflags, bitflags_match};
-use home_energy_model::errors::{HemError, PostprocessingError};
+pub use home_energy_model::errors::HemError;
+use home_energy_model::errors::PostprocessingError;
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
-use home_energy_model::output_writer::OutputWriter;
+pub use home_energy_model::output_writer::{OutputWriter, SinkOutputWriter};
 pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
