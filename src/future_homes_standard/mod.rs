@@ -14,7 +14,7 @@ use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::{CustomEnergySourceFactor, Input};
 use home_energy_model::output::{Output, OutputCore, OutputSummary};
-use home_energy_model::output_writer::OutputWriter;
+pub use home_energy_model::output_writer::{OutputWriter, SinkOutputWriter};
 use home_energy_model::{write_core_output_files, HemResponse};
 use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
