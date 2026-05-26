@@ -2225,12 +2225,34 @@ mod tests {
 
         // When remove_wwhrs_if_present() is called
         remove_wwhrs_if_present(&mut test_input).unwrap();
-        // Then the WWHRS is removed along with references to it in the Showers
 
+        // Then the WWHRS is removed along with references to it in the Showers
         assert!(test_input.wwhrs().unwrap().is_none());
         let main_shower = test_input.showers().unwrap().unwrap().get("main").unwrap();
         assert!(main_shower.get("WWHRS").is_none());
         assert!(main_shower.get("WWHRS_Configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_remove_wwhrs_if_present_with_no_wwhrs(mut test_input: InputForProcessing) {
+        test_input.remove_wwhrs().unwrap();
+        let main_shower = json!({
+        "main": {
+            "type": "MixerShower",
+            "flowrate": 8.0,
+            "ColdWaterSource": "mains water"
+        }});
+        test_input.set_shower(main_shower.clone()).unwrap();
+
+        // When remove_wwhrs_if_present() is called
+        remove_wwhrs_if_present(&mut test_input).unwrap();
+
+        // Then it has no impact
+        assert!(test_input.wwhrs().unwrap().is_none());
+        assert_eq!(
+            test_input.showers().unwrap().unwrap(),
+            main_shower.as_object().unwrap()
+        );
     }
 
     #[rstest]
