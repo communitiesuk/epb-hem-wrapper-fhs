@@ -2199,27 +2199,38 @@ mod tests {
         assert_eq!(test_input.input["HotWaterDemand"]["Bath"], expected_bath);
     }
 
-    // this test does not exist in Python HEM
     #[rstest]
     fn test_remove_wwhrs_if_present(mut test_input: InputForProcessing) {
         test_input
-            .register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS, "B")
-            .unwrap();
-        test_input
             .set_wwhrs(json!({
-            NOTIONAL_WWHRS: {
-                "ColdWaterSource": "mains water",
-                "system_b_efficiencies": [50, 50],
-                "flow_rates": [0.1, 100],
-                "type": "WWHRS_Instantaneous",
-                "system_b_utilisation_factor": 0.98,
-                "system_a_efficiencies": [50, 50],
-                "system_a_utilisation_factor": 0.98,
-            }
+                "main": {
+                    "type": "WWHRS_Instantaneous",
+                    "ColdWaterSource": "header tank",
+                    "flow_rates": [5, 7, 9, 11, 13],
+                    "system_a_efficiencies": [63, 54.9, 48.6, 43.6, 39.6],
+                    "system_a_utilisation_factor": 0.972,
+                }
             }))
             .unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+                "WWHRS": "main",
+                "WWHRS_configuration": "A",
+            }}))
+            .unwrap();
+
+        // When remove_wwhrs_if_present() is called
         remove_wwhrs_if_present(&mut test_input).unwrap();
+        // Then the WWHRS is removed along with references to it in the Showers
+
         assert!(test_input.wwhrs().unwrap().is_none());
+        let main_shower = test_input.showers().unwrap().unwrap().get("main").unwrap();
+        assert!(main_shower.get("WWHRS").is_none());
+        assert!(main_shower.get("WWHRS_Configuration").is_none());
     }
 
     #[rstest]
