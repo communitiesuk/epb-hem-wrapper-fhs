@@ -3863,10 +3863,10 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
             {
                 let ff = el.get("frame_area_fraction")?.as_f64()?;
                 let g_val = el.get("g_value")?.as_f64()?;
-                let base_height = el.get("base_height")?.as_f64()?;
-                let orientation = el.get("orientation")?.as_f64()?;
                 let width = el.get("width")?.as_f64()?;
                 let height = el.get("height")?.as_f64()?;
+                let base_height = el.get("base_height")?.as_f64()?;
+                let orientation = el.get("orientation360")?.as_f64()?;
                 let w_area = width * height;
 
                 let shading: Vec<WindowShadingObject> = if let Ok(shading) =
