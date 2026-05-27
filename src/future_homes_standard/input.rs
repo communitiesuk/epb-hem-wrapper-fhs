@@ -1008,23 +1008,23 @@ impl InputForProcessing {
             .map(|shower| shower.values_mut().collect::<Vec<&mut JsonValue>>()))
     }
 
-    pub(crate) fn register_wwhrs_name_on_mixer_shower(
+    pub(crate) fn register_wwhrs_name_on_showers(
         &mut self,
         wwhrs: &str,
         wwhrs_configuration: &str,
     ) -> anyhow::Result<()> {
-        let mixer_shower = self
-            .hot_water_demand_mut()?
-            .get_mut("Shower")
-            .ok_or(json_error("Shower node not set on HotWaterDemand"))?
-            .get_mut("mixer")
-            .ok_or(json_error(
-                "A mixer shower with the reference 'mixer' was expected to have been set",
-            ))?
-            .as_object_mut()
-            .ok_or(json_error("Mixer shower was not a JSON object"))?;
-        mixer_shower.insert("WWHRS".into(), json!(wwhrs));
-        mixer_shower.insert("WWHRS_configuration".into(), json!(wwhrs_configuration));
+        let showers = self
+            .shower_values_mut()?
+            .ok_or_else(|| anyhow!("Could not get shower values"))?;
+
+        for shower in showers {
+            let shower_object = shower
+                .as_object_mut()
+                .ok_or_else(|| anyhow!("Shower entry is not an object"))?;
+
+            shower_object.insert("WWHRS".into(), json!(wwhrs));
+            shower_object.insert("WWHRS_configuration".into(), json!(wwhrs_configuration));
+        }
 
         Ok(())
     }
