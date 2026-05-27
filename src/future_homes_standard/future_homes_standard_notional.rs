@@ -1026,9 +1026,10 @@ fn add_wwhrs(
 ) -> anyhow::Result<()> {
     let storeys_in_dwelling = input.storeys_in_dwelling()?;
 
-    // add WWHRS if more than 1 storeys in dwelling, notional A and not FEE
+    // add WWHRS if more than 1 storeys in dwelling and not FEE
     if storeys_in_dwelling > 1 && !is_fee {
-        input.register_wwhrs_name_on_mixer_shower(NOTIONAL_WWHRS, "B")?;
+        input.register_wwhrs_name_on_showers(NOTIONAL_WWHRS, "B")?;
+
         input.set_wwhrs(json!({
             NOTIONAL_WWHRS: {
                 "ColdWaterSource": cold_water_source_type,
@@ -2256,13 +2257,28 @@ mod tests {
     }
 
     #[rstest]
-    fn test_add_wwhrs(mut test_input: InputForProcessing) {
+    fn test_add_wwhrs_adds_wwhrs_config_for_multistory_non_fee(mut test_input: InputForProcessing) {
+        // Given an actual building with more that one story and multiple showers
         test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+                "WWHRS": "main",
+                "WWHRS_configuration": "A",
+            },
+            "ensuite": {"type": "MixerShower", "flowrate": 8.0, "ColdWaterSource": "mains water"},
+            }))
+            .unwrap();
 
         let cold_water_source_type = "mains water";
 
+        // When the notional building's WWHRS is configured
         add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
 
+        // Then a WWHRS is added and the showers are updated to use it
         let expected_wwhrs: WasteWaterHeatRecovery = serde_json::from_value(json!({
             "Notional_Inst_WWHRS": {
                "ColdWaterSource": cold_water_source_type,
@@ -2275,40 +2291,77 @@ mod tests {
            }
         }))
         .unwrap();
+        let actual_wwhrs = test_input.wwhrs().unwrap();
+        assert_eq!(actual_wwhrs.unwrap(), expected_wwhrs);
 
-        assert_eq!(test_input.wwhrs().unwrap().unwrap().clone(), expected_wwhrs);
-
-        let mixer_shower = test_input
-            .showers()
-            .unwrap()
-            .unwrap()
-            .get("mixer")
-            .and_then(|mixer| mixer.as_object())
-            .unwrap();
-
-        assert_eq!(
-            mixer_shower.get("WWHRS").and_then(|wwhrs| wwhrs.as_str()),
-            Some("Notional_Inst_WWHRS")
-        );
+        for shower_name in ["main", "ensuite"] {
+            let shower = &test_input.input["HotWaterDemand"]["Shower"][shower_name];
+            assert_eq!(shower["WWHRS"], "Notional_Inst_WWHRS");
+            assert_eq!(shower["WWHRS_configuration"], "B");
+        }
     }
 
     #[rstest]
-    fn test_add_no_wwhrs_for_one_storey_buildings(mut test_input: InputForProcessing) {
-        let cold_water_source_type = "mains water";
-
-        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
-
-        assert!(test_input.wwhrs().unwrap().is_none());
-
-        let mixer_shower = test_input
-            .showers()
-            .unwrap()
-            .unwrap()
-            .get("mixer")
-            .and_then(|mixer| mixer.as_object())
+    fn test_add_wwhrs_does_not_add_wwhrs_config_for_single_storey(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given an actual building with one story and multiple showers
+        test_input.set_storeys_in_dwelling(1).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+                "WWHRS": "main",
+                "WWHRS_configuration": "A",
+            },
+            "ensuite": {"type": "MixerShower", "flowrate": 8.0, "ColdWaterSource": "mains water"},
+            }))
             .unwrap();
 
-        assert!(!mixer_shower.contains_key("WWHRS"));
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
+
+        // Then a WWHRS is not added and the showers are not updated to use it
+        let showers = &test_input.input["HotWaterDemand"]["Shower"];
+        assert_eq!(showers["main"]["WWHRS"], "main");
+        assert_eq!(showers["main"]["WWHRS_configuration"], "A");
+        assert!(showers["ensuite"].get("WWHRS").is_none());
+        assert!(showers["ensuite"].get("WWHRS_configuration").is_none());
+        assert!(test_input.wwhrs().unwrap().is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_does_not_add_wwhrs_config_for_fee(mut test_input: InputForProcessing) {
+        // Given an actual building with more than one story and multiple showers
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+                "WWHRS": "main",
+                "WWHRS_configuration": "A",
+            },
+            "ensuite": {"type": "MixerShower", "flowrate": 8.0, "ColdWaterSource": "mains water"},
+            }))
+            .unwrap();
+
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured with is_FEE True
+        add_wwhrs(&mut test_input, cold_water_source_type, true).unwrap();
+
+        // Then a WWHRS is not added and the showers are not updated to use it
+        let showers = &test_input.input["HotWaterDemand"]["Shower"];
+        assert_eq!(showers["main"]["WWHRS"], "main");
+        assert_eq!(showers["main"]["WWHRS_configuration"], "A");
+        assert!(showers["ensuite"].get("WWHRS").is_none());
+        assert!(showers["ensuite"].get("WWHRS_configuration").is_none());
     }
 
     #[rstest]
