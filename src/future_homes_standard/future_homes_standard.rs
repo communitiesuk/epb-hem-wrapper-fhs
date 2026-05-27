@@ -3853,53 +3853,52 @@ pub(super) fn create_zone_area(input: &mut InputForProcessing) -> anyhow::Result
 
 fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow::Result<Vec<f64>> {
     let mut total_area = vec![0.; simtime().total_steps()];
-
     let data: Vec<Vec<f64>> = input
         .all_building_elements()?
         .values()
-        .filter_map(|el| {
-            if el.get("type").and_then(|el_type| el_type.as_str())
-                == Some("BuildingElementTransparent")
-            {
-                let ff = el.get("frame_area_fraction")?.as_f64()?;
-                let g_val = el.get("g_value")?.as_f64()?;
-                let width = el.get("width")?.as_f64()?;
-                let height = el.get("height")?.as_f64()?;
-                let base_height = el.get("base_height")?.as_f64()?;
-                let orientation = el.get("orientation360")?.as_f64()?;
-                let w_area = width * height;
-
-                let shading: Vec<WindowShadingObject> = if let Ok(shading) =
-                    serde_json::from_value(json!(el.get("shading").as_ref()))
-                {
-                    shading
-                } else {
-                    return Some(Err(anyhow!(
-                        "Unable to convert JSON into window shading objects."
-                    )));
-                };
-
-                // retrieve half-hourly shading factor
-                let direct_result = shading_factor(
-                    input,
-                    base_height,
-                    height,
-                    width,
-                    Orientation360::from(orientation),
-                    &shading,
+        .filter(|el| el.get("type").and_then(|t| t.as_str()) == Some("BuildingElementTransparent"))
+        .map(|el| {
+            fn get_field_as_f64(value: &JsonValue, field: &str) -> anyhow::Result<f64> {
+                let error_message = format!(
+                    "Field '{}' missing or invalid for transparent building element",
+                    field
                 );
-
-                let area = 0.9 * w_area * (1. - ff) * g_val;
-
-                match direct_result {
-                    Ok(direct) => Some(Ok(direct.iter().map(|factor| factor * area).collect())),
-                    Err(err) => Some(Err(err)),
-                }
-            } else {
-                None
+                value
+                    .get(field)
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| anyhow!(error_message))
             }
+
+            let ff = get_field_as_f64(el, "frame_area_fraction")?;
+            let g_value = get_field_as_f64(el, "g_value")?;
+            let width = get_field_as_f64(el, "width")?;
+            let height = get_field_as_f64(el, "height")?;
+            let base_height = get_field_as_f64(el, "base_height")?;
+            let orientation = get_field_as_f64(el, "orientation360")?;
+            let shading = el
+                .get("shading")
+                .ok_or_else(|| anyhow!("Shading field missing for transparent building element"))?;
+
+            let shading: Vec<WindowShadingObject> = serde_json::from_value(json!(shading))?;
+
+            let w_area = width * height;
+
+            // retrieve half-hourly shading factor
+            let direct_result = shading_factor(
+                input,
+                base_height,
+                height,
+                width,
+                Orientation360::from(orientation),
+                &shading,
+            )?;
+
+            let area = 0.9 * w_area * (1. - ff) * g_value;
+            Ok::<Vec<f64>, anyhow::Error>(
+                direct_result.iter().map(|factor| factor * area).collect(),
+            )
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<anyhow::Result<Vec<_>, _>>()?;
 
     for idx in data {
         for (t, gl) in idx.into_iter().enumerate() {
