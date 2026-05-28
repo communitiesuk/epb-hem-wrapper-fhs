@@ -1240,7 +1240,7 @@ fn edit_storagetank(
         Some(volume) => volume,
         None => {
             let daily_hwd = calc_daily_hw_demand(input, total_floor_area, cold_water_source_type)?;
-            calculate_cylinder_volume(&daily_hwd)
+            calculate_cylinder_volume(daily_hwd)
         }
     };
 
@@ -1589,7 +1589,7 @@ fn add_solar_pv(
     Ok(())
 }
 
-fn calculate_cylinder_volume(daily_hwd: &[f64]) -> f64 {
+fn calculate_cylinder_volume(daily_hwd: Vec<f64>) -> f64 {
     // Data from the table
     let percentiles_kwh = [3.7, 4.4, 5.2, 5.9, 6.7, 7.4, 8.1, 8.9, 9.6, 10.3, 11.1];
     let vessel_sizes_litres = [
