@@ -7,7 +7,7 @@ use home_energy_model::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_distr::{Distribution, Poisson};
 use rand_mt::Mt64;
 use rand_pcg::Pcg64;
