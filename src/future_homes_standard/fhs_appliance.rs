@@ -2,7 +2,7 @@ use home_energy_model::{
     core::units::{DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT},
     input::ApplianceGainsEvent,
 };
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_distr::{Distribution, Normal, Poisson};
 use rand_pcg::Pcg64;
 
