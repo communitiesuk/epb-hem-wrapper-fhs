@@ -1,15 +1,17 @@
 use crate::future_homes_standard::future_homes_standard::HourlyHotWaterEvent;
 use crate::future_homes_standard::input::InputForProcessing;
+use crate::future_homes_standard::rand::pcg_seed::numpy_like_seed_sequence;
 use anyhow::{anyhow, bail};
 use csv::Reader;
+use derivative::Derivative;
 use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
 use home_energy_model::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
+use pyrand::{MTState, PyMt19937, PySeedable};
 use rand::{RngExt, SeedableRng};
 use rand_distr::{Distribution, Poisson};
-use rand_mt::Mt64;
 use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
@@ -316,16 +318,18 @@ impl From<SimpleLabelBasedOn900KSample> for WaterHeatingEventType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct HotWaterEventGenerator {
     week: IndexMap<DayOfWeek, IndexMap<SimpleLabelBasedOn900KSample, DayDigest>>,
-    rng: Mt64,
+    #[derivative(Debug = "ignore")]
+    rng: MTState<624>,
 }
 
 impl HotWaterEventGenerator {
     pub fn new(
         daily_dhw_vol: f64,
-        hw_seed: Option<u64>,
+        hw_seed: Option<u32>,
         banding: Option<BandingOrigin>,
     ) -> anyhow::Result<Self> {
         let banding = banding.unwrap_or(BandingOrigin::Correct);
@@ -340,8 +344,9 @@ impl HotWaterEventGenerator {
                 (DayOfWeek::Sunday, Default::default()),
             ]);
 
-        let rng = SeedableRng::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
-        let mut rng_poisson = Pcg64::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
+        let rng = PyMt19937::py_seed(hw_seed.unwrap_or(RNG_SEED));
+        let mut rng_poisson =
+            Pcg64::from_seed(numpy_like_seed_sequence(hw_seed.unwrap_or(RNG_SEED)));
 
         let mut decile: i8 = -1;
         let mut banding_correction = 1.0;
@@ -542,7 +547,7 @@ impl HotWaterEventGenerator {
     }
 }
 
-const RNG_SEED: u64 = 37;
+const RNG_SEED: u32 = 37;
 
 #[derive(Clone, Debug, Deserialize)]
 struct DayDigest {

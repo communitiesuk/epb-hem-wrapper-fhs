@@ -1,3 +1,4 @@
+use crate::future_homes_standard::rand::pcg_seed::numpy_like_seed_sequence_array;
 use home_energy_model::{
     core::units::{DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT},
     input::ApplianceGainsEvent,
@@ -61,11 +62,11 @@ impl FhsAppliance {
         duration_std_dev: f64,
     ) -> anyhow::Result<(Vec<ApplianceGainsEvent>, Vec<f64>)> {
         // upstream Python here constructs a seed sequence from consecutive numbers - instead, here we sum the series
-        let mut appliance_rng = Pcg64::seed_from_u64(
-            (0..(flat_profile.len() + annual_expected_uses.ceil() as usize))
-                .map(|x| (x + seed) as u64)
-                .sum::<u64>(),
-        );
+        let seed_sequence: Vec<u32> = (0..(flat_profile.len() as u32
+            + annual_expected_uses.ceil() as u32))
+            .map(|x| seed as u32 + x)
+            .collect();
+        let mut appliance_rng = Pcg64::from_seed(numpy_like_seed_sequence_array(&seed_sequence));
         let events = flat_profile
             .iter()
             .map(|x| {
