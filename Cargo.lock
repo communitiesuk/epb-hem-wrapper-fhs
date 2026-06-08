@@ -626,8 +626,8 @@ checksum = "9edc6f5e13def32e5ec29182334b924624bd0c98abb0caece5e9d01b6daea9e8"
 dependencies = [
  "nalgebra 0.34.2",
  "num-traits",
- "rand",
- "rand_distr",
+ "rand 0.9.4",
+ "rand_distr 0.5.1",
  "thiserror 2.0.18",
 ]
 
@@ -1152,7 +1152,7 @@ dependencies = [
  "parking_lot",
  "partial_application",
  "rand 0.10.1",
- "rand_distr",
+ "rand_distr 0.6.0",
  "rand_mt",
  "rand_pcg",
  "rayon",
@@ -2256,6 +2256,16 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rand_distr"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
+dependencies = [
+ "num-traits",
+ "rand 0.9.4",
+]
 
 [[package]]
 name = "rand_distr"
