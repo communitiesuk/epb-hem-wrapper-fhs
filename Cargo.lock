@@ -734,15 +734,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "format_num"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14ac05eb8d2eb4ed1eeff847911deae077b0b53332465de9d6a26b0ea9961bc8"
-dependencies = [
- "regex",
-]
-
-[[package]]
 name = "formatx"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1092,7 +1083,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-7"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#c34f8a71331d7ef8c9188ebb74d9095320008f58"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#070174c938f08f58a733d3bbda155d7a0cdddead"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1107,7 +1098,6 @@ dependencies = [
  "eqsolver",
  "erased-serde",
  "field_types",
- "format_num",
  "formatx",
  "fsum",
  "indexmap 2.14.0",

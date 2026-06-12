@@ -21,7 +21,6 @@ use anyhow::{anyhow, bail};
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
-use home_energy_model::core::heating_systems::storage_tank::HotWaterStorageTank;
 use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
 use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
 use home_energy_model::core::space_heat_demand::building_element::{
@@ -35,8 +34,8 @@ use home_energy_model::core::water_heat_demand::cold_water_source::ColdWaterSour
 use home_energy_model::core::water_heat_demand::dhw_demand::DomesticHotWaterDemand;
 use home_energy_model::core::water_heat_demand::dhw_demand::HotWaterDemandResult;
 use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
-use home_energy_model::corpus::HotWaterSourceBehaviour;
 use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
+use home_energy_model::corpus::{HotWaterSource, HotWaterSourceBehaviour};
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
@@ -1156,8 +1155,10 @@ fn calc_daily_hw_demand(
     }
 
     // Mock hot water source which returns the same temperature at every timestep
-    let mock_hw_source: IndexMap<_, _> =
-        IndexMap::from_iter([("hw cylinder".into(), MockHotWaterSource)]);
+    let mock_hw_source: IndexMap<_, _> = IndexMap::from_iter([(
+        "hw cylinder".into(),
+        HotWaterSource::Fake(Arc::new(MockHotWaterSource)),
+    )]);
     let energy_supply: Arc<RwLock<EnergySupply>> = {
         let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
         Arc::new(RwLock::new(EnergySupplyBuilder::new(
@@ -1166,7 +1167,7 @@ fn calc_daily_hw_demand(
         ).with_export_capable(electricity_supply.is_some_and(|map| map.get("is_export_capable").and_then(|v| v.as_bool()).unwrap_or(true))).build()))
     };
 
-    let dhw_demand = DomesticHotWaterDemand::<_, HotWaterStorageTank>::new(
+    let dhw_demand = DomesticHotWaterDemand::new(
         &input
             .showers()?
             .map(|showers| {
