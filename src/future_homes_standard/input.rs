@@ -2010,6 +2010,22 @@ impl InputForProcessing {
         self.remove_root_key("HeatSourceWet")
     }
 
+    pub(crate) fn cold_water_source_name(&self) -> anyhow::Result<String> {
+        let cold_water_sources = self
+            .root()?
+            .get("ColdWaterSource")
+            .and_then(|obj| obj.as_object())
+            .ok_or_else(|| anyhow!("No ColdWaterSource object present"))?;
+        if cold_water_sources.len() != 1 {
+            return Err(anyhow!(
+                "Expected exactly one ColdWaterSource object, but found {}",
+                cold_water_sources.len()
+            ));
+        }
+
+        Ok(cold_water_sources.keys().next().unwrap().to_owned())
+    }
+
     pub(crate) fn cold_water_source(&self) -> anyhow::Result<ColdWaterSourceInput> {
         Ok(serde_json::from_value(
             self.root()?

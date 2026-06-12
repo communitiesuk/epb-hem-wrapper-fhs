@@ -95,16 +95,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     let heat_network_type = check_heatnetwork_status(input)?;
 
     // Determine cold water source
-    let cold_water_source = input.cold_water_source()?;
-    if cold_water_source.len() != 1 {
-        bail!("The FHS Notional wrapper expects exactly one cold water type to be set.");
-    }
-
-    let cold_water_source = {
-        let first_cold_water_source = cold_water_source.first();
-        let (cold_water_source, _) = first_cold_water_source.as_ref().unwrap();
-        cold_water_source.to_owned().to_owned()
-    };
+    let cold_water_source = input.cold_water_source_name()?;
 
     // Determine the TFA
     let total_floor_area = calc_tfa(input)?;
