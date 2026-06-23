@@ -19,13 +19,13 @@ pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
 };
+use home_energy_model::runner::RunsBatchedHem;
 pub use home_energy_model::ArcStr;
 pub use home_energy_model::HemResponse;
 pub use home_energy_model::HEM_VERSION;
 pub use home_energy_model::HEM_VERSION_DATE;
 use home_energy_model::{CalculationResult, OutputFormat};
 use indexmap::IndexMap;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{BufReader, Cursor, Read};
@@ -164,18 +164,20 @@ impl HemWrapper for ChosenWrapper {
 
 #[instrument(skip_all)]
 #[allow(clippy::too_many_arguments)]
-pub fn run_wrappers(
+pub async fn run_wrappers(
+    // TODO: consider if this should move to main.rs
     input: impl Read,
-    output_writer: &impl OutputWriter,
+    output_writer: impl OutputWriter,
+    runner: &impl RunsBatchedHem<Key = CalculationKey>,
     external_conditions_data: Option<ExternalConditions>,
-    tariff_data_file: Option<&str>,
+    _tariff_data_file: Option<&str>,
     flags: &FhsFlags,
     preprocess_only: bool,
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
     core_output_formats: &[OutputFormat],
 ) -> Result<Option<HemResponse>, HemError> {
-    catch_unwind(AssertUnwindSafe(|| {
+    async {
         #[instrument(skip_all)]
         fn ingest_input_and_start_preprocessing(
             input: impl Read,
@@ -273,19 +275,28 @@ pub fn run_wrappers(
         if preprocess_only {
             for (calculation_key, (input_for_processing, _)) in inputs_by_key {
                 let location_key = format!("{}__preproc", calculation_key.as_str());
-                write_preproc_file(&input_for_processing, output_writer, &location_key, "json")?;
+                write_preproc_file(&input_for_processing, &output_writer, &location_key, "json")?;
             }
 
             return Ok(None);
         }
 
-        let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> =
-            inputs_by_key.par_iter()
-                .map(|(key, input_value)| {
-                    let finalized = input_value.0.clone().finalize()?; // TODO avoid cloning here!
-                    home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
-                        .map(|result_value| (*key, result_value))
-                    }).collect();
+
+        let batched_inputs: HashMap<CalculationKey, home_energy_model::RunInput<'static>> =
+            inputs_by_key
+                .iter()
+                .map(|(key, unfinalised_input)| {
+                    let finalized = unfinalised_input.0.clone().finalize()?;
+                    let run_input = home_energy_model::RunInput::Json(serde_json::to_value(finalized)?);
+                    Ok((*key, run_input))
+                })
+                .collect::<Result<_, anyhow::Error>>()
+                .map_err(HemError::InvalidRequest)?;
+
+        let contextualised_results = runner
+            .run_batched_hem(&batched_inputs)
+            .await
+            .map_err(|_| HemError::PanicInCalculation("something happened, idk".to_owned()))?;
 
         // 7. Run wrapper post-processing and capture any output.
         #[instrument(skip_all)]
@@ -305,16 +316,10 @@ pub fn run_wrappers(
 
         let custom_energy_supply_factors = inputs_by_key.iter().map(|(key, (_, factors))| (*key, factors.clone())).collect::<HashMap<_, _>>();
 
-        run_wrapper_postprocessing(output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
+        run_wrapper_postprocessing(&output_writer, &contextualised_results, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
-    }))
-        .map_err(|e| {
-            HemError::GeneralPanic(
-                e.downcast_ref::<&str>()
-                    .map_or("Uncaught panic - could not capture more information; to debug further, try replicating in debug mode.", |v| v)
-                    .to_owned(),
-            )
-        })?
+    }
+    .await
 }
 
 type CustomEnergySourceFactors = IndexMap<ArcStr, CustomEnergySourceFactor>;
