@@ -735,9 +735,9 @@ dependencies = [
 
 [[package]]
 name = "formatx"
-version = "0.2.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8866fac38f53fc87fa3ae1b09ddd723e0482f8fa74323518b4c59df2c55a00a"
+checksum = "c40f9ee993b100102723f778c82d3daf1808c494ce2fd6e9a06d58d6e8e59748"
 
 [[package]]
 name = "fraction"
@@ -1083,7 +1083,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-7"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#070174c938f08f58a733d3bbda155d7a0cdddead"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#504c4d0b9afaec89cde9a03cb380a43a81f79b60"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1104,7 +1104,7 @@ dependencies = [
  "indicatif",
  "interp",
  "is_close",
- "itertools",
+ "itertools 0.15.0",
  "jsonschema",
  "monostate",
  "nalgebra 0.33.3",
@@ -1137,7 +1137,7 @@ dependencies = [
  "csv",
  "home-energy-model",
  "indexmap 2.14.0",
- "itertools",
+ "itertools 0.14.0",
  "jsonschema",
  "parking_lot",
  "partial_application",
@@ -1449,7 +1449,7 @@ version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "341be68f8dda23c0a581f926bd0cd346500e42a64649dc2ad137b3306c12440f"
 dependencies = [
- "itertools",
+ "itertools 0.14.0",
  "num-traits",
 ]
 
@@ -1479,6 +1479,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -2764,7 +2773,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14898149f45af618f6150444291e81af5e43a236c881059e6a7964863df15bfa"
 dependencies = [
  "indexmap 2.14.0",
- "itertools",
+ "itertools 0.14.0",
  "num-traits",
  "once_cell",
  "regex",
@@ -2782,7 +2791,7 @@ version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "762918719d8704b61b91d606e6c7f370789b0850dc207b4f33b426b0968181e2"
 dependencies = [
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2 1.0.106",
  "quote 1.0.45",
  "strsim",
