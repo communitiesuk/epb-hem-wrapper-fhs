@@ -43,7 +43,7 @@ fn test_demo_file_preprocessing_output() {
     let expected_output = file_value(expected_output_dir, demo_input_file_name);
     let actual_output = file_value(temporary_output_dir, demo_input_file_name);
     delete_temporary_output_directory(temporary_output_dir);
-    preprocessed_input_matches_expected(&actual_output, &expected_output);
+    preprocessed_input_matches_expected(&actual_output, &expected_output, vec![]);
 }
 
 fn file_value(directory: &str, file_name: &str) -> Value {
@@ -66,17 +66,28 @@ fn delete_temporary_output_directory(directory: &str) {
     fs::remove_dir_all(temp_output_dir).unwrap();
 }
 
-pub(crate) fn preprocessed_input_matches_expected(actual: &Value, expected: &Value) {
+pub(crate) fn preprocessed_input_matches_expected(
+    actual: &Value,
+    expected: &Value,
+    path_to_node: Vec<&str>,
+) {
     let mut expected_keys = actual.as_object().unwrap().keys().collect_vec();
     expected_keys.sort();
     let mut actual_keys = expected.as_object().unwrap().keys().collect_vec();
     actual_keys.sort();
+    let mut path_to_node = path_to_node;
 
     assert_eq!(actual_keys, expected_keys);
-
     for key in expected_keys {
-        if key != "Events" {
-            assert_eq!(actual[key], expected[key], "{:?}", key);
+        if key == "Events" {
+            continue;
         }
+        path_to_node.push(key);
+        if expected[key].as_object().is_some() {
+            preprocessed_input_matches_expected(&expected[key], &actual[key], path_to_node.clone());
+        } else {
+            assert_eq!(actual[key], expected[key], "{:?}", path_to_node);
+        }
+        path_to_node.pop();
     }
 }
