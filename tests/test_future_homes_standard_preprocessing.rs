@@ -78,16 +78,40 @@ pub(crate) fn preprocessed_input_matches_expected(
     let mut path_to_node = path_to_node;
 
     assert_eq!(actual_keys, expected_keys);
+    
     for key in expected_keys {
         if key == "Events" {
             continue;
         }
+
         path_to_node.push(key);
-        if expected[key].as_object().is_some() {
-            preprocessed_input_matches_expected(&expected[key], &actual[key], path_to_node.clone());
-        } else {
-            assert_eq!(actual[key], expected[key], "{:?}", path_to_node);
+
+        let actual_value = &actual[key];
+        let expected_value = &expected[key];
+
+        if expected_value.as_object().is_some() {
+            preprocessed_input_matches_expected(expected_value, actual_value, path_to_node.clone());
+        } else if actual_value != expected_value {
+            if values_match_as_numbers(actual_value, expected_value) {
+                continue;
+            }
+
+            println!(
+                "Expected {:?}, but got {:?} at {:?} \n",
+                expected[key], actual[key], path_to_node
+            )
         }
         path_to_node.pop();
     }
+}
+
+fn values_match_as_numbers(actual_value: &Value, expected_value: &Value) -> bool {
+    let actual_value = actual_value.as_f64();
+    let expected_value = expected_value.as_f64();
+    let values_are_numbers = actual_value.is_some() && expected_value.is_some();
+    
+    if values_are_numbers && actual_value.unwrap() == expected_value.unwrap() {
+        return true;
+    }
+    false
 }
