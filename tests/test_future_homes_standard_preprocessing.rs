@@ -1,7 +1,7 @@
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
-use serde_json::{json, Value};
+use serde_json::{json, Number, Value};
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
@@ -253,7 +253,7 @@ pub(crate) fn preprocessed_input_matches_expected(
 ) -> usize {
     match (actual, expected) {
         (Value::Number(a), Value::Number(b)) => {
-            if a == b || values_match_as_numbers(actual, expected) {
+            if numbers_match_as_floats(a, b) {
                 0
             } else {
                 println!(
@@ -334,15 +334,8 @@ pub(crate) fn preprocessed_input_matches_expected(
     }
 }
 
-fn values_match_as_numbers(actual_value: &Value, expected_value: &Value) -> bool {
-    let actual_value = actual_value.as_f64();
-    let expected_value = expected_value.as_f64();
-    let values_are_numbers = actual_value.is_some() && expected_value.is_some();
-
-    if values_are_numbers
-        && (actual_value.unwrap() - expected_value.unwrap()).abs() < FLOAT_THRESHOLD
-    {
-        return true;
-    }
-    false
+fn numbers_match_as_floats(actual: &Number, expected: &Number) -> bool {
+    let actual = actual.as_f64().unwrap();
+    let expected = expected.as_f64().unwrap();
+    (actual - expected).abs() < FLOAT_THRESHOLD
 }
