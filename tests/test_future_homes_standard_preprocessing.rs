@@ -256,7 +256,7 @@ pub(crate) fn preprocessed_input_matches_expected(
                 0
             } else {
                 println!(
-                    "Number values do not match at path: {:?}. Actual value: {}, Expected value: {}, difference: {}",
+                    "Number values do not match at path: {:?}. Actual value: {}, Expected value: {}, difference: {} \n",
                     path_to_node, actual, expected, actual.as_f64().unwrap() - expected.as_f64().unwrap()
                 );
                 1
@@ -267,7 +267,7 @@ pub(crate) fn preprocessed_input_matches_expected(
                 0
             } else {
                 println!(
-                    "Boolean values do not match at path: {:?}. Actual value: {}, Expected value: {}",
+                    "Boolean values do not match at path: {:?}. Actual value: {}, Expected value: {} \n",
                     path_to_node, a, b
                 );
                 1
@@ -279,7 +279,7 @@ pub(crate) fn preprocessed_input_matches_expected(
                 0
             } else {
                 println!(
-                    "String values do not match at path: {:?}. Actual value: {}, Expected value: {}",
+                    "String values do not match at path: {:?}. Actual value: {}, Expected value: {} \n",
                     path_to_node, a, b
                 );
                 1
@@ -289,7 +289,7 @@ pub(crate) fn preprocessed_input_matches_expected(
             let mut difference_count = 0;
             if a.len() != b.len() {
                 println!(
-                    "Array lengths do not match at path: {:?}. Actual length: {}, Expected length: {}",
+                    "Array lengths do not match at path: {:?}. Actual length: {}, Expected length: {} \n",
                     path_to_node,
                     a.len(),
                     b.len()
