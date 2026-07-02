@@ -71,7 +71,7 @@ fn delete_temporary_output_directory(directory: &str) {
 
 mod test_preprocessed_input_matches_expected {
     use super::*;
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_number_differences() {
         let actual = json!(1.0);
@@ -89,7 +89,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_boolean_differences() {
         let actual = json!(false);
@@ -103,7 +103,6 @@ mod test_preprocessed_input_matches_expected {
         assert_eq!(difference_count, 1);
     }
 
-    #[ignore = "Ignored to reduce noise"]
     #[test]
     fn test_string_differences() {
         let actual = json!("test");
@@ -116,7 +115,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_array_differences() {
         let actual = json!([1, 2, 3]);
@@ -144,7 +143,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_array_vs_non_array() {
         let actual = json!([1, 2, 3]);
@@ -157,7 +156,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_null_differences() {
         let actual = json!(null);
@@ -165,7 +164,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 0);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_null_vs_non_null() {
         let actual = json!(null);
@@ -178,7 +177,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_object_different_number_of_keys() {
         let actual = json!({"a": 1, "b": 2});
@@ -191,7 +190,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_object_same_keys() {
         let actual = json!({"a": 1, "b": 2});
@@ -214,7 +213,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 3);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_object_different_keys() {
         let actual = json!({"a": 1, "b": 2});
@@ -222,7 +221,7 @@ mod test_preprocessed_input_matches_expected {
         let difference_count = preprocessed_input_matches_expected(&actual, &expected, vec![]);
         assert_eq!(difference_count, 1);
     }
-    #[ignore = "Ignored to reduce noise"]
+
     #[test]
     fn test_nested_structures() {
         let actual = json!({"a": [1, 2, {"b": 3}]});
