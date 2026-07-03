@@ -108,7 +108,10 @@ fn delete_temporary_output_directory(directory: &Path) {
 
 pub struct Location(Vec<String>);
 impl Location {
-    pub fn join(&self) -> String {
+    pub fn format(&self) -> String {
+        if self.0.is_empty() {
+            return "root".to_string();
+        }
         self.0.join(" - ")
     }
 }
@@ -136,6 +139,15 @@ pub enum MismatchType {
     },
     MissingKey {
         key: String,
+        location: Location,
+    },
+    AdditionalKey {
+        key: String,
+        location: Location,
+    },
+    DifferentType {
+        actual: String,
+        expected: String,
         location: Location,
     },
 }
@@ -168,8 +180,8 @@ pub(crate) fn preprocessed_input_matches_expected(
         (Value::String(a), Value::String(b)) => {
             if a != b {
                 errors.push(MismatchType::String {
-                    actual: a.clone(),
-                    expected: b.clone(),
+                    actual: a.to_string(),
+                    expected: b.to_string(),
                     location: Location(path_to_node.clone()),
                 });
             };
@@ -202,9 +214,9 @@ pub(crate) fn preprocessed_input_matches_expected(
             b_keys.sort();
 
             if a_keys != b_keys {
-                let missing_keys: Vec<String> = a_keys
+                let missing_keys: Vec<String> = b_keys
                     .iter()
-                    .filter(|key| !b.contains_key(**key))
+                    .filter(|key| !a.contains_key(**key))
                     .map(|key| (*key).clone())
                     .collect();
                 for key in missing_keys {
@@ -213,10 +225,24 @@ pub(crate) fn preprocessed_input_matches_expected(
                         location: Location(path_to_node.clone()),
                     });
                 }
+                let additional_keys: Vec<String> = a_keys
+                    .iter()
+                    .filter(|key| !b.contains_key(**key))
+                    .map(|key| (*key).clone())
+                    .collect();
+                for key in additional_keys {
+                    errors.push(MismatchType::AdditionalKey {
+                        key,
+                        location: Location(path_to_node.clone()),
+                    });
+                }
             }
-            for key in a_keys {
+            for key in b_keys {
                 let actual_value = a.get(key).unwrap_or(&Value::Null);
                 let expected_value = b.get(key).unwrap_or(&Value::Null);
+                if actual_value.is_null() {
+                    continue;
+                }
                 let mut path_to_node = path_to_node.clone();
                 path_to_node.push(key.clone());
                 preprocessed_input_matches_expected(
@@ -227,7 +253,13 @@ pub(crate) fn preprocessed_input_matches_expected(
                 );
             }
         }
-        _ => (),
+        _ => {
+            errors.push(MismatchType::DifferentType {
+                actual: format!("{:?}", actual),
+                expected: format!("{:?}", expected),
+                location: Location(path_to_node.clone()),
+            });
+        }
     };
     errors.len()
 }
@@ -250,7 +282,7 @@ fn print_mismatches(mismatches: &[MismatchType], max_to_print: Option<usize>) {
             } => {
                 println!(
                     "Numerical mismatch at {}: actual = {}, expected = {}",
-                    location.join(),
+                    location.format(),
                     actual,
                     expected
                 );
@@ -262,7 +294,7 @@ fn print_mismatches(mismatches: &[MismatchType], max_to_print: Option<usize>) {
             } => {
                 println!(
                     "Boolean mismatch at {}: actual = {}, expected = {}",
-                    location.join(),
+                    location.format(),
                     actual,
                     expected
                 );
@@ -274,7 +306,7 @@ fn print_mismatches(mismatches: &[MismatchType], max_to_print: Option<usize>) {
             } => {
                 println!(
                     "String mismatch at {}: actual = {}, expected = {}",
-                    location.join(),
+                    location.format(),
                     actual,
                     expected
                 );
@@ -286,13 +318,28 @@ fn print_mismatches(mismatches: &[MismatchType], max_to_print: Option<usize>) {
             } => {
                 println!(
                     "Array length mismatch at {}: actual = {}, expected = {}",
-                    location.join(),
+                    location.format(),
                     actual,
                     expected
                 );
             }
             MismatchType::MissingKey { key, location } => {
-                println!("Missing key '{}' at {}", key, location.join());
+                println!("Missing key '{}' at {}", key, location.format());
+            }
+            MismatchType::AdditionalKey { key, location } => {
+                println!("Additional key '{}' at {}", key, location.format());
+            }
+            MismatchType::DifferentType {
+                actual,
+                expected,
+                location,
+            } => {
+                println!(
+                    "Different type at {}: actual = {}, expected = {}",
+                    location.format(),
+                    actual,
+                    expected
+                );
             }
         }
     }
@@ -436,7 +483,7 @@ mod test_preprocessed_input_matches_expected {
         let expected = json!({"a": 1, "b": 2, "c": 3});
         let difference_count =
             preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
-        assert_eq!(difference_count, 1);
+        assert_eq!(difference_count, 2);
     }
 
     #[test]
@@ -470,9 +517,11 @@ mod test_preprocessed_input_matches_expected {
     fn test_object_different_keys() {
         let actual = json!({"a": 1, "b": 2});
         let expected = json!({"a": 1, "c": 2});
+        let errors = &mut vec![];
         let difference_count =
-            preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
-        assert_eq!(difference_count, 1);
+            preprocessed_input_matches_expected(&actual, &expected, vec![], errors);
+        print!("Errors: {:?}", errors.len());
+        assert_eq!(difference_count, 2);
     }
 
     #[test]
