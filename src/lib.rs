@@ -90,7 +90,7 @@ impl CalculationKey {
             CalculationKey::Fhs => "FHS",
             CalculationKey::FhsFee => "FHS_FEE",
             CalculationKey::FhsNotional => "FHS_notional",
-            CalculationKey::FhsNotionalFee => "FHS_notional_FEE",
+            CalculationKey::FhsNotionalFee => "FHS_FEE_notional",
         }
     }
 }
