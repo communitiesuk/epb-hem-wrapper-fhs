@@ -28,7 +28,6 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 #[case("DESN-H-End-02-HP-iMEV-pre-heat")]
 #[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank")]
 fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
-    let demo_input_file_name = demo_input_file_name;
     let demo_input_file = BufReader::new(
         File::open(Path::new(&format!(
             "./examples/input/future_homes_standard/{demo_input_file_name}.json"
