@@ -69,7 +69,7 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
             &mut errors,
         );
         if mode_difference_count > 0 {
-            println!("Mode '{mode}' for case {demo_input_file_name} had {mode_difference_count} mismatches:");
+            println!("\nMode '{mode}' for {demo_input_file_name}.json had {mode_difference_count} mismatches:\n");
             print_mismatches(&errors, Some(ERRORS_TO_PRINT));
             failing_modes.push(format!("{mode}: {mode_difference_count}"));
             difference_count += mode_difference_count;
