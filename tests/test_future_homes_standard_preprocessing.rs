@@ -75,7 +75,7 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
             difference_count += mode_difference_count;
         }
     }
-    delete_temporary_output_directory(&temporary_output_dir_path);
+    delete_temporary_output_directory(temporary_output_dir);
     assert_eq!(
         difference_count,
         0,
@@ -99,7 +99,7 @@ fn create_temporary_output_directory(directory: &str, demo_file_name: &str) -> P
     temp_output_dir
 }
 
-fn delete_temporary_output_directory(directory: &Path) {
+fn delete_temporary_output_directory(directory: &str) {
     let mut temp_output_dir = PathBuf::new();
     temp_output_dir.push(directory);
     fs::remove_dir_all(temp_output_dir).unwrap();
