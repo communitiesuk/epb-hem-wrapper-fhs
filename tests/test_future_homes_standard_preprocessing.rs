@@ -554,4 +554,22 @@ mod test_preprocessed_input_matches_expected {
             preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
         assert_eq!(difference_count, 1);
     }
+
+    #[test]
+    fn test_whole_file() {
+        let file = fs::read_to_string("tests/e2e/expected_results/future_homes_standard/demo_fhs__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
+        let actual: Value = serde_json::from_str(&file).unwrap();
+        let expected = serde_json::from_str(&file).unwrap();
+        let difference_count =
+            preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
+        assert_eq!(difference_count, 0);
+
+        let mut actual: Value = serde_json::from_str(&file).unwrap();
+        if let Value::Object(object) = &mut actual {
+            object.remove("temp_internal_air_static_calcs").unwrap();
+        }
+        let difference_count =
+            preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
+        assert_eq!(difference_count, 1);
+    }
 }
