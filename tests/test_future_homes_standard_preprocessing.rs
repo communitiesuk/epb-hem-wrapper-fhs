@@ -1,4 +1,5 @@
 use home_energy_model::output_writer::FileOutputWriter;
+use home_energy_model::read_weather_file::cibse_weather_data_to_external_conditions;
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use rstest::rstest;
@@ -24,14 +25,25 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 });
 
 #[rstest]
-#[case("DESN-H-End-02-ESH-cMEV")]
-#[case("DESN-H-End-02-HP-iMEV-pre-heat")]
-#[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank")]
-fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
+#[case("DESN-H-End-02-ESH-cMEV", false)]
+#[case("DESN-H-End-02-HP-iMEV-pre-heat", false)]
+#[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank", false)]
+#[case("demo_FHS", true)] // expected results folder is called demo_fhs_with_weather_file in Python
+fn test_demo_file_preprocessing_output(
+    #[case] demo_input_file_name: &str,
+    #[case] specify_weather_file: bool,
+) {
     let demo_input_file = BufReader::new(
         File::open(Path::new(&format!(
             "./examples/input/future_homes_standard/{demo_input_file_name}.json"
         )))
+        .unwrap(),
+    );
+
+    let weather_file = specify_weather_file.then_some(
+        cibse_weather_data_to_external_conditions(
+            File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
+        )
         .unwrap(),
     );
 
@@ -46,7 +58,7 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
     let result = run_wrappers(
         demo_input_file,
         output_writer,
-        None,
+        weather_file,
         None,
         &FhsFlags::FHS_COMPLIANCE,
         true,
