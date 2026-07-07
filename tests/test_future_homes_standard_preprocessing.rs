@@ -36,10 +36,10 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
     );
 
     let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
-    let temporary_output_dir_path =
+    let temporary_output_sub_dir =
         create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
     let output_writer = FileOutputWriter::new(
-        temporary_output_dir_path.clone(),
+        temporary_output_sub_dir.clone(),
         format!("{demo_input_file_name}__{{}}.{{}}"),
     );
 
@@ -55,6 +55,7 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
         &[OutputFormat::Json],
     );
     assert!(result.is_ok());
+
     let mut difference_count = 0;
     let mut failing_modes = vec![];
     for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
@@ -75,7 +76,9 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
             difference_count += mode_difference_count;
         }
     }
-    delete_temporary_output_directory(temporary_output_dir);
+
+    delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
+
     assert_eq!(
         difference_count,
         0,
@@ -86,23 +89,25 @@ fn test_demo_file_preprocessing_output(#[case] demo_input_file_name: &str) {
 
 fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
     let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{directory}/{file_name}__results/{file_name}__{suffix}.json");
-    let file = fs::read_to_string(&file_path).expect("Output file not found");
+    let file_path = format!("{directory}{file_name}__results/{file_name}__{suffix}.json");
+    let file =
+        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
     let output: Value = serde_json::from_str(&file).unwrap();
     output
 }
 
 fn create_temporary_output_directory(directory: &str, demo_file_name: &str) -> PathBuf {
     let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(format!("{directory}/{demo_file_name}__results"));
+    temp_output_dir.push(format!("{directory}{demo_file_name}__results"));
     fs::create_dir_all(&temp_output_dir).unwrap();
     temp_output_dir
 }
 
-fn delete_temporary_output_directory(directory: &str) {
+fn delete_temporary_output_directory(parent_directory: &str, sub_directory: PathBuf) {
+    fs::remove_dir_all(&sub_directory).unwrap();
     let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(directory);
-    fs::remove_dir_all(temp_output_dir).unwrap();
+    temp_output_dir.push(parent_directory);
+    let _ = fs::remove_dir(temp_output_dir);
 }
 
 pub struct Location(Vec<String>);
