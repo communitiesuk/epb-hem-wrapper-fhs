@@ -222,17 +222,17 @@ pub(crate) fn preprocessed_input_matches_expected(
                 }
             }
         }
-        (Value::Object(a), Value::Object(b)) => {
-            let mut a_keys: Vec<&String> = a.keys().collect();
-            let mut b_keys: Vec<&String> = b.keys().collect();
+        (Value::Object(actual_obj), Value::Object(expected_obj)) => {
+            let mut actual_keys: Vec<&String> = actual_obj.keys().collect();
+            let mut expected_keys: Vec<&String> = expected_obj.keys().collect();
 
-            a_keys.sort();
-            b_keys.sort();
+            actual_keys.sort();
+            expected_keys.sort();
 
-            if a_keys != b_keys {
-                let missing_keys: Vec<String> = b_keys
+            if actual_keys != expected_keys {
+                let missing_keys: Vec<String> = expected_keys
                     .iter()
-                    .filter(|key| !a.contains_key(**key))
+                    .filter(|key| !actual_keys.contains(key))
                     .map(|key| (*key).clone())
                     .collect();
                 for key in missing_keys {
@@ -241,9 +241,9 @@ pub(crate) fn preprocessed_input_matches_expected(
                         location: Location(path_to_node.clone()),
                     });
                 }
-                let additional_keys: Vec<String> = a_keys
+                let additional_keys: Vec<String> = actual_keys
                     .iter()
-                    .filter(|key| !b.contains_key(**key))
+                    .filter(|key| !expected_keys.contains(key))
                     .map(|key| (*key).clone())
                     .collect();
                 for key in additional_keys {
@@ -253,9 +253,9 @@ pub(crate) fn preprocessed_input_matches_expected(
                     });
                 }
             }
-            for key in b_keys {
-                let actual_value = a.get(key).unwrap_or(&Value::Null);
-                let expected_value = b.get(key).unwrap_or(&Value::Null);
+            for key in expected_keys {
+                let actual_value = actual_obj.get(key).unwrap_or(&Value::Null);
+                let expected_value = expected_obj.get(key).unwrap_or(&Value::Null);
                 if actual_value.is_null() {
                     continue;
                 }
