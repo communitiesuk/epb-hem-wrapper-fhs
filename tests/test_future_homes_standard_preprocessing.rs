@@ -1,6 +1,7 @@
+use home_energy_model::errors::HemError;
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model::read_weather_file::cibse_weather_data_to_external_conditions;
-use home_energy_model::OutputFormat;
+use home_energy_model::{HemResponse, OutputFormat};
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use rstest::rstest;
 use serde_json::{json, Number, Value};
@@ -29,7 +30,7 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 #[case("DESN-H-End-02-HP-iMEV-pre-heat", false)]
 #[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank", false)]
 #[case("demo_FHS", true)] // expected results folder is called demo_fhs_with_weather_file in Python
-fn test_demo_file_preprocessing_output(
+fn test_fhs_preprocessing_output_against_expected(
     #[case] demo_input_file_name: &str,
     #[case] specify_weather_file: bool,
 ) {
@@ -97,6 +98,100 @@ fn test_demo_file_preprocessing_output(
         "mismatches found for {demo_input_file_name}: {}",
         failing_modes.join(", ")
     );
+}
+
+#[test]
+fn test_fhs_preprocessing_output_against_generated_output_from_python() {
+    let demo_files_dir = Path::new("examples/input/future_homes_standard");
+    let mut total_difference_count = 0;
+    let mut total_mismatches = vec![];
+
+    for entry in fs::read_dir(demo_files_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+
+        let demo_input_file_name = path.clone();
+        let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
+
+        let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
+        let temporary_output_sub_dir =
+            create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
+
+        run_fhs_preprocessing(path, demo_input_file_name, &temporary_output_sub_dir);
+
+        let mut difference_count = 0;
+        let mut failing_modes = vec![];
+        for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
+            difference_count += differences_for_mode(
+                demo_input_file_name,
+                temporary_output_dir,
+                &mut failing_modes,
+                mode,
+            );
+        }
+        total_mismatches.push(failing_modes.join(", "));
+        total_difference_count += difference_count;
+        delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
+    }
+    assert_eq!(
+        total_difference_count, 0,
+        "mismatches found: {:?}",
+        total_mismatches,
+    )
+}
+
+fn differences_for_mode(
+    demo_input_file_name: &str,
+    temporary_output_dir: &str,
+    failing_modes: &mut Vec<String>,
+    mode: &str,
+) -> usize {
+    let expected_output_dir = "./tests/e2e/generated_results/";
+    let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
+    let actual_output = file_value(temporary_output_dir, demo_input_file_name, mode);
+    let mut errors = vec![];
+    let mode_difference_count =
+        preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
+    if mode_difference_count > 0 {
+        println!("\nMode '{mode}' for {demo_input_file_name}.json had {mode_difference_count} mismatches:\n");
+        print_mismatches(&errors, Some(ERRORS_TO_PRINT));
+        failing_modes.push(format!("{mode}: {mode_difference_count}"));
+    }
+    mode_difference_count
+}
+
+fn run_fhs_preprocessing(
+    path: PathBuf,
+    demo_input_file_name: &str,
+    temporary_output_sub_dir: &PathBuf,
+) -> () {
+    let demo_input = BufReader::new(File::open(path).unwrap());
+
+    let output_writer = FileOutputWriter::new(
+        temporary_output_sub_dir.clone(),
+        format!("{}__{{}}.{{}}", demo_input_file_name),
+    );
+
+    println!("Starting to run {demo_input_file_name}");
+    let result = run_wrappers(
+        demo_input,
+        output_writer,
+        None,
+        None,
+        &FhsFlags::FHS_COMPLIANCE,
+        true,
+        false,
+        false,
+        &[OutputFormat::Json],
+    );
+    if result.is_err() {
+        println!(
+            "\nError running fhs preprocessing for: {}",
+            demo_input_file_name
+        );
+    }
+    assert!(result.is_ok());
+    println!("Finished running {demo_input_file_name}");
 }
 
 fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
