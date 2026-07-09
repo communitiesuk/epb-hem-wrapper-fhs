@@ -14,3 +14,6 @@ src/weather.epw
 
 # IDE generated files
 .vscode
+
+#Generated files
+tests/e2e/generated_results
