@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DEMO_FILE_PATH: &str = "examples/input/future_homes_standard/demo_FHS.json";
+const DEMO_FILES_DIR_PATH: &str = "examples/input/future_homes_standard";
 const FHS_PY_ENTRYPOINT_PATH: &str = "./../epb-py-fhs-wrapper/src/bin/fhs.py";
 const FHS_PY_PATH: &str = "./../epb-py-fhs-wrapper";
 const PYTHON_OUTPUT_DIR_PATH: &str = "./../epb-hem-wrapper-fhs/tests/e2e/generated_results";
@@ -14,11 +15,23 @@ fn main() {
 fn generate_python_outputs() -> anyhow::Result<()> {
     let _ = clear_output_directory();
     install_python_fhs_requirements();
-    run_python_fhs()?;
+    run_all_python_fhs_files()?;
 
     Ok(())
 }
 
+fn run_all_python_fhs_files() -> anyhow::Result<()> {
+    for entry in fs::read_dir(DEMO_FILES_DIR_PATH)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        if !path.is_dir() && file_name.to_str().unwrap().ends_with(".json") {
+            run_python_fhs(path.to_str().unwrap())?;
+        }
+    }
+
+    Ok(())
+}
 fn clear_output_directory() -> anyhow::Result<()> {
     // delete output directory and its contents if it exists
     let _ = fs::remove_dir_all(PYTHON_OUTPUT_DIR_PATH); // ignore eror result when directory does not exist
@@ -49,8 +62,8 @@ fn install_python_fhs_requirements() {
     run_command(&format!("uv sync --project {}", FHS_PY_PATH));
 }
 
-fn run_python_fhs() -> Result<(), anyhow::Error> {
-    let path = Path::new(DEMO_FILE_PATH);
+fn run_python_fhs(demo_file_path: &str) -> Result<(), anyhow::Error> {
+    let path = Path::new(demo_file_path);
     let file_name = path.file_name().unwrap().to_str().unwrap();
 
     let copied_demo_file_path = [PYTHON_OUTPUT_DIR_PATH, file_name]
