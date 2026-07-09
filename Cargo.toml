@@ -47,11 +47,6 @@ path = "src/main.rs"
 doc = false
 required-features = ["clap"]
 
-[[bin]]
-name = "generate-python-outputs"
-path = "tests/generate_python_outputs.rs"
-
-
 [features]
 default = []
 indicatif = ["home-energy-model/indicatif"]
