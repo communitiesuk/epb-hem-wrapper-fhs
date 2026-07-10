@@ -1,7 +1,6 @@
-use home_energy_model::errors::HemError;
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model::read_weather_file::cibse_weather_data_to_external_conditions;
-use home_energy_model::{HemResponse, OutputFormat};
+use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use rstest::rstest;
 use serde_json::{json, Number, Value};
