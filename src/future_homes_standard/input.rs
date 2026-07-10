@@ -2340,6 +2340,7 @@ pub trait HotWaterSourceDetailsForProcessing {
     fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;
     fn is_storage_tank(&self) -> bool;
     fn is_combi_boiler(&self) -> bool;
+    fn is_heat_battery(&self) -> bool;
     fn is_hiu(&self) -> bool;
     fn is_point_of_use(&self) -> bool;
     fn is_smart_hot_water_tank(&self) -> bool;
@@ -2372,6 +2373,13 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
             .get("type")
             .and_then(|source_type| source_type.as_str())
             .is_some_and(|source_type| source_type == "CombiBoiler")
+    }
+
+    fn is_heat_battery(&self) -> bool {
+        self.0
+            .get("type")
+            .and_then(|source_type| source_type.as_str())
+            .is_some_and(|source_type| source_type == "HeatBattery")
     }
 
     fn is_hiu(&self) -> bool {

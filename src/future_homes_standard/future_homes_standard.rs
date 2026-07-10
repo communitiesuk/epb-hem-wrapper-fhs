@@ -1637,7 +1637,11 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
                     )?;
                 }
             }
-        } else if hw_source.is_combi_boiler() || hw_source.is_point_of_use() || hw_source.is_hiu() {
+        } else if hw_source.is_combi_boiler()
+            || hw_source.is_heat_battery()
+            || hw_source.is_point_of_use()
+            || hw_source.is_hiu()
+        {
             // Instantaneous water heating systems must be available 24 hours a day
             // so do nothing
         } else {
