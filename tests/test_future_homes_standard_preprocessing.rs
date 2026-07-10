@@ -94,7 +94,7 @@ fn test_fhs_preprocessing_output_against_expected(
     assert_eq!(
         difference_count,
         0,
-        "mismatches found for {demo_input_file_name}: {}",
+        "mismatches found for {demo_input_file_name}: {}\n",
         failing_modes.join(", ")
     );
 }
@@ -129,15 +129,27 @@ fn test_fhs_preprocessing_output_against_generated_output_from_python() {
                     mode,
                 );
             }
-            total_mismatches.push(failing_modes.join(", "));
+            total_mismatches.push(format!(
+                "{demo_input_file_name}: {}",
+                failing_modes.join(", "),
+            ));
+            if difference_count > 0 {
+                println!(
+                    "\nmismatches found for {demo_input_file_name}: {}\n\n{:-^120}",
+                    failing_modes.join(", "),
+                    ""
+                )
+            }
             total_difference_count += difference_count;
             delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
         }
     }
+
     assert_eq!(
-        total_difference_count, 0,
-        "mismatches found: {:?}",
-        total_mismatches,
+        total_difference_count,
+        0,
+        "\n\nmismatches found:\n{}\n\n",
+        total_mismatches.join("\n"),
     )
 }
 
@@ -173,7 +185,7 @@ fn run_fhs_preprocessing(
         format!("{}__{{}}.{{}}", demo_input_file_name),
     );
 
-    println!("Starting to run {demo_input_file_name}");
+    println!("\nStarting to run {demo_input_file_name}");
     let result = run_wrappers(
         demo_input,
         output_writer,
