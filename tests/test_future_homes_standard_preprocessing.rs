@@ -112,25 +112,27 @@ fn test_fhs_preprocessing_output_against_generated_output_from_python() {
         let demo_input_file_name = path.clone();
         let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
 
-        let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
-        let temporary_output_sub_dir =
-            create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
+        if !path.is_dir() && entry.file_name().to_str().unwrap().ends_with(".json") {
+            let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
+            let temporary_output_sub_dir =
+                create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
 
-        run_fhs_preprocessing(path, demo_input_file_name, &temporary_output_sub_dir);
+            run_fhs_preprocessing(path, demo_input_file_name, &temporary_output_sub_dir);
 
-        let mut difference_count = 0;
-        let mut failing_modes = vec![];
-        for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-            difference_count += differences_for_mode(
-                demo_input_file_name,
-                temporary_output_dir,
-                &mut failing_modes,
-                mode,
-            );
+            let mut difference_count = 0;
+            let mut failing_modes = vec![];
+            for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
+                difference_count += differences_for_mode(
+                    demo_input_file_name,
+                    temporary_output_dir,
+                    &mut failing_modes,
+                    mode,
+                );
+            }
+            total_mismatches.push(failing_modes.join(", "));
+            total_difference_count += difference_count;
+            delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
         }
-        total_mismatches.push(failing_modes.join(", "));
-        total_difference_count += difference_count;
-        delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
     }
     assert_eq!(
         total_difference_count, 0,
