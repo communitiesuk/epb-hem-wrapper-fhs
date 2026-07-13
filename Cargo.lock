@@ -756,9 +756,9 @@ dependencies = [
 
 [[package]]
 name = "formatx"
-version = "0.3.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c40f9ee993b100102723f778c82d3daf1808c494ce2fd6e9a06d58d6e8e59748"
+checksum = "1144371193022ef5985fbe5edd35ca9112e778393b7ecd60600bcbae2583cc77"
 
 [[package]]
 name = "fraction"
@@ -1083,6 +1083,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -1108,7 +1113,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-7"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#8ebc79200a46fb0ec581892e1a2b1da245669db6"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=main#40bb1ea6d165bee522cdf79abc59aa5a4ba8ca8d"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1131,7 +1136,7 @@ dependencies = [
  "interp",
  "is_close",
  "itertools 0.15.0",
- "jsonschema",
+ "jsonschema 0.47.0",
  "monostate",
  "nalgebra 0.34.2",
  "ordered-float",
@@ -1163,7 +1168,7 @@ dependencies = [
  "home-energy-model",
  "indexmap 2.14.0",
  "itertools 0.14.0",
- "jsonschema",
+ "jsonschema 0.46.10",
  "parking_lot",
  "partial_application",
  "rand 0.10.2",
@@ -1602,11 +1607,40 @@ dependencies = [
  "getrandom 0.3.4",
  "idna",
  "itoa",
- "jsonschema-regex",
+ "jsonschema-regex 0.46.10",
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing",
+ "referencing 0.46.10",
+ "regex",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "281c43ff06dcb331e9356d30e38853d559ce3d0a3f693e0b0e102667dec14fb1"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex",
+ "fraction",
+ "getrandom 0.3.4",
+ "idna",
+ "itoa",
+ "jsonschema-regex 0.47.0",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.47.0",
  "regex",
  "reqwest",
  "rustls",
@@ -1621,6 +1655,15 @@ name = "jsonschema-regex"
 version = "0.46.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbd1086b01b9349fd4ef9a07433965af64c8ce8159abe633a189e4ff817bd13"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee0b351864e7ffbc5db9273daf7fa1b4d5177b0946713d667ca571b83c0b4045"
 dependencies = [
  "regex-syntax",
 ]
@@ -2335,6 +2378,23 @@ dependencies = [
  "fluent-uri",
  "getrandom 0.3.4",
  "hashbrown 0.16.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
+name = "referencing"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "348e860aeb0b7bd035778fd11dd9cd5290d32e4aed3b8f2274a00287a9fd362b"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
  "itoa",
  "micromap",
  "parking_lot",
