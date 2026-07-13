@@ -29,7 +29,7 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 #[case("DESN-H-End-02-HP-iMEV-pre-heat", false)]
 #[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank", false)]
 #[case("demo_FHS", true)] // expected results folder is called demo_fhs_with_weather_file in Python
-fn test_fhs_preprocessing_output_against_expected(
+fn test_fhs_preprocessing_output_against_expected_results(
     #[case] demo_input_file_name: &str,
     #[case] specify_weather_file: bool,
 ) {
@@ -83,7 +83,7 @@ fn test_fhs_preprocessing_output_against_expected(
         );
         if mode_difference_count > 0 {
             println!("\nMode '{mode}' for {demo_input_file_name}.json had {mode_difference_count} mismatches:\n");
-            print_mismatches(&errors, Some(ERRORS_TO_PRINT));
+            print_differences(&errors, Some(ERRORS_TO_PRINT));
             failing_modes.push(format!("{mode}: {mode_difference_count}"));
             difference_count += mode_difference_count;
         }
@@ -100,47 +100,47 @@ fn test_fhs_preprocessing_output_against_expected(
 }
 
 #[test]
-fn test_fhs_preprocessing_output_against_generated_output_from_python() {
+fn test_fhs_preprocessing_output_against_generated_results_from_python() {
     let demo_files_dir = Path::new("examples/input/future_homes_standard");
     let mut total_difference_count = 0;
-    let mut total_mismatches = vec![];
+    let mut differences = vec![];
 
     for entry in fs::read_dir(demo_files_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
 
-        let demo_input_file_name = path.clone();
-        let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
-
         if !path.is_dir() && entry.file_name().to_str().unwrap().ends_with(".json") {
+            let demo_input_file_name = path.clone();
+            let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
+
             let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
             let temporary_output_sub_dir =
                 create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
 
             run_fhs_preprocessing(path, demo_input_file_name, &temporary_output_sub_dir);
 
-            let mut difference_count = 0;
-            let mut failing_modes = vec![];
+            let mut file_difference_count = 0;
+            let mut file_differences = vec![];
             for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-                difference_count += differences_for_mode(
+                file_difference_count += mode_differences(
                     demo_input_file_name,
                     temporary_output_dir,
-                    &mut failing_modes,
+                    &mut file_differences,
                     mode,
                 );
             }
-            total_mismatches.push(format!(
-                "{demo_input_file_name}: {}",
-                failing_modes.join(", "),
-            ));
-            if difference_count > 0 {
+            if file_difference_count > 0 {
                 println!(
                     "\nmismatches found for {demo_input_file_name}: {}\n\n{:-^120}",
-                    failing_modes.join(", "),
+                    file_differences.join(", "),
                     ""
                 )
             }
-            total_difference_count += difference_count;
+            differences.push(format!(
+                "{demo_input_file_name}: {}",
+                file_differences.join(", "),
+            ));
+            total_difference_count += file_difference_count;
             delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
         }
     }
@@ -149,11 +149,11 @@ fn test_fhs_preprocessing_output_against_generated_output_from_python() {
         total_difference_count,
         0,
         "\n\nmismatches found:\n{}\n\n",
-        total_mismatches.join("\n"),
+        differences.join("\n"),
     )
 }
 
-fn differences_for_mode(
+fn mode_differences(
     demo_input_file_name: &str,
     temporary_output_dir: &str,
     failing_modes: &mut Vec<String>,
@@ -167,7 +167,7 @@ fn differences_for_mode(
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
     if mode_difference_count > 0 {
         println!("\nMode '{mode}' for {demo_input_file_name}.json had {mode_difference_count} mismatches:\n");
-        print_mismatches(&errors, Some(ERRORS_TO_PRINT));
+        print_differences(&errors, Some(ERRORS_TO_PRINT));
         failing_modes.push(format!("{mode}: {mode_difference_count}"));
     }
     mode_difference_count
@@ -399,8 +399,8 @@ fn numbers_match_as_floats(actual: &Number, expected: &Number) -> bool {
     (actual - expected).abs() < FLOAT_THRESHOLD
 }
 
-fn print_mismatches(mismatches: &[MismatchType], max_to_print: Option<usize>) {
-    let iter = mismatches.iter().take(max_to_print.unwrap_or(usize::MAX));
+fn print_differences(differences: &[MismatchType], max_to_print: Option<usize>) {
+    let iter = differences.iter().take(max_to_print.unwrap_or(usize::MAX));
 
     for mismatch in iter {
         match mismatch {
