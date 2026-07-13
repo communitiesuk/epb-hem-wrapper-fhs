@@ -148,7 +148,8 @@ fn test_fhs_preprocessing_output_against_generated_results_from_python() {
     assert_eq!(
         total_difference_count,
         0,
-        "\n\nmismatches found:\n{}\n\n",
+        "\n\nTotal mismatches found: {}\n{}\n\n",
+        total_difference_count,
         differences.join("\n"),
     )
 }
