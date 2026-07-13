@@ -356,6 +356,14 @@ pub(crate) fn preprocessed_input_matches_expected(
                     .map(|key| (*key).clone())
                     .collect();
                 for key in additional_keys {
+                    let actual_value = actual_obj.get(&key).unwrap_or(&Value::Null);
+
+                    // don't record 'additional key' difference if its value is empty object
+                    if let Some(actual) = actual_value.as_object() {
+                        if actual.len() == 0 {
+                            continue;
+                        }
+                    }
                     errors.push(MismatchType::AdditionalKey {
                         key,
                         location: Location(path_to_node.clone()),
