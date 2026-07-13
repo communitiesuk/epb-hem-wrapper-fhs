@@ -2367,7 +2367,7 @@ fn create_appliance_gains(
                 cookparams.get("Oven").unwrap().event_count, // analysis of HES - see folder
                 None,
                 0.50,
-                0.5,
+                1.,
                 flat_annual_propensities.cooking_electric_oven.clone(),
                 0.5,
                 0.7,
