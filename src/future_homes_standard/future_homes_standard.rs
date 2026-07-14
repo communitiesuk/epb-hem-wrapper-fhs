@@ -2443,8 +2443,6 @@ fn create_appliance_gains(
 
             let appliance_energy_supply = appliance.get("Energysupply").and_then(|e| e.as_str());
 
-            let load_shifting = appliance.get("loadshifting").and_then(|v| v.as_object());
-
             input.set_gains_for_field(String::from(&appliance_key), json!({
                 "EnergySupply": if ["Hobs", "Oven"].contains(&appliance_key.as_str()) {
                     appliance_energy_supply.ok_or_else(|| anyhow!("Could not get energy supply type for appliance with key {appliance_key}"))?.to_string()
@@ -2457,7 +2455,6 @@ fn create_appliance_gains(
                 "gains_fraction": app.gains_frac,
                 "Events": app.event_list,
                 "Standby": app.standby_w,
-                "loadshifting": load_shifting
             }))?;
 
             appliance_kwhcycle.insert(appliance_key.into(), kwhcycle);
