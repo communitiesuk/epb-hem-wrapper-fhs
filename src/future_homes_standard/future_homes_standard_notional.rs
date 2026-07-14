@@ -1366,7 +1366,9 @@ fn edit_space_heating_system(
         // Otherwise, notional heated with an air to water heat pump
         let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
 
-        if let Some(heat_network_type) = heat_network_type {
+        if let Some(heat_network_type @ (HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)) =
+            heat_network_type
+        {
             let custom_energy_supply_factors = edit_add_heatnetwork_heating(
                 input,
                 cold_water_source,
