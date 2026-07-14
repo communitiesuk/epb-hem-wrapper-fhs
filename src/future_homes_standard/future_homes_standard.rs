@@ -457,13 +457,10 @@ pub(super) fn calc_final_rates(
         .iter()
         .map(|(key, value)| (key.clone(), value))
         // adding unmet demand to the energy supplies, rather than mutating the input as the Python does
-        .chain(
-            [(
-                "_unmet_demand".into(),
-                &EnergySupplyDetails::with_fuel(FuelType::UnmetDemand),
-            )]
-            .into_iter(),
-        )
+        .chain([(
+            "_unmet_demand".into(),
+            &EnergySupplyDetails::with_fuel(FuelType::UnmetDemand),
+        )])
     {
         let energy_supply_key = String::from(energy_supply_key);
         let supply_emis_result = emis_results.entry(energy_supply_key.clone()).or_default();
