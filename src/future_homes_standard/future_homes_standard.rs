@@ -2148,8 +2148,8 @@ fn create_lighting_gains(
                 .get("efficacy")
                 .and_then(|e| e.as_f64())
                 .ok_or(json_error(format!(
-                "Bulb efficacy for bulb with index '{i}' should have been expressed as a number"
-            )))?;
+                    "Bulb efficacy for bulb with index '{i}' should have been expressed as a number"
+                )))?;
             let bulb_power = bulb
                 .get("power")
                 .and_then(|e| e.as_f64())
@@ -2893,7 +2893,7 @@ fn appliance_kwh_cycle_loading_factor(
                 "Appliance '{appliance_key}' not found in map of known appliances.",
             )
         })?
-        .use_data.and_then(|use_data| use_data.clothes_use_data).map(|clothes_use_data| clothes_use_data.standard_load_kg).ok_or_else(|| {
+            .use_data.and_then(|use_data| use_data.clothes_use_data).map(|clothes_use_data| clothes_use_data.standard_load_kg).ok_or_else(|| {
             anyhow!(
                 "Appliance '{appliance_key}' has no standard_load_kg value, cannot calculate loading factor.",
             )
