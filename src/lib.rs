@@ -10,7 +10,7 @@ use anyhow::bail;
 use bitflags::{bitflags, bitflags_match};
 pub use home_energy_model::errors::HemError;
 use home_energy_model::errors::PostprocessingError;
-use home_energy_model::input::{CustomEnergySourceFactor, Input};
+use home_energy_model::input::CustomEnergySourceFactor;
 pub use home_energy_model::output_writer::{OutputWriter, SinkOutputWriter};
 pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::{
@@ -222,9 +222,9 @@ pub fn run_wrappers(
         }
 
         #[instrument(skip_all)]
-        fn write_preproc_file(input: &Input, output: &impl OutputWriter, location_key: &str, file_extension: &str) -> anyhow::Result<()> {
+        fn write_preproc_file(input: &InputForProcessing, output: &impl OutputWriter, location_key: &str, file_extension: &str) -> anyhow::Result<()> {
             let writer = output.writer_for_location_key(location_key, file_extension)?;
-            if let Err(e) = serde_json::to_writer_pretty(writer, input) {
+            if let Err(e) = serde_json::to_writer_pretty(writer, &input.input) {
                 error!("Could not write out preprocess file: {}", e);
             }
 
@@ -259,7 +259,7 @@ pub fn run_wrappers(
         if preprocess_only {
             for (calculation_key, input_for_processing) in inputs_by_key {
                 let location_key = format!("{}__preproc", calculation_key.as_str());
-                write_preproc_file(&input_for_processing.finalize()?, &output_writer, &location_key, "json")?;
+                write_preproc_file(&input_for_processing, &output_writer, &location_key, "json")?;
             }
 
             return Ok(None);
