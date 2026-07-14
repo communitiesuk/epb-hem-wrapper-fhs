@@ -3577,8 +3577,8 @@ pub(super) fn create_window_opening_schedule(input: &mut InputForProcessing) -> 
 
 /// Set min and max vent opening thresholds
 fn create_vent_opening_schedule(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    let vent_adjust_min_ach = 1.9;
-    let vent_adjust_max_ach = 2.;
+    let vent_adjust_min_ach = 10.;
+    let vent_adjust_max_ach = 10.;
 
     input.add_control(
         "_vent_adjust_min_ach",
