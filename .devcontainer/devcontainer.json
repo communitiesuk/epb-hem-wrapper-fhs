@@ -19,5 +19,5 @@
       ]
     }
   },
-  "postCreateCommand": "python3 -c \"import numpy, random; print('numpy', numpy.__version__); print('random', random.__version__)\" && cargo --version"
+  "postCreateCommand": "python3 -c \"import numpy; print('numpy', numpy.__version__);\" && cargo --version"
 }
