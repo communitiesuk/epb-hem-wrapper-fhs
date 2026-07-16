@@ -8,9 +8,6 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
 use pyo3::prelude::*;
-use rand::SeedableRng;
-use rand_distr::{Distribution, Poisson};
-use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
 use std::fmt::{Debug, Formatter};
@@ -352,12 +349,20 @@ impl HotWaterEventGenerator {
             Ok(rng.unbind())
         }
 
+        #[pyfunction]
+        fn make_rng_poisson(py: Python<'_>, seed: u64) -> PyResult<Py<PyAny>> {
+            let np_random = py.import("numpy.random")?;
+            let rng_poisson = np_random.getattr("default_rng")?.call1((seed,))?;
+            Ok(rng_poisson.unbind())
+        }
+
         let rng = Python::attach(|py| -> PyResult<Py<PyAny>> {
             make_rng(py, hw_seed.unwrap_or(RNG_SEED))
         }).map_err( |e| anyhow!(e))?;
 
-        // let rng = SeedableRng::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
-        let mut rng_poisson = Pcg64::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
+        let rng_poisson = Python::attach(|py| -> PyResult<Py<PyAny>> {
+            make_rng_poisson(py, hw_seed.unwrap_or(RNG_SEED))
+        }).map_err( |e| anyhow!(e))?;
 
         let mut decile: i8 = -1;
         let mut banding_correction = 1.0;
@@ -459,14 +464,14 @@ impl HotWaterEventGenerator {
                         poisson_arr: {
                             let lambda = banding_correction * x as f64 * current_digest.event_count
                                 / sum_event_count as f64;
-                            let poisson = Poisson::new(lambda).unwrap_or_else(|_| {
+                            let poisson = Python::attach(|py| ->PyResult<Vec<f64>> {
+                                rng_poisson.call_method1(py, "poisson", (lambda, POISSON_DISTRIBUTION_SIZE))?.call_method0(py, "tolist")?.extract(py)
+                            }).unwrap_or_else(|x| {
                                 panic!(
-                                    "Unable to create a poisson generator with the lambda {lambda}"
+                                    "Unable to create a poisson generator with the lambda {lambda} \n {x}"
                                 )
                             });
-                            (0..POISSON_DISTRIBUTION_SIZE)
-                                .map(|_| poisson.sample(&mut rng_poisson))
-                                .collect::<Vec<f64>>()
+                            poisson
                         },
                         poisson_arr_idx: 0,
                     }));
