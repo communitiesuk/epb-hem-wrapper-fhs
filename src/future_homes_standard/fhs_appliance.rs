@@ -1,10 +1,10 @@
+use anyhow::anyhow;
 use home_energy_model::{
     core::units::{DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT},
     input::ApplianceGainsEvent,
 };
-use rand::{RngExt, SeedableRng};
-use rand_distr::{Distribution, Normal, Poisson};
-use rand_pcg::Pcg64;
+use pyo3::prelude::*;
+use pyo3::{pyfunction, Py, PyAny, PyResult, Python};
 
 pub(super) struct FhsAppliance {
     pub(super) standby_w: f64,
@@ -61,31 +61,49 @@ impl FhsAppliance {
         duration_std_dev: f64,
     ) -> anyhow::Result<(Vec<ApplianceGainsEvent>, Vec<f64>)> {
         // upstream Python here constructs a seed sequence from consecutive numbers - instead, here we sum the series
-        let mut appliance_rng = Pcg64::seed_from_u64(
-            (0..(flat_profile.len() + annual_expected_uses.ceil() as usize))
-                .map(|x| (x + seed) as u64)
-                .sum::<u64>(),
-        );
-        let events = flat_profile
+        #[pyfunction]
+        fn make_default_rng(py: Python<'_>, seed: u64) -> PyResult<Py<PyAny>> {
+            let np_random = py.import("numpy.random")?;
+            let rng = np_random.getattr("default_rng")?.call1((seed,))?;
+            Ok(rng.unbind())
+        }
+        let flat_profile_len = flat_profile.len();
+
+        let appliance_rng = Python::attach(|py| -> PyResult<Py<PyAny>> {
+            make_default_rng(
+                py,
+                (0..(flat_profile_len + annual_expected_uses.ceil() as usize))
+                    .map(|x| (x + seed) as u64)
+                    .sum::<u64>(),
+            )
+        })
+        .map_err(|e| anyhow!(e))?;
+
+        let lambda: Vec<f64> = flat_profile
             .iter()
-            .map(|x| {
-                let lambda =
-                    (x * annual_expected_uses / DAYS_PER_YEAR as f64).max(f64::MIN_POSITIVE); // ensure lambda > 0. for poisson distribution
-                let poisson = Poisson::new(lambda)?;
-                Ok(poisson.sample(&mut appliance_rng))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|x| (x * annual_expected_uses / DAYS_PER_YEAR as f64).max(f64::MIN_POSITIVE))
+            .collect();
+        let events = Python::attach(|py| -> PyResult<Vec<f64>> {
+            appliance_rng
+                .call_method1(py, "poisson", (lambda, flat_profile_len))?
+                .extract(py)
+        })?;
+
         let num_events = events.iter().copied().map(|x| x as usize).sum::<usize>();
+        let mut event_size_deviations = Python::attach(|py| -> PyResult<Vec<f64>> {
+            appliance_rng
+                .call_method1(py, "normal", (0, duration_std_dev, num_events))?
+                .extract(py)
+        })?;
 
-        let normal_distribution = Normal::new(0., duration_std_dev)?;
-        let mut event_size_deviations = normal_distribution
-            .sample_iter(&mut appliance_rng)
-            .take(num_events)
-            .collect::<Vec<_>>();
-
+        let normal = Python::attach(|py| -> PyResult<f64> {
+            appliance_rng
+                .call_method1(py, "normal", (0, duration_std_dev))?
+                .extract(py)
+        })?;
         for deviation in event_size_deviations.iter_mut() {
             if *deviation < -1. {
-                *deviation = normal_distribution.sample(&mut appliance_rng).max(-1.);
+                *deviation = normal.max(-1.);
             }
         }
 
@@ -118,11 +136,12 @@ impl FhsAppliance {
         let expected_demand_w_event = op_kwh * WATTS_PER_KILOWATT as f64 / event_duration;
         let mut eventlist: Vec<ApplianceGainsEvent> = vec![];
         let mut sched = vec![standby_w; flat_profile.len()];
-        let flat_profile_len = flat_profile.len();
 
         let mut event_count: usize = Default::default();
         for (step, num_events_in_step) in events.into_iter().enumerate() {
-            let mut start_offset = appliance_rng.random::<f64>();
+            let mut start_offset = Python::attach(|py| -> PyResult<f64> {
+                appliance_rng.call_method0(py, "random")?.extract(py)
+            })?;
             for e in 0..(num_events_in_step.floor() as usize) {
                 let demand_w_event = expected_demand_w_event;
                 let duration =
