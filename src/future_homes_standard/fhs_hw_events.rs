@@ -358,11 +358,13 @@ impl HotWaterEventGenerator {
 
         let rng = Python::attach(|py| -> PyResult<Py<PyAny>> {
             make_rng(py, hw_seed.unwrap_or(RNG_SEED))
-        }).map_err( |e| anyhow!(e))?;
+        })
+        .map_err(|e| anyhow!(e))?;
 
         let rng_poisson = Python::attach(|py| -> PyResult<Py<PyAny>> {
             make_rng_poisson(py, hw_seed.unwrap_or(RNG_SEED))
-        }).map_err( |e| anyhow!(e))?;
+        })
+        .map_err(|e| anyhow!(e))?;
 
         let mut decile: i8 = -1;
         let mut banding_correction = 1.0;
@@ -487,8 +489,6 @@ impl HotWaterEventGenerator {
         event_type: SimpleLabelBasedOn900KSample,
         digest: &mut DayDigest,
     ) -> anyhow::Result<Vec<HourEvent>> {
-
-
         let mut out: Vec<HourEvent> = Default::default();
         let hourly_event_distribution = digest.hourly_event_distribution.as_mut().expect(
             "Found a DayDigest value that did not have its hourly event distribution set on it",
@@ -498,11 +498,11 @@ impl HotWaterEventGenerator {
         hourly_event_distribution[time % 24].poisson_arr_idx += 1;
 
         for _ in 0..(count as usize) {
-            let random = Python::attach(|py| -> PyResult<f64> {
-                random(py, self.rng.clone_ref(py))
-            }).map_err( |e| anyhow!(e))?;
+            let random =
+                Python::attach(|py| -> PyResult<f64> { random(py, self.rng.clone_ref(py)) })
+                    .map_err(|e| anyhow!(e))?;
 
-        out.push(HourEvent {
+            out.push(HourEvent {
                 time: time as f64 + random,
                 event_type,
                 volume: digest.mean_event_volume,
@@ -542,9 +542,8 @@ impl HotWaterEventGenerator {
     /// do this by adding random value between 0-30 mins to current time
     /// until it does not overlap with anything
     fn reroll_event_time(&mut self, time: f64) -> anyhow::Result<f64> {
-        let random = Python::attach(|py| -> PyResult<f64> {
-           random(py, self.rng.clone_ref(py))
-        }).map_err( |e| anyhow!(e))?;
+        let random = Python::attach(|py| -> PyResult<f64> { random(py, self.rng.clone_ref(py)) })
+            .map_err(|e| anyhow!(e))?;
         Ok((time + random / 2.) % 8760.)
     }
 
