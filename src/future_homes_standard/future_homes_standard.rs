@@ -2629,7 +2629,7 @@ fn cooking_demand(
     };
 
     let microwave_fuel = match input.appliances_contain_key("Microwave") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let microwave = ApplianceCookingDemand {
@@ -2641,7 +2641,7 @@ fn cooking_demand(
     };
 
     let kettle_fuel = match input.appliances_contain_key("Kettle") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let kettle = ApplianceCookingDemand {
