@@ -16,4 +16,4 @@ src/weather.epw
 .vscode
 
 #Generated files
-tests/e2e/generated_results
+tests/e2e/generated_expected_results
