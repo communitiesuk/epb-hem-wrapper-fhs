@@ -62,7 +62,7 @@ impl FhsAppliance {
     ) -> anyhow::Result<(Vec<ApplianceGainsEvent>, Vec<f64>)> {
         // upstream Python here constructs a seed sequence from consecutive numbers - instead, here we sum the series
         #[pyfunction]
-        fn make_default_rng(py: Python<'_>, seed: u64) -> PyResult<Py<PyAny>> {
+        fn make_default_rng(py: Python<'_>, seed: Vec<u64>) -> PyResult<Py<PyAny>> {
             let np_random = py.import("numpy.random")?;
             let rng = np_random.getattr("default_rng")?.call1((seed,))?;
             Ok(rng.unbind())
@@ -74,14 +74,14 @@ impl FhsAppliance {
                 py,
                 (0..(flat_profile_len + annual_expected_uses.ceil() as usize))
                     .map(|x| (x + seed) as u64)
-                    .sum::<u64>(),
+                    .collect(),
             )
         })
         .map_err(|e| anyhow!(e))?;
 
         let lambda: Vec<f64> = flat_profile
             .iter()
-            .map(|x| (x * annual_expected_uses / DAYS_PER_YEAR as f64).max(f64::MIN_POSITIVE))
+            .map(|x| x * annual_expected_uses / DAYS_PER_YEAR as f64)
             .collect();
         let events = Python::attach(|py| -> PyResult<Vec<f64>> {
             appliance_rng
@@ -135,7 +135,7 @@ impl FhsAppliance {
 
         let expected_demand_w_event = op_kwh * WATTS_PER_KILOWATT as f64 / event_duration;
         let mut eventlist: Vec<ApplianceGainsEvent> = vec![];
-        let mut sched = vec![standby_w; flat_profile.len()];
+        let mut sched = vec![standby_w; flat_profile_len];
 
         let mut event_count: usize = Default::default();
         for (step, num_events_in_step) in events.into_iter().enumerate() {
