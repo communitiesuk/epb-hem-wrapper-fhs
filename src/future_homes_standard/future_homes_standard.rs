@@ -18,8 +18,8 @@ use home_energy_model::hem_core::external_conditions::{
 };
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EnergySupplyDetails, EnergySupplyType, FuelType, Input,
-    TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
+    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, Input, TransparentBuildingElement,
+    TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
 use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
@@ -2629,7 +2629,7 @@ fn cooking_demand(
     };
 
     let microwave_fuel = match input.appliances_contain_key("Microwave") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let microwave = ApplianceCookingDemand {
@@ -2641,7 +2641,7 @@ fn cooking_demand(
     };
 
     let kettle_fuel = match input.appliances_contain_key("Kettle") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let kettle = ApplianceCookingDemand {
