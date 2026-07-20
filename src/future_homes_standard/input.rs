@@ -577,12 +577,11 @@ impl InputForProcessing {
         &mut self,
         efficacy: f64,
     ) -> JsonAccessResult<&Self> {
-        for lighting in self
-            .zone_node_mut()?
-            .values_mut()
-            .filter_map(|zone| zone.get_mut("Lighting").and_then(|l| l.as_object_mut()))
-        {
-            lighting.insert("efficacy".into(), efficacy.into());
+        let bulbs = self.all_bulbs_mut()?;
+        for bulb in bulbs {
+            bulb.as_object_mut()
+                .ok_or(json_error(""))?
+                .insert("efficacy".into(), efficacy.into());
         }
 
         Ok(self)
