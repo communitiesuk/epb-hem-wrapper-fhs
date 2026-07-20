@@ -96,13 +96,13 @@ impl FhsAppliance {
                 .extract(py)
         })?;
 
-        let normal = Python::attach(|py| -> PyResult<f64> {
-            appliance_rng
-                .call_method1(py, "normal", (0, duration_std_dev))?
-                .extract(py)
-        })?;
         for deviation in event_size_deviations.iter_mut() {
             if *deviation < -1. {
+                let normal = Python::attach(|py| -> PyResult<f64> {
+                    appliance_rng
+                        .call_method1(py, "normal", (0, duration_std_dev))?
+                        .extract(py)
+                })?;
                 *deviation = normal.max(-1.);
             }
         }
