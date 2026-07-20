@@ -2320,7 +2320,7 @@ fn create_appliance_gains(
             "Dishwasher",
             ApplianceUseProfile::complex(
                 number_of_occupants,
-                132,       // HES 2012 final report table 22
+                132.,      // HES 2012 final report table 22
                 Some(280), // EU standard
                 0.75,
                 0.3,
@@ -2333,8 +2333,8 @@ fn create_appliance_gains(
             "Clothes_washing",
             ApplianceUseProfile::clothes(
                 number_of_occupants,
-                174, // HES 2012 final report table 22
-                220, // EU standard
+                174., // HES 2012 final report table 22
+                220,  // EU standard
                 7.,
                 0.75,
                 0.3,
@@ -2347,8 +2347,8 @@ fn create_appliance_gains(
             "Clothes_drying",
             ApplianceUseProfile::clothes(
                 number_of_occupants,
-                145, // HES 2012 final report table 22
-                160, // EU standard
+                145., // HES 2012 final report table 22
+                160,  // EU standard
                 7.,
                 0.50,
                 0.7,
@@ -2431,7 +2431,7 @@ fn create_appliance_gains(
 
             let app = FhsAppliance::new(
                 map_appliance.util_unit,
-                use_data.use_metric as f64 * loadingfactor,
+                use_data.use_metric * loadingfactor,
                 kwhcycle,
                 use_data.duration,
                 map_appliance.standby,
@@ -2525,7 +2525,7 @@ impl ApplianceUseProfile {
     #[allow(clippy::too_many_arguments)]
     fn complex(
         util_unit: f64,
-        use_metric: usize,
+        use_metric: f64,
         standard_use: Option<usize>,
         standby: f64,
         gains_frac: f64,
@@ -2551,7 +2551,7 @@ impl ApplianceUseProfile {
     #[allow(clippy::too_many_arguments)]
     fn clothes(
         util_unit: f64,
-        use_metric: usize,
+        use_metric: f64,
         standard_use: usize,
         standard_load_kg: f64,
         standby: f64,
@@ -2579,7 +2579,7 @@ impl ApplianceUseProfile {
 #[derive(Clone, Copy, Debug)]
 struct ApplianceUseData {
     // maps to "use" field in upstream, though 'use' is a keywork in Rust so calling this "use_metric"
-    use_metric: usize,
+    use_metric: f64,
     clothes_use_data: Option<ClothesUseData>,
     _standard_use: Option<usize>,
     duration: f64,
@@ -2595,7 +2595,7 @@ struct ApplianceCookingDemand {
     _mean_annual_events: f64,
     mean_event_demand: f64,
     fuel: Option<String>,
-    event_count: usize,
+    event_count: f64,
 }
 
 fn cooking_demand(
@@ -2691,7 +2691,7 @@ fn cooking_demand(
         let demand_prop = cooking_demand.mean_annual_demand / (elec_total + gas_total);
         let annual_kwh = demand_prop * annual_cooking_elec_kwh;
         let events = annual_kwh / cooking_demand.mean_event_demand;
-        cooking_demand.event_count = events as usize;
+        cooking_demand.event_count = events;
     }
 
     Ok(cook_params)
@@ -6342,7 +6342,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),
@@ -6384,7 +6384,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.0,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),
@@ -6427,7 +6427,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.0,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),
