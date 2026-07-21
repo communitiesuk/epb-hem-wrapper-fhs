@@ -1151,7 +1151,7 @@ dependencies = [
  "csv",
  "home-energy-model",
  "indexmap 2.13.1",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "jsonschema 0.46.10",
  "parking_lot",
  "partial_application",
