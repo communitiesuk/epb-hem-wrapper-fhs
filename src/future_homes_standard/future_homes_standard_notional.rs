@@ -1114,8 +1114,8 @@ fn calc_daily_hw_demand(
     let number_of_occupants = calc_n_occupants(total_floor_area, nbeds)?;
     create_hot_water_use_pattern(
         input,
-        number_of_occupants,
         total_floor_area,
+        number_of_occupants,
         &cold_water_feed_temps,
     )?;
     let sim_timestep = simtime.step;
