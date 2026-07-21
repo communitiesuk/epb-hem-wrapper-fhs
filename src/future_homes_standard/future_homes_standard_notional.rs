@@ -168,12 +168,7 @@ fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option
 /// efficacy = 120 lm/W
 fn edit_lighting_efficacy(input: &mut InputForProcessing) -> anyhow::Result<()> {
     let notional_lighting_efficacy = 120.0;
-
-    for bulb in input.all_bulbs_mut()? {
-        bulb.as_object_mut()
-            .ok_or_else(|| json_error("Bulb was not an object"))?
-            .insert("efficacy".into(), notional_lighting_efficacy.into());
-    }
+    input.set_lighting_efficacy_for_all_zones(notional_lighting_efficacy)?;
 
     Ok(())
 }

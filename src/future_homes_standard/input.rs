@@ -577,10 +577,9 @@ impl InputForProcessing {
         &mut self,
         efficacy: f64,
     ) -> JsonAccessResult<&Self> {
-        let bulbs = self.all_bulbs_mut()?;
-        for bulb in bulbs {
+        for bulb in self.all_bulbs_mut()? {
             bulb.as_object_mut()
-                .ok_or(json_error(""))?
+                .ok_or_else(|| json_error("Bulb was not an object"))?
                 .insert("efficacy".into(), efficacy.into());
         }
 
