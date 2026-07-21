@@ -8,7 +8,7 @@
 !/test/e2e/expected_results/**/*__results/*
 
 # Ignore generated files used for e2e test comparison
-tests/e2e/generated_expected_results
+tests/e2e/expected_generated_results
 
 # weather file in case compilation using this resource is needed
 src/weather.epw

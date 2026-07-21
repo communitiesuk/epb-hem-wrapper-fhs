@@ -71,7 +71,7 @@ fn test_fhs_preprocessing_output_against_expected_results(
     let mut difference_count = 0;
     let mut failing_modes = vec![];
     for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-        let expected_output_dir = "./tests/e2e/provided_expected_results/future_homes_standard/";
+        let expected_output_dir = "./tests/e2e/expected_provided_results/future_homes_standard/";
         let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
         let actual_output = file_value(temporary_output_dir, demo_input_file_name, mode);
         let mut errors = vec![];
@@ -695,7 +695,7 @@ mod test_preprocessed_input_matches_expected {
 
     #[test]
     fn test_whole_file() {
-        let file = fs::read_to_string("tests/e2e/provided_expected_results/future_homes_standard/demo_fhs__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
+        let file = fs::read_to_string("tests/e2e/expected_provided_results/future_homes_standard/demo_fhs__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
         let actual: Value = serde_json::from_str(&file).unwrap();
         let expected = serde_json::from_str(&file).unwrap();
         let difference_count =
