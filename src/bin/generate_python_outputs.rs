@@ -5,7 +5,7 @@ use std::process::Command;
 const DEMO_FILES_DIR_PATH: &str = "examples/input/future_homes_standard";
 const FHS_PY_ENTRYPOINT_PATH: &str = "./../epb-py-fhs-wrapper/src/bin/fhs.py";
 const FHS_PY_PATH: &str = "./../epb-py-fhs-wrapper";
-const PYTHON_OUTPUT_DIR_PATH: &str = "tests/e2e/generated_results";
+const PYTHON_OUTPUT_DIR_PATH: &str = "tests/e2e/expected_generated_results";
 
 fn main() {
     clear_output_directory();
