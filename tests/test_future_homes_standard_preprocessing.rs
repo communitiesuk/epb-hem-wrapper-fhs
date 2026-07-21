@@ -371,9 +371,6 @@ pub(crate) fn preprocessed_input_matches_expected(
                 }
             }
             for key in expected_keys {
-                // skip comparing values of "Events" keys as these are affected by different
-                // implementations of random number generators in Python vs Rust
-
                 let actual_value = actual_obj.get(key).unwrap_or(&Value::Null);
                 let expected_value = expected_obj.get(key).unwrap_or(&Value::Null);
                 if actual_value.is_null() {
