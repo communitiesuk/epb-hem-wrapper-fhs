@@ -731,8 +731,7 @@ impl InputForProcessing {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
+    pub(crate) fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
         self.root_object_mut("EnergySupply")?
             .retain(|_, energy_supply| match energy_supply.get("fuel") {
                 Some(fuel) if fuel.is_string() => fuel.as_str().unwrap() != "custom",
