@@ -3,10 +3,14 @@
 #jetbraaaaains IDEs
 .idea
 
-#results files
-examples/input/future_homes_standard/*__results/*
+# Ignore calculation results, except those used for e2e test comparison
+/**/*__results/*
+!/test/e2e/expected_results/**/*__results/*
 
-#weather file in case compilation using this resource is needed
+# Ignore generated files used for e2e test comparison
+tests/e2e/expected_generated_results
+
+# weather file in case compilation using this resource is needed
 src/weather.epw
 
 # MacOS generated file
@@ -14,6 +18,3 @@ src/weather.epw
 
 # IDE generated files
 .vscode
-
-#Generated files
-tests/e2e/generated_expected_results
