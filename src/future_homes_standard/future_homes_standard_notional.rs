@@ -724,6 +724,8 @@ fn edit_add_heatnetwork_heating(
         "is_export_capable": false,
     });
 
+    // remove any other custom energy supplies and add the new notional supply
+    input.remove_custom_energy_supplies()?;
     input.add_energy_supply_for_key(NOTIONAL_HEAT_NETWORK_NAME, heat_network_fuel_data)?;
 
     Ok(custom_energy_supply_factors)
