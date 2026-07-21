@@ -2412,7 +2412,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "differs as hot water event generation is different due to inability to replicate random seed from Python"]
     fn test_calc_daily_hw_demand(mut test_input: InputForProcessing, tfa: f64) {
         let cold_water_source_type = "mains water";
 
