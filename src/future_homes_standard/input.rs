@@ -1160,9 +1160,6 @@ impl InputForProcessing {
         subtype_name: &str,
         event: JsonValue,
     ) -> JsonAccessResult<&Self> {
-        if event_type == "Bath" {
-            dbg!(event_type);
-        };
         let node_for_type = self
             .root_object_entry_mut("Events")?
             .entry(event_type)
