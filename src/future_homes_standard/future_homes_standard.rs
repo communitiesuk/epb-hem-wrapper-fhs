@@ -3159,6 +3159,7 @@ pub(super) fn create_hot_water_use_pattern(
                     end: event_start + duration / 60.,
                 });
         }
+
         let mut event_json = json!({
             "start": event_start,
             "duration": Some(duration),
@@ -3172,10 +3173,11 @@ pub(super) fn create_hot_water_use_pattern(
         });
         if event.event_type.is_bath_type() {
             if let Some(json) = event_json.as_object_mut() {
-                let volume = input
-                    .flowrate_for_bath_field(&drawoff.name)?
-                    .map(|flowrate| duration * flowrate);
-                json.insert("volume".into(), json!(volume));
+                if let Some(flowrate) = input
+                    .flowrate(&drawoff.event_type, &drawoff.name)? {
+                    let volume = duration * flowrate;
+                    json.insert("volume".into(), json!(volume));
+                }
             }
         };
         input.add_water_heating_event(&drawoff.event_type, &drawoff.name, event_json)?;

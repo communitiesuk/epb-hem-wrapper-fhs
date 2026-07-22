@@ -1070,6 +1070,17 @@ impl InputForProcessing {
             .and_then(|flowrate| flowrate.as_f64()))
     }
 
+    pub(crate) fn flowrate(&self, event_type: &str, event_name: &str) -> JsonAccessResult<Option<f64>> {
+        let flowrate = self
+            .hot_water_demand()?
+            .get(event_type)
+            .and_then(|events| events.as_object())
+            .and_then(|events| events.get(event_name))
+            .and_then(|event| event.get("flowrate"))
+            .and_then(|flowrate| flowrate.as_f64());
+        Ok(flowrate)
+    }
+
     pub(crate) fn other_water_uses(
         &self,
     ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
