@@ -3,9 +3,8 @@
 #jetbraaaaains IDEs
 .idea
 
-# Ignore calculation results, except those used for e2e test comparison
-/**/*__results/*
-!/test/e2e/expected_results/**/*__results/*
+# Ignore calculation results in examples folder
+examples/input/future_homes_standard/*__results/*
 
 # Ignore generated files used for e2e test comparison
 tests/e2e/expected_generated_results
