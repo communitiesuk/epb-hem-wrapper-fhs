@@ -3160,30 +3160,27 @@ pub(super) fn create_hot_water_use_pattern(
                 });
         }
 
-        input.add_water_heating_event(
-            &drawoff.event_type,
-            &drawoff.name,
-            json!({
-                "start": event_start,
-                "duration": Some(duration),
-                "volume": if event.event_type.is_bath_type() {
-                    // if the end user the event is being assigned to has a defined flowrate
-                    // we are able to supply a volume
-                    input
-                        .flowrate_for_bath_field(&drawoff.name)?
-                        .map(|flowrate| duration * flowrate)
-                } else {
-                    None
-                },
-                "temperature": if event.event_type.is_shower_type() {
-                    event_temperature_showers
-                } else if event.event_type.is_bath_type() {
-                    event_temperature_bath
-                } else {
-                    event_temperature_others
-                },
-            }),
-        )?;
+        let mut event_json = json!({
+            "start": event_start,
+            "duration": Some(duration),
+            "temperature": if event.event_type.is_shower_type() {
+                event_temperature_showers
+            } else if event.event_type.is_bath_type() {
+                event_temperature_bath
+            } else {
+                event_temperature_others
+            },
+        });
+        if event.event_type.is_bath_type() {
+            if let Some(json) = event_json.as_object_mut() {
+                if let Some(flowrate) = input
+                    .flowrate(&drawoff.event_type, &drawoff.name)? {
+                    let volume = duration * flowrate;
+                    json.insert("volume".into(), json!(volume));
+                }
+            }
+        };
+        input.add_water_heating_event(&drawoff.event_type, &drawoff.name, event_json)?;
     }
 
     Ok(())
