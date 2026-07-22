@@ -960,7 +960,7 @@ impl InputForProcessing {
     }
 
     pub fn reset_water_heating_events(&mut self) -> JsonAccessResult<&mut Self> {
-        self.set_on_root_key("Events", json!({}))
+        self.set_on_root_key("Events", json!({"Bath": {}, "Shower": {}, "Other": {}}))
     }
 
     pub(crate) fn showers(&self) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
@@ -1160,6 +1160,9 @@ impl InputForProcessing {
         subtype_name: &str,
         event: JsonValue,
     ) -> JsonAccessResult<&Self> {
+        if event_type == "Bath" {
+            dbg!(event_type);
+        };
         let node_for_type = self
             .root_object_entry_mut("Events")?
             .entry(event_type)
