@@ -2487,13 +2487,12 @@ fn create_appliance_gains(
             }))?;
         }
     }
-
+    
     // Assign priority to those with a kWhcycle value, in reverse order
     for (priority, appliance) in appliance_kwhcycle
         // the Python behaviour differs here as it sorts by index 1 (2nd letter) of the appliance key string,
         // in the Rust we've implemented what we think is the intended behaviour and reported the bug to DESNZ
-        .sorted_by(|_, v1, _, v2| v1.total_cmp(v2))
-        .rev()
+        .sorted_by(|_, v1, _, v2| v1.total_cmp(v2).reverse())
         .enumerate()
     {
         input.set_priority_for_gains_appliance(priority as isize, &appliance.0)?;
