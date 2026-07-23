@@ -252,8 +252,8 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
 fn edit_party_walls(input: &mut InputForProcessing) -> anyhow::Result<()> {
     for building_element in input.all_party_wall_building_elements_mut()? {
         building_element.insert("party_wall_cavity_type".into(), "filled_sealed".into());
-        building_element.remove("party_wall_lining_type");
-        building_element.remove("thermal_resistance_cavity");
+        building_element.shift_remove("party_wall_lining_type");
+        building_element.shift_remove("thermal_resistance_cavity");
     }
 
     Ok(())
@@ -961,8 +961,8 @@ fn edit_bath_shower_other(input: &mut InputForProcessing) -> anyhow::Result<()> 
                 .and_then(|t| t.as_str())
                 .is_some_and(|t| t == "InstantElecShower")
             {
-                shower.remove("rated_power");
-                shower.remove("EnergySupply");
+                shower.shift_remove("rated_power");
+                shower.shift_remove("EnergySupply");
                 shower.insert("type".into(), "MixerShower".into());
             }
 
