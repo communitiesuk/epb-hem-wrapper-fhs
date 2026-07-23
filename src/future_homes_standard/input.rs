@@ -87,7 +87,7 @@ impl InputForProcessing {
     }
 
     fn remove_root_key(&mut self, root_key: &str) -> JsonAccessResult<&mut Self> {
-        self.root_mut()?.shift_remove(root_key);
+        self.root_mut()?.remove(root_key);
 
         Ok(self)
     }
@@ -1070,7 +1070,11 @@ impl InputForProcessing {
             .and_then(|flowrate| flowrate.as_f64()))
     }
 
-    pub(crate) fn flowrate(&self, event_type: &str, event_name: &str) -> JsonAccessResult<Option<f64>> {
+    pub(crate) fn flowrate(
+        &self,
+        event_type: &str,
+        event_name: &str,
+    ) -> JsonAccessResult<Option<f64>> {
         let flowrate = self
             .hot_water_demand()?
             .get(event_type)
@@ -1359,7 +1363,7 @@ impl InputForProcessing {
             .values_mut()
             .filter_map(|value| value.as_object_mut())
             .for_each(|energy_supply| {
-                energy_supply.shift_remove("diverter");
+                energy_supply.remove("diverter");
             });
         Ok(self)
     }
@@ -1443,7 +1447,7 @@ impl InputForProcessing {
             .values_mut()
             .flat_map(|v| v.as_object_mut())
         {
-            energy_supply.shift_remove("ElectricBattery");
+            energy_supply.remove("ElectricBattery");
         }
         Ok(self)
     }
@@ -1694,7 +1698,7 @@ impl InputForProcessing {
         // we use .shift_remove instead of remove here
         // to preserve the relative order of the appliances
         self.root_object_entry_mut("Appliances")?
-            .shift_remove(appliance_key);
+            .remove(appliance_key);
 
         Ok(self)
     }
@@ -2316,7 +2320,7 @@ impl UValueEditableBuildingElement for UValueEditableBuildingElementJsonValue<'_
     }
 
     fn remove_thermal_resistance_construction(&mut self) {
-        self.0.shift_remove("thermal_resistance_construction");
+        self.0.remove("thermal_resistance_construction");
     }
 }
 
