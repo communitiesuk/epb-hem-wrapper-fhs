@@ -1100,7 +1100,6 @@ mod tests {
 
     // test_raises_if_neither_background_nor_iMEV_ventilation_sufficient
     #[test]
-    #[ignore = "not yet implemented"]
     fn test_raises_if_neither_background_nor_imev_ventilation_sufficient() {
         // Given a dwelling that neither has enough background vents nor
         // intermittent mechanical vents
@@ -1112,22 +1111,23 @@ mod tests {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,  # insufficient flow rate
+                    "design_outdoor_air_flow_rate": 10
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,
+                    "design_outdoor_air_flow_rate": 10
                 },
                 "mechvent3": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,
-                },
-            },
+                    "design_outdoor_air_flow_rate": 10
+                }
+            }
         }"#;
+        // mechvent1 - insufficient flow rate
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
@@ -1145,7 +1145,6 @@ mod tests {
 
     // test_raises_if_insufficient_number_of_iMEV
     #[test]
-    #[ignore = "not yet implemented"]
     fn test_raises_if_insufficient_number_of_imev() {
         // Given a dwelling with sufficient background vents but insufficient number of iMEV
         let json = r#"{
@@ -1155,51 +1154,51 @@ mod tests {
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 180,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent2": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent3": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent4": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent5": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
-                },
+                    "pitch": 60
+                }
             },
             "MechanicalVentilation": {
                 "mechvent1": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 600,
+                    "design_outdoor_air_flow_rate": 600
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 600,
-                },
-            },
+                    "design_outdoor_air_flow_rate": 600
+                }
+            }
         }"#;
 
         let ventilation = serde_json::from_str(json).unwrap();
