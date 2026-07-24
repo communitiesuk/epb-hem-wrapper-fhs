@@ -1028,7 +1028,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented"]
     fn test_raises_if_lacking_a_large_enough_kitchen_external_vent() {
         // Given a dwelling with sufficient iMEV vents and background vents
         // But no individual fan of sufficient size for a kitchen with ventilation to the
@@ -1041,50 +1040,50 @@ mod tests {
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 180,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent2": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent3": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent4": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
-                },
+                    "pitch": 60
+                }
             },
             "MechanicalVentilation": {
                 "mechvent1": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 107,
+                    "design_outdoor_air_flow_rate": 107
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 107,
+                    "design_outdoor_air_flow_rate": 107
                 },
                 "mechvent3": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 107,
-                },
-            },
+                    "design_outdoor_air_flow_rate": 107
+                }
+            }
         }"#;
 
         let ventilation = serde_json::from_str(json).unwrap();
