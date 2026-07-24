@@ -920,7 +920,7 @@ mod tests {
             }
         }"#;
         // mechvent 1 -- insufficient flow rate
-        
+
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);

@@ -1070,7 +1070,11 @@ impl InputForProcessing {
             .and_then(|flowrate| flowrate.as_f64()))
     }
 
-    pub(crate) fn flowrate(&self, event_type: &str, event_name: &str) -> JsonAccessResult<Option<f64>> {
+    pub(crate) fn flowrate(
+        &self,
+        event_type: &str,
+        event_name: &str,
+    ) -> JsonAccessResult<Option<f64>> {
         let flowrate = self
             .hot_water_demand()?
             .get(event_type)

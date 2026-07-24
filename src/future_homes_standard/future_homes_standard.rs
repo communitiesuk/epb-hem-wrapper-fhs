@@ -2487,7 +2487,7 @@ fn create_appliance_gains(
             }))?;
         }
     }
-    
+
     // Assign priority to those with a kWhcycle value, in reverse order
     for (priority, appliance) in appliance_kwhcycle
         // the Python behaviour differs here as it sorts by index 1 (2nd letter) of the appliance key string,
@@ -3172,8 +3172,7 @@ pub(super) fn create_hot_water_use_pattern(
         });
         if event.event_type.is_bath_type() {
             if let Some(json) = event_json.as_object_mut() {
-                if let Some(flowrate) = input
-                    .flowrate(&drawoff.event_type, &drawoff.name)? {
+                if let Some(flowrate) = input.flowrate(&drawoff.event_type, &drawoff.name)? {
                     let volume = duration * flowrate;
                     json.insert("volume".into(), json!(volume));
                 }
