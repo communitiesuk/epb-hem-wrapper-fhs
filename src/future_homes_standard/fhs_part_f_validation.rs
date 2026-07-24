@@ -938,7 +938,6 @@ mod tests {
 
     // test_raises_if_iMEV_sufficient_but_lacking_a_large_enough_kitchen_non_external_vent
     #[test]
-    #[ignore = "not yet implemented"]
     fn test_raises_if_imev_sufficient_but_lacking_a_large_enough_kitchen_non_external_vent() {
         // Given a dwelling with sufficient iMEV vents and background vents
         // But no individual fan of sufficient size for a kitchen without ventilation to the
@@ -951,74 +950,74 @@ mod tests {
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 180,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent2": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent3": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent4": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent5": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
-                },
+                    "pitch": 60
+                }
             },
             "MechanicalVentilation": {
                 "mechvent1": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 215,
+                    "design_outdoor_air_flow_rate": 215
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 215,
+                    "design_outdoor_air_flow_rate": 215
                 },
                 "mechvent3": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 215,
+                    "design_outdoor_air_flow_rate": 215
                 },
                 "mechvent4": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 215,
+                    "design_outdoor_air_flow_rate": 215
                 },
                 "mechvent5": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 215,
-                },
-            },
+                    "design_outdoor_air_flow_rate": 215
+                }
+            }
         }"#;
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, false);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
