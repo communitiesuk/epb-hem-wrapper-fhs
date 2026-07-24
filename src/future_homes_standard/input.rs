@@ -577,12 +577,10 @@ impl InputForProcessing {
         &mut self,
         efficacy: f64,
     ) -> JsonAccessResult<&Self> {
-        for lighting in self
-            .zone_node_mut()?
-            .values_mut()
-            .filter_map(|zone| zone.get_mut("Lighting").and_then(|l| l.as_object_mut()))
-        {
-            lighting.insert("efficacy".into(), efficacy.into());
+        for bulb in self.all_bulbs_mut()? {
+            bulb.as_object_mut()
+                .ok_or_else(|| json_error("Bulb was not an object"))?
+                .insert("efficacy".into(), efficacy.into());
         }
 
         Ok(self)
@@ -733,8 +731,7 @@ impl InputForProcessing {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
+    pub(crate) fn remove_custom_energy_supplies(&mut self) -> JsonAccessResult<()> {
         self.root_object_mut("EnergySupply")?
             .retain(|_, energy_supply| match energy_supply.get("fuel") {
                 Some(fuel) if fuel.is_string() => fuel.as_str().unwrap() != "custom",
@@ -963,7 +960,7 @@ impl InputForProcessing {
     }
 
     pub fn reset_water_heating_events(&mut self) -> JsonAccessResult<&mut Self> {
-        self.set_on_root_key("Events", json!({}))
+        self.set_on_root_key("Events", json!({"Bath": {}, "Shower": {}, "Other": {}}))
     }
 
     pub(crate) fn showers(&self) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
@@ -1071,6 +1068,21 @@ impl InputForProcessing {
             .and_then(|bath| bath.get(field))
             .and_then(|bath| bath.get("flowrate"))
             .and_then(|flowrate| flowrate.as_f64()))
+    }
+
+    pub(crate) fn flowrate(
+        &self,
+        event_type: &str,
+        event_name: &str,
+    ) -> JsonAccessResult<Option<f64>> {
+        let flowrate = self
+            .hot_water_demand()?
+            .get(event_type)
+            .and_then(|events| events.as_object())
+            .and_then(|events| events.get(event_name))
+            .and_then(|event| event.get("flowrate"))
+            .and_then(|flowrate| flowrate.as_f64());
+        Ok(flowrate)
     }
 
     pub(crate) fn other_water_uses(
@@ -2010,6 +2022,22 @@ impl InputForProcessing {
         self.remove_root_key("HeatSourceWet")
     }
 
+    pub(crate) fn cold_water_source_name(&self) -> anyhow::Result<String> {
+        let cold_water_sources = self
+            .root()?
+            .get("ColdWaterSource")
+            .and_then(|obj| obj.as_object())
+            .ok_or_else(|| anyhow!("No ColdWaterSource object present"))?;
+        if cold_water_sources.len() != 1 {
+            return Err(anyhow!(
+                "Expected exactly one ColdWaterSource object, but found {}",
+                cold_water_sources.len()
+            ));
+        }
+
+        Ok(cold_water_sources.keys().next().unwrap().to_owned())
+    }
+
     pub(crate) fn cold_water_source(&self) -> anyhow::Result<ColdWaterSourceInput> {
         Ok(serde_json::from_value(
             self.root()?
@@ -2324,6 +2352,7 @@ pub trait HotWaterSourceDetailsForProcessing {
     fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>>;
     fn is_storage_tank(&self) -> bool;
     fn is_combi_boiler(&self) -> bool;
+    fn is_heat_battery(&self) -> bool;
     fn is_hiu(&self) -> bool;
     fn is_point_of_use(&self) -> bool;
     fn is_smart_hot_water_tank(&self) -> bool;
@@ -2356,6 +2385,13 @@ impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
             .get("type")
             .and_then(|source_type| source_type.as_str())
             .is_some_and(|source_type| source_type == "CombiBoiler")
+    }
+
+    fn is_heat_battery(&self) -> bool {
+        self.0
+            .get("type")
+            .and_then(|source_type| source_type.as_str())
+            .is_some_and(|source_type| source_type == "HeatBattery")
     }
 
     fn is_hiu(&self) -> bool {

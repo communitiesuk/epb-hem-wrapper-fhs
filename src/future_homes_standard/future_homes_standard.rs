@@ -18,8 +18,8 @@ use home_energy_model::hem_core::external_conditions::{
 };
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EnergySupplyDetails, EnergySupplyType, FuelType, Input,
-    TransparentBuildingElement, TransparentBuildingElementJsonValue, WaterHeatingEventType,
+    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, Input, TransparentBuildingElement,
+    TransparentBuildingElementJsonValue, WaterHeatingEventType,
 };
 use home_energy_model::output_writer::OutputWriter;
 use indexmap::IndexMap;
@@ -457,13 +457,10 @@ pub(super) fn calc_final_rates(
         .iter()
         .map(|(key, value)| (key.clone(), value))
         // adding unmet demand to the energy supplies, rather than mutating the input as the Python does
-        .chain(
-            [(
-                "_unmet_demand".into(),
-                &EnergySupplyDetails::with_fuel(FuelType::UnmetDemand),
-            )]
-            .into_iter(),
-        )
+        .chain([(
+            "_unmet_demand".into(),
+            &EnergySupplyDetails::with_fuel(FuelType::UnmetDemand),
+        )])
     {
         let energy_supply_key = String::from(energy_supply_key);
         let supply_emis_result = emis_results.entry(energy_supply_key.clone()).or_default();
@@ -1124,7 +1121,7 @@ fn create_space_heat_distribution(input: &mut InputForProcessing) -> anyhow::Res
                         "insulation_thickness_mm": 0,
                         "external_diameter_mm": 15,
                         "internal_diameter_mm": 13,
-                        "length": (small_pipe_length * 100.0).round() / 100.0,
+                        "length": (small_pipe_length * 100.0).round_ties_even() / 100.0,
                         "location": "internal",
                         "pipe_contents": "water",
                         "surface_reflectivity": false,
@@ -1134,7 +1131,7 @@ fn create_space_heat_distribution(input: &mut InputForProcessing) -> anyhow::Res
                         "insulation_thickness_mm": 0,
                         "external_diameter_mm": 22,
                         "internal_diameter_mm": 20,
-                        "length": (large_pipe_length * 100.0).round() / 100.0,
+                        "length": (large_pipe_length * 100.0).round_ties_even() / 100.0,
                         "location": "internal",
                         "pipe_contents": "water",
                         "surface_reflectivity": false,
@@ -1637,7 +1634,11 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
                     )?;
                 }
             }
-        } else if hw_source.is_combi_boiler() || hw_source.is_point_of_use() || hw_source.is_hiu() {
+        } else if hw_source.is_combi_boiler()
+            || hw_source.is_heat_battery()
+            || hw_source.is_point_of_use()
+            || hw_source.is_hiu()
+        {
             // Instantaneous water heating systems must be available 24 hours a day
             // so do nothing
         } else {
@@ -2147,8 +2148,8 @@ fn create_lighting_gains(
                 .get("efficacy")
                 .and_then(|e| e.as_f64())
                 .ok_or(json_error(format!(
-                "Bulb efficacy for bulb with index '{i}' should have been expressed as a number"
-            )))?;
+                    "Bulb efficacy for bulb with index '{i}' should have been expressed as a number"
+                )))?;
             let bulb_power = bulb
                 .get("power")
                 .and_then(|e| e.as_f64())
@@ -2319,7 +2320,7 @@ fn create_appliance_gains(
             "Dishwasher",
             ApplianceUseProfile::complex(
                 number_of_occupants,
-                132,       // HES 2012 final report table 22
+                132.,      // HES 2012 final report table 22
                 Some(280), // EU standard
                 0.75,
                 0.3,
@@ -2332,8 +2333,8 @@ fn create_appliance_gains(
             "Clothes_washing",
             ApplianceUseProfile::clothes(
                 number_of_occupants,
-                174, // HES 2012 final report table 22
-                220, // EU standard
+                174., // HES 2012 final report table 22
+                220,  // EU standard
                 7.,
                 0.75,
                 0.3,
@@ -2346,8 +2347,8 @@ fn create_appliance_gains(
             "Clothes_drying",
             ApplianceUseProfile::clothes(
                 number_of_occupants,
-                145, // HES 2012 final report table 22
-                160, // EU standard
+                145., // HES 2012 final report table 22
+                160,  // EU standard
                 7.,
                 0.50,
                 0.7,
@@ -2363,7 +2364,7 @@ fn create_appliance_gains(
                 cookparams.get("Oven").unwrap().event_count, // analysis of HES - see folder
                 None,
                 0.50,
-                0.5,
+                1.,
                 flat_annual_propensities.cooking_electric_oven.clone(),
                 0.5,
                 0.7,
@@ -2430,7 +2431,7 @@ fn create_appliance_gains(
 
             let app = FhsAppliance::new(
                 map_appliance.util_unit,
-                use_data.use_metric as f64 * loadingfactor,
+                use_data.use_metric * loadingfactor,
                 kwhcycle,
                 use_data.duration,
                 map_appliance.standby,
@@ -2441,8 +2442,6 @@ fn create_appliance_gains(
             )?;
 
             let appliance_energy_supply = appliance.get("Energysupply").and_then(|e| e.as_str());
-
-            let load_shifting = appliance.get("loadshifting").and_then(|v| v.as_object());
 
             input.set_gains_for_field(String::from(&appliance_key), json!({
                 "EnergySupply": if ["Hobs", "Oven"].contains(&appliance_key.as_str()) {
@@ -2456,7 +2455,6 @@ fn create_appliance_gains(
                 "gains_fraction": app.gains_frac,
                 "Events": app.event_list,
                 "Standby": app.standby_w,
-                "loadshifting": load_shifting
             }))?;
 
             appliance_kwhcycle.insert(appliance_key.into(), kwhcycle);
@@ -2494,8 +2492,7 @@ fn create_appliance_gains(
     for (priority, appliance) in appliance_kwhcycle
         // the Python behaviour differs here as it sorts by index 1 (2nd letter) of the appliance key string,
         // in the Rust we've implemented what we think is the intended behaviour and reported the bug to DESNZ
-        .sorted_by(|_, v1, _, v2| v1.total_cmp(v2))
-        .rev()
+        .sorted_by(|_, v1, _, v2| v1.total_cmp(v2).reverse())
         .enumerate()
     {
         input.set_priority_for_gains_appliance(priority as isize, &appliance.0)?;
@@ -2527,7 +2524,7 @@ impl ApplianceUseProfile {
     #[allow(clippy::too_many_arguments)]
     fn complex(
         util_unit: f64,
-        use_metric: usize,
+        use_metric: f64,
         standard_use: Option<usize>,
         standby: f64,
         gains_frac: f64,
@@ -2553,7 +2550,7 @@ impl ApplianceUseProfile {
     #[allow(clippy::too_many_arguments)]
     fn clothes(
         util_unit: f64,
-        use_metric: usize,
+        use_metric: f64,
         standard_use: usize,
         standard_load_kg: f64,
         standby: f64,
@@ -2581,7 +2578,7 @@ impl ApplianceUseProfile {
 #[derive(Clone, Copy, Debug)]
 struct ApplianceUseData {
     // maps to "use" field in upstream, though 'use' is a keywork in Rust so calling this "use_metric"
-    use_metric: usize,
+    use_metric: f64,
     clothes_use_data: Option<ClothesUseData>,
     _standard_use: Option<usize>,
     duration: f64,
@@ -2597,7 +2594,7 @@ struct ApplianceCookingDemand {
     _mean_annual_events: f64,
     mean_event_demand: f64,
     fuel: Option<String>,
-    event_count: usize,
+    event_count: f64,
 }
 
 fn cooking_demand(
@@ -2631,7 +2628,7 @@ fn cooking_demand(
     };
 
     let microwave_fuel = match input.appliances_contain_key("Microwave") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let microwave = ApplianceCookingDemand {
@@ -2643,7 +2640,7 @@ fn cooking_demand(
     };
 
     let kettle_fuel = match input.appliances_contain_key("Kettle") {
-        true => Some(EnergySupplyType::Electricity.into()),
+        true => Some(FuelType::Electricity.into()),
         false => None,
     };
     let kettle = ApplianceCookingDemand {
@@ -2693,7 +2690,7 @@ fn cooking_demand(
         let demand_prop = cooking_demand.mean_annual_demand / (elec_total + gas_total);
         let annual_kwh = demand_prop * annual_cooking_elec_kwh;
         let events = annual_kwh / cooking_demand.mean_event_demand;
-        cooking_demand.event_count = events as usize;
+        cooking_demand.event_count = events;
     }
 
     Ok(cook_params)
@@ -2895,7 +2892,7 @@ fn appliance_kwh_cycle_loading_factor(
                 "Appliance '{appliance_key}' not found in map of known appliances.",
             )
         })?
-        .use_data.and_then(|use_data| use_data.clothes_use_data).map(|clothes_use_data| clothes_use_data.standard_load_kg).ok_or_else(|| {
+            .use_data.and_then(|use_data| use_data.clothes_use_data).map(|clothes_use_data| clothes_use_data.standard_load_kg).ok_or_else(|| {
             anyhow!(
                 "Appliance '{appliance_key}' has no standard_load_kg value, cannot calculate loading factor.",
             )
@@ -3162,30 +3159,26 @@ pub(super) fn create_hot_water_use_pattern(
                 });
         }
 
-        input.add_water_heating_event(
-            &drawoff.event_type,
-            &drawoff.name,
-            json!({
-                "start": event_start,
-                "duration": Some(duration),
-                "volume": if event.event_type.is_bath_type() {
-                    // if the end user the event is being assigned to has a defined flowrate
-                    // we are able to supply a volume
-                    input
-                        .flowrate_for_bath_field(&drawoff.name)?
-                        .map(|flowrate| duration * flowrate)
-                } else {
-                    None
-                },
-                "temperature": if event.event_type.is_shower_type() {
-                    event_temperature_showers
-                } else if event.event_type.is_bath_type() {
-                    event_temperature_bath
-                } else {
-                    event_temperature_others
-                },
-            }),
-        )?;
+        let mut event_json = json!({
+            "start": event_start,
+            "duration": Some(duration),
+            "temperature": if event.event_type.is_shower_type() {
+                event_temperature_showers
+            } else if event.event_type.is_bath_type() {
+                event_temperature_bath
+            } else {
+                event_temperature_others
+            },
+        });
+        if event.event_type.is_bath_type() {
+            if let Some(json) = event_json.as_object_mut() {
+                if let Some(flowrate) = input.flowrate(&drawoff.event_type, &drawoff.name)? {
+                    let volume = duration * flowrate;
+                    json.insert("volume".into(), json!(volume));
+                }
+            }
+        };
+        input.add_water_heating_event(&drawoff.event_type, &drawoff.name, event_json)?;
     }
 
     Ok(())
@@ -3573,8 +3566,8 @@ pub(super) fn create_window_opening_schedule(input: &mut InputForProcessing) -> 
 
 /// Set min and max vent opening thresholds
 fn create_vent_opening_schedule(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    let vent_adjust_min_ach = 1.9;
-    let vent_adjust_max_ach = 2.;
+    let vent_adjust_min_ach = 10.;
+    let vent_adjust_max_ach = 10.;
 
     input.add_control(
         "_vent_adjust_min_ach",
@@ -6349,7 +6342,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),
@@ -6391,7 +6384,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.0,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),
@@ -6434,7 +6427,7 @@ mod tests {
                 ApplianceUseProfile {
                     util_unit: 0.0,
                     use_data: Some(ApplianceUseData {
-                        use_metric: 0,
+                        use_metric: 0.0,
                         clothes_use_data: Some(ClothesUseData {
                             standard_load_kg: 6.0,
                         }),

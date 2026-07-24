@@ -1,8 +1,11 @@
 [package]
 name = "home-energy-model-wrapper-fhs"
-version = "0.1.0"
+version = "1.0.0-alpha-7"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
+resolver = "3"
+license-file = "LICENSE.md"
+default-run = "future-homes-standard"
 
 [dependencies]
 anyhow = "1.0.100"
@@ -13,8 +16,8 @@ csv = "1.4.0"
 #home-energy-model = { path = "../epb-home-energy-model", features = ["clap"] }
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "production", features = ["clap"] }
 indexmap = { version = "2.12.1", features = ["serde"] }
-itertools = "0.14.0"
-jsonschema = "0.46.5"
+itertools = "0.15.0"
+jsonschema = "0.47.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
 partial_application = "0.2.1"
 rand = "0.10.1"
@@ -24,7 +27,7 @@ rand_pcg = "0.10.2"
 rayon = "1.11.0"
 rstest = "0.26.1"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
-serde_json = { version = "1.0.145", features = ["preserve_order"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 serde_valid = "2.0.0"
 smartstring = "1.0.1"
 strum = "0.28.0"

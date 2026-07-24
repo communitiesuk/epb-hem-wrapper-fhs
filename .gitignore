@@ -3,10 +3,13 @@
 #jetbraaaaains IDEs
 .idea
 
-#results files
-/**/*__results/*
+# Ignore calculation results in examples folder
+examples/input/future_homes_standard/*__results/*
 
-#weather file in case compilation using this resource is needed
+# Ignore generated files used for e2e test comparison
+tests/e2e/expected_generated_results
+
+# weather file in case compilation using this resource is needed
 src/weather.epw
 
 # MacOS generated file

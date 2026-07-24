@@ -21,7 +21,6 @@ use anyhow::{anyhow, bail};
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
-use home_energy_model::core::heating_systems::storage_tank::HotWaterStorageTank;
 use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
 use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
 use home_energy_model::core::space_heat_demand::building_element::{
@@ -35,8 +34,8 @@ use home_energy_model::core::water_heat_demand::cold_water_source::ColdWaterSour
 use home_energy_model::core::water_heat_demand::dhw_demand::DomesticHotWaterDemand;
 use home_energy_model::core::water_heat_demand::dhw_demand::HotWaterDemandResult;
 use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
-use home_energy_model::corpus::HotWaterSourceBehaviour;
 use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
+use home_energy_model::corpus::{HotWaterSource, HotWaterSourceBehaviour};
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
@@ -95,16 +94,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     let heat_network_type = check_heatnetwork_status(input)?;
 
     // Determine cold water source
-    let cold_water_source = input.cold_water_source()?;
-    if cold_water_source.len() != 1 {
-        bail!("The FHS Notional wrapper expects exactly one cold water type to be set.");
-    }
-
-    let cold_water_source = {
-        let first_cold_water_source = cold_water_source.first();
-        let (cold_water_source, _) = first_cold_water_source.as_ref().unwrap();
-        cold_water_source.to_owned().to_owned()
-    };
+    let cold_water_source = input.cold_water_source_name()?;
 
     // Determine the TFA
     let total_floor_area = calc_tfa(input)?;
@@ -178,12 +168,7 @@ fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option
 /// efficacy = 120 lm/W
 fn edit_lighting_efficacy(input: &mut InputForProcessing) -> anyhow::Result<()> {
     let notional_lighting_efficacy = 120.0;
-
-    for bulb in input.all_bulbs_mut()? {
-        bulb.as_object_mut()
-            .ok_or_else(|| json_error("Bulb was not an object"))?
-            .insert("efficacy".into(), notional_lighting_efficacy.into());
-    }
+    input.set_lighting_efficacy_for_all_zones(notional_lighting_efficacy)?;
 
     Ok(())
 }
@@ -739,6 +724,8 @@ fn edit_add_heatnetwork_heating(
         "is_export_capable": false,
     });
 
+    // remove any other custom energy supplies and add the new notional supply
+    input.remove_custom_energy_supplies()?;
     input.add_energy_supply_for_key(NOTIONAL_HEAT_NETWORK_NAME, heat_network_fuel_data)?;
 
     Ok(custom_energy_supply_factors)
@@ -1129,8 +1116,8 @@ fn calc_daily_hw_demand(
     let number_of_occupants = calc_n_occupants(total_floor_area, nbeds)?;
     create_hot_water_use_pattern(
         input,
-        number_of_occupants,
         total_floor_area,
+        number_of_occupants,
         &cold_water_feed_temps,
     )?;
     let sim_timestep = simtime.step;
@@ -1165,8 +1152,10 @@ fn calc_daily_hw_demand(
     }
 
     // Mock hot water source which returns the same temperature at every timestep
-    let mock_hw_source: IndexMap<_, _> =
-        IndexMap::from_iter([("hw cylinder".into(), MockHotWaterSource)]);
+    let mock_hw_source: IndexMap<_, _> = IndexMap::from_iter([(
+        "hw cylinder".into(),
+        HotWaterSource::Fake(Arc::new(MockHotWaterSource)),
+    )]);
     let energy_supply: Arc<RwLock<EnergySupply>> = {
         let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
         Arc::new(RwLock::new(EnergySupplyBuilder::new(
@@ -1175,7 +1164,7 @@ fn calc_daily_hw_demand(
         ).with_export_capable(electricity_supply.is_some_and(|map| map.get("is_export_capable").and_then(|v| v.as_bool()).unwrap_or(true))).build()))
     };
 
-    let dhw_demand = DomesticHotWaterDemand::<_, HotWaterStorageTank>::new(
+    let dhw_demand = DomesticHotWaterDemand::new(
         &input
             .showers()?
             .map(|showers| {
@@ -1374,7 +1363,9 @@ fn edit_space_heating_system(
         // Otherwise, notional heated with an air to water heat pump
         let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
 
-        if let Some(heat_network_type) = heat_network_type {
+        if let Some(heat_network_type @ (HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)) =
+            heat_network_type
+        {
             let custom_energy_supply_factors = edit_add_heatnetwork_heating(
                 input,
                 cold_water_source,
@@ -2447,7 +2438,7 @@ mod tests {
             3.8158857819823955,
             1.8643761342051466,
             1.456499804780102,
-            7.426850861522029,
+            7.921422207721906,
             2.9833503486722512,
             4.217424343066319,
             8.086072907696455,
@@ -2463,11 +2454,11 @@ mod tests {
             2.9116693757992294,
             6.246398935042146,
             1.6696701053184573,
-            13.851788339322859,
+            14.368589722493402,
             3.492087111231953,
             7.271874351886643,
             3.4529488454587005,
-            12.374228697052182,
+            12.843132653499712,
             4.392672154556575,
             1.6028771659496917,
             2.5058963927074895,
@@ -2504,44 +2495,44 @@ mod tests {
             2.2197290514730836,
             6.818451857176455,
             5.796189225222955,
-            7.768257372957939,
+            8.228509338739267,
             1.9635622695280748,
             4.990639078067053,
-            11.326110200617702,
+            11.805853818941651,
             7.793122367331328,
             4.50364508936643,
             8.379833734745256,
             3.308002750963755,
             5.125036944678628,
-            5.130855988470622,
+            5.620800284861811,
             6.976241946425853,
             9.280525199389762,
             6.879123493336726,
             3.7542978536142275,
             1.0782890932651108,
-            6.663709522738787,
+            7.152034085819479,
             5.7746999922120015,
-            3.9743519683699224,
+            3.974351968369922,
             9.8172995461514,
             2.9545593496596627,
             5.318321839987381,
             3.3213819919472374,
             7.238785487773112,
             0.975438526348773,
-            6.4976602476390495,
-            3.7068430878370746,
+            6.899913075148332,
+            4.093954060788461,
             3.6626428865004845,
             3.448702673630278,
             2.836638476910602,
             4.504302459687092,
-            4.594078645382666,
+            5.004884482120907,
             1.280400852785038,
             9.635660153417774,
             2.3614201923456397,
-            5.013620232473153,
-            5.308539972801421,
+            5.406887545426903,
+            5.712984325530015,
             3.238066845393417,
-            6.598303437213936,
+            7.031250167915163,
             2.659608088311913,
             3.4249044366870596,
             1.7403514603158758,
@@ -2549,7 +2540,7 @@ mod tests {
             4.369113075109336,
             3.8042018874949823,
             4.28862554376783,
-            8.382412615836817,
+            9.206189309825808,
             3.6774875962929796,
             9.929521288784244,
             5.062516904173654,
@@ -2570,19 +2561,19 @@ mod tests {
             3.6876604931200268,
             2.454316031896153,
             6.607387606094413,
-            9.661565220506915,
+            10.789087141425144,
             4.386150963483148,
             8.17494299730526,
             6.3198003788420865,
             11.467482765051136,
-            4.4065433247605155,
-            4.988557708764494,
+            4.791874341304538,
+            5.37562364891179,
             9.059519529597852,
             3.3755152852188606,
-            7.698743531592137,
-            6.618981677978387,
+            8.068627894939253,
+            6.9919329467944324,
             4.175477039072181,
-            6.806814349660336,
+            7.184856058726582,
             7.431397132641212,
             3.2631899144907384,
             5.0699911933702815,
@@ -2592,9 +2583,9 @@ mod tests {
             3.2938506150971927,
             1.8260826000310022,
             2.7299288206743455,
-            6.385202523388037,
+            6.721088325137882,
             7.33598893338676,
-            6.840098800550557,
+            7.165401016525752,
             2.4629260392399206,
             2.822974223355313,
             4.03397696765668,
@@ -2604,8 +2595,8 @@ mod tests {
             3.458555531243357,
             4.197013547018917,
             4.16975870859787,
-            5.562332837781567,
-            5.725468422378183,
+            5.92569406100607,
+            6.0765825253567565,
             6.185468819167943,
             1.6837093971173656,
             4.104228396783036,
@@ -2625,10 +2616,10 @@ mod tests {
             3.9693834315834158,
             2.918849367120602,
             1.7223877188894419,
-            4.2052444383809435,
+            4.541829474747222,
             1.7027379387189652,
             1.7409058342821224,
-            9.73885109912091,
+            10.04221850422808,
             3.8320864374919834,
             2.8551701405557335,
             3.3985085530029173,
@@ -2638,12 +2629,12 @@ mod tests {
             4.3394904975655955,
             1.8618334598784554,
             1.187119680626635,
-            3.3999014822138482,
+            3.717930561076878,
             2.4231306986854895,
             4.0855931662787555,
             1.1110467622212452,
             3.0836645479450717,
-            5.041340866799629,
+            5.354812877175934,
             2.8584761392149347,
             3.7750089454569724,
             3.98317291735132,
@@ -2658,19 +2649,19 @@ mod tests {
             4.710760448075293,
             2.376717698170292,
             4.942802828102577,
-            4.892581657820345,
+            5.240223741773165,
             2.6791926869893503,
             2.4743683782040664,
             1.7379083377994877,
             5.778130144567433,
-            7.089071071443536,
+            7.40796487479293,
             2.0388630666174756,
             3.7782560363505686,
             2.0730543304536373,
             2.1948457120426,
             3.361267582386128,
             4.2629464057701245,
-            5.958719480369529,
+            6.293837552809108,
             3.843708413984395,
             3.4815545720306273,
             8.026655051714712,
@@ -2682,35 +2673,35 @@ mod tests {
             1.5329362087999223,
             6.88186935703012,
             2.2867563460747355,
-            3.5695696056108077,
+            3.9226812837455,
             3.930672254899223,
             3.0399623738750345,
             3.209364172407534,
             3.038123333541644,
             1.7884030890335403,
             6.617270158127451,
-            4.7892852624442686,
+            5.154441339935476,
             7.98246376739204,
-            8.787993619430916,
-            5.4370125075956715,
+            9.132605777601148,
+            5.78720448126317,
             5.631570198072755,
             3.7085584331780943,
             1.5882618579464969,
             6.8903268532947735,
             7.892748258525165,
-            4.307146684097607,
-            5.325141240693638,
+            4.658811534172066,
+            5.661286908072142,
             5.615893606452018,
             3.382501768861289,
             2.341364633783292,
-            5.952009533729282,
+            6.297894572250065,
             3.9511068446824225,
             1.878750671506351,
             8.770931877395236,
-            7.139918473168391,
+            7.543678969598928,
             2.968787917613602,
             6.133155615519703,
-            4.665146442297377,
+            5.0667191190575,
             3.5212090189137006,
             4.272327030053521,
             1.8181271956714553,
@@ -2730,10 +2721,10 @@ mod tests {
             2.4467917467578144,
             5.105007513097308,
             8.408655228616226,
-            4.452315949253354,
+            4.85494282282643,
             1.6886214201468253,
             3.2675270705264667,
-            5.874045148360757,
+            6.249263539064306,
             3.0273104135176405,
             3.7648099268073,
             8.321357616729175,
@@ -2744,7 +2735,7 @@ mod tests {
             8.54513049934888,
             5.606712381312642,
             9.985899928272206,
-            7.7550045545739374,
+            8.201676930097637,
             2.5269986968302973,
             8.642277130729743,
             3.817375807234058,
@@ -2754,7 +2745,7 @@ mod tests {
             4.349003461844681,
             6.000704722101477,
             4.543551953871819,
-            5.833324443935714,
+            6.260169356155205,
             3.3688153740004076,
             1.1431546305228522,
             5.498587072359388,
@@ -2765,17 +2756,17 @@ mod tests {
             7.691852031027734,
             7.22790045250162,
             4.393578726180066,
-            5.243417451059749,
+            5.702737165028231,
             8.13349302370389,
             5.2583811234088245,
             3.546269300522664,
             3.506822851905734,
             8.301287815488369,
             4.300791041878211,
-            6.6587500730057325,
+            7.151548010295572,
             3.9709462505155106,
             3.362464817847712,
-            11.37915331454732,
+            12.335701288090819,
             8.068138598813995,
             7.916480638467263,
             5.12202392506206,
@@ -2785,18 +2776,18 @@ mod tests {
             9.953524458486692,
             4.472235413408162,
             5.318791897610933,
-            5.403579710683875,
+            5.917812338920986,
             10.195682092743064,
-            14.299048571158615,
+            14.794140247502456,
             12.38411860673397,
             2.1620234107802583,
-            8.521664591626005,
+            8.990615220538935,
             12.330847080589812,
             3.136419959075777,
             5.542427971288237,
-            4.941578224663928,
+            5.424116070862762,
             4.725295110261525,
-            5.165968526411404,
+            5.636891520110772,
             6.110105031454435,
         ];
 
