@@ -880,7 +880,6 @@ mod tests {
 
     // test_raises_if_sufficient_background_vents_but_insufficient_iMEV
     #[test]
-    #[ignore = "not yet implemented"]
     fn test_raises_if_sufficient_background_vents_but_insufficient_imev() {
         let json = r#"{
             "Vents": {
@@ -889,38 +888,39 @@ mod tests {
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 180,
-                    "pitch": 60,
+                    "pitch": 60
                 },
                 "vent2": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 300,
                     "pressure_difference_ref": 20,
                     "orientation360": 0,
-                    "pitch": 60,
-                },
+                    "pitch": 60
+                }
             },
             "MechanicalVentilation": {
                 "mechvent1": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,  # insufficient flow rate
+                    "design_outdoor_air_flow_rate": 10
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,
+                    "design_outdoor_air_flow_rate": 10
                 },
                 "mechvent3": {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10,
-                },
-            },
+                    "design_outdoor_air_flow_rate": 1
+                }
+            }
         }"#;
-
+        // mechvent 1 -- insufficient flow rate
+        
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
