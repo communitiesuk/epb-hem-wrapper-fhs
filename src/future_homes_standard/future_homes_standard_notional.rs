@@ -350,42 +350,33 @@ fn calculate_area_diff_and_adjust_glazing_area(
 }
 
 /// Find all walls/roofs with same orientation and pitch as this window/rooflight.
-fn find_walls_roofs_with_same_orientation_and_pitch(
-    wall_roofs: &[&Value],
+fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
+    wall_roofs: &'a IndexMap<String, Value>,
     window_rooflight_element: &Value,
-) -> anyhow::Result<Vec<usize>> {
+) -> anyhow::Result<IndexMap<&'a String, &'a Value>> {
     let window_rooflight_orientation = window_rooflight_element
         .get("orientation360")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Orientation field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("Orientation field not found or not a float"))?;
     let window_rooflight_pitch = window_rooflight_element
         .get("pitch")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Pitch field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let mut indices: Vec<usize> = Default::default();
+    let same_orientation: IndexMap<&String, &Value> = wall_roofs.iter().filter(|(_, v)| {
+        let orientation = v.get("orientation360").and_then(Value::as_f64);
+        let pitch = v.get("pitch").and_then(Value::as_f64);
 
-    for (i, el) in wall_roofs.iter().enumerate() {
-        if match el.get("type").and_then(Value::as_str).unwrap_or_default() {
-            "BuildingElementOpaque" => {
-                let orientation = el.get("orientation360").and_then(Value::as_f64);
-                let pitch = el.get("pitch").and_then(Value::as_f64);
-                Some(window_rooflight_orientation) == orientation
-                    && Some(window_rooflight_pitch) == pitch
-            }
-            _ => false,
-        } {
-            indices.push(i);
-        }
-    }
+        (orientation, pitch) == (Some(window_rooflight_orientation), Some(window_rooflight_pitch))
+    }).collect();
 
-    if indices.is_empty() {
+    if same_orientation.is_empty() {
         bail!(
             "There are no walls/roofs with the same orientation and pitch as the window/rooflight"
         );
     }
 
-    Ok(indices)
+    Ok(same_orientation)
 }
 
 /// Return the u-value for an upwards building element, e.g. rooflight, from the
@@ -510,31 +501,24 @@ fn edit_glazing_for_glazing_limit(
                 &building_element_reference,
             )?;
 
-            let same_orientation_indices = find_walls_roofs_with_same_orientation_and_pitch(
-                &walls_roofs.values().collect::<Vec<_>>(),
+            let same_orientation = find_walls_roofs_with_same_orientation_and_pitch(
+                &walls_roofs,
                 &window_rooflight_element,
             )?;
 
-            let wall_roof_area_total = same_orientation_indices
+            let wall_roof_area_total = same_orientation
                 .iter()
-                .filter_map(|i| {
-                    let building_element = walls_roofs.values().nth(*i).unwrap();
-                    building_element.get("area").and_then(Value::as_f64)
+                .filter_map(|(_, wall_roof)| {
+                    wall_roof.get("area").and_then(Value::as_f64)
                 })
                 .sum::<f64>();
 
-            for i in same_orientation_indices.iter() {
-                let wall_roof = walls_roofs.values().nth(*i).unwrap();
-                if let Some(area) = wall_roof.get("area").and_then(Value::as_f64) {
+            for (wall_roof_ref, wall_roof_val) in same_orientation {
+                if let Some(area) = wall_roof_val.get("area").and_then(Value::as_f64) {
                     let wall_roof_prop = area / wall_roof_area_total;
-
                     let new_area = area + area_diff * wall_roof_prop;
 
-                    input.set_numeric_field_for_building_element(
-                        &building_element_reference,
-                        "area",
-                        new_area,
-                    )?;
+                    input.set_numeric_field_for_building_element(wall_roof_ref, "area", new_area)?;
                 }
             }
         }
