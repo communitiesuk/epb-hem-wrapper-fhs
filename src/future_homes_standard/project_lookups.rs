@@ -66,7 +66,7 @@ fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>)
         source.contains("hw cylinder")
             || project
                 .hot_water_source()
-                .get("hw_cylinder")
+                .get("hw cylinder")
                 .is_some_and(|s| {
                     s.contains_heat_source(source) || s.contains_heat_source_wet_reference(source)
                 })
@@ -130,6 +130,10 @@ pub(crate) fn by_fuel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::future_homes_standard::future_homes_standard::{
+        final_preprocessing, initial_preprocessing,
+    };
+    use crate::future_homes_standard::input::InputForProcessing;
     use home_energy_model::input::ExternalConditionsInput;
     use home_energy_model::{load_weather_data, WeatherFileType};
     use rstest::*;
@@ -159,13 +163,12 @@ mod tests {
         let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
         project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
         project["ExternalConditions"]["shading_segments"] = shading_segments;
-        // TODO complete when functions are implemented during migration to 1.0.0a4
-        // initial_preprocessing(&mut project);
-        // final_preprocessing(&mut project);
 
-        let _input: Input = serde_json::from_value(project).unwrap();
+        let mut project = InputForProcessing { input: project };
+        initial_preprocessing(&mut project).unwrap();
+        final_preprocessing(&mut project).unwrap();
 
-        todo!()
+        serde_json::from_value(project.input).unwrap()
     }
 
     #[fixture]
@@ -200,26 +203,26 @@ mod tests {
                     "total_gross_import": 1100,
                     "total_gross_export": 0,
                 },
-                "delivered_energy": {
-                    "mains elec": {
-                        "mechvent1": 100,  // vent
-                        "mechvent3": 200,  // not a vent
-                        "lighting": 300,  // counts as lighting
-                        "something random": 400,  // not relevant for EER
-                        "hw cylinder": 500,  // counts as water heating
-                        "immersion": 600,  // counts as water heating
-                        "something_water_heating": 700,  // counts as water heating
-                    },
-                    "mains gas": {
-                        "main": 1000,  // heating system counts
-                        "Hobs": 100,  // not relevant for EER,
-                        "something_space_heating": 200,  // counts as space heating
-                        "auxiliary_pump_thing": 300,  // counts as a space heating system pump
-                    }
+            },
+            "delivered_energy": {
+                "mains elec": {
+                    "mechvent1": 100,  // vent
+                    "mechvent3": 200,  // not a vent
+                    "lighting": 300,  // counts as lighting
+                    "something random": 400,  // not relevant for EER
+                    "hw cylinder": 500,  // counts as water heating
+                    "immersion": 600,  // counts as water heating
+                    "something_water_heating": 700,  // counts as water heating
                 },
-                "hot_water_demand_daily_75th_percentile": {
-                    "hw cylinder": 1000,
+                "mains gas": {
+                    "main": 1000,  // heating system counts
+                    "Hobs": 100,  // not relevant for EER,
+                    "something_space_heating": 200,  // counts as space heating
+                    "auxiliary_pump_thing": 300,  // counts as a space heating system pump
                 }
+            },
+            "hot_water_demand_daily_75th_percentile": {
+                "hw cylinder": 1000,
             }
         }))
         .unwrap()
@@ -248,13 +251,12 @@ mod tests {
         let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
         project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
         project["ExternalConditions"]["shading_segments"] = shading_segments;
-        // TODO complete when functions are implemented during migration to 1.0.0a4
-        // initial_preprocessing(&mut project);
-        // final_preprocessing(&mut project);
 
-        let _input: Input = serde_json::from_value(project).unwrap();
+        let mut project = InputForProcessing { input: project };
+        initial_preprocessing(&mut project).unwrap();
+        final_preprocessing(&mut project).unwrap();
 
-        todo!()
+        serde_json::from_value(project.input).unwrap()
     }
 
     #[fixture]
@@ -342,9 +344,12 @@ mod tests {
         // initial_preprocessing(&mut project);
         // final_preprocessing(&mut project);
 
-        let _input: Input = serde_json::from_value(project).unwrap();
+        let mut project = InputForProcessing { input: project };
 
-        todo!()
+        initial_preprocessing(&mut project).expect("");
+        final_preprocessing(&mut project).expect("");
+
+        project.finalize().unwrap()
     }
 
     #[fixture]
@@ -374,7 +379,7 @@ mod tests {
                     "grid_to_consumption": 1100,
                     "grid_to_storage": 0,
                     "storage_to_consumption": 0,
-                    "storage_efficiency": null,
+                    "storage_efficiency": None::<f64>,
                     "net_import": 1100,
                     "total_gross_import": 1100,
                     "total_gross_export": 0,
@@ -402,7 +407,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "ignored until fixtures can be fully implemented"]
     fn test_without_custom_fuel(
         instant_elec_project: Input,
         instant_elec_output_summary: OutputSummary,
@@ -431,7 +435,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "ignored until fixtures can be fully implemented"]
     fn test_with_custom_fuel(
         heat_network_project: Input,
         heat_network_output_summary: OutputSummary,
@@ -450,7 +453,7 @@ mod tests {
                     standing_charge: 0.into(),
                 },
                 FuelOutput {
-                    fuel: FuelType::MainsGas,
+                    fuel: FuelType::Custom,
                     eer_energy: 1500.,
                     unit_price: None,
                     standing_charge: None,
@@ -460,7 +463,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "ignored until fixtures can be fully implemented"]
     fn test_electricity_and_gas(
         electricity_and_gas_project: Input,
         electricity_and_gas_output_summary: OutputSummary,
