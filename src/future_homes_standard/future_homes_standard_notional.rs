@@ -530,10 +530,11 @@ fn edit_glazing_for_glazing_limit(
                         new_area,
                     )?;
 
-                    if let Some(element) = walls_roofs.get_mut(&wall_roof_ref) {
-                        if let Some(area) = element.get_mut("area") {
-                            *area = Value::from(new_area);
-                        }
+                    if let Some(area) = walls_roofs
+                        .get_mut(&wall_roof_ref)
+                        .and_then(|el| el.get_mut("area"))
+                    {
+                        *area = Value::from(new_area);
                     }
                 }
             }
