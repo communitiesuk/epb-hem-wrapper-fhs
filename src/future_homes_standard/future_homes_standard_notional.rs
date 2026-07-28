@@ -363,12 +363,19 @@ fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
         .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let same_orientation: IndexMap<&String, &Value> = wall_roofs.iter().filter(|(_, v)| {
-        let orientation = v.get("orientation360").and_then(Value::as_f64);
-        let pitch = v.get("pitch").and_then(Value::as_f64);
+    let same_orientation: IndexMap<&String, &Value> = wall_roofs
+        .iter()
+        .filter(|(_, v)| {
+            let orientation = v.get("orientation360").and_then(Value::as_f64);
+            let pitch = v.get("pitch").and_then(Value::as_f64);
 
-        (orientation, pitch) == (Some(window_rooflight_orientation), Some(window_rooflight_pitch))
-    }).collect();
+            (orientation, pitch)
+                == (
+                    Some(window_rooflight_orientation),
+                    Some(window_rooflight_pitch),
+                )
+        })
+        .collect();
 
     if same_orientation.is_empty() {
         bail!(
@@ -508,9 +515,7 @@ fn edit_glazing_for_glazing_limit(
 
             let wall_roof_area_total = same_orientation
                 .iter()
-                .filter_map(|(_, wall_roof)| {
-                    wall_roof.get("area").and_then(Value::as_f64)
-                })
+                .filter_map(|(_, wall_roof)| wall_roof.get("area").and_then(Value::as_f64))
                 .sum::<f64>();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
@@ -518,7 +523,11 @@ fn edit_glazing_for_glazing_limit(
                     let wall_roof_prop = area / wall_roof_area_total;
                     let new_area = area + area_diff * wall_roof_prop;
 
-                    input.set_numeric_field_for_building_element(wall_roof_ref, "area", new_area)?;
+                    input.set_numeric_field_for_building_element(
+                        wall_roof_ref,
+                        "area",
+                        new_area,
+                    )?;
                 }
             }
         }
@@ -1672,7 +1681,7 @@ mod tests {
     fn is_fee() -> bool {
         false
     }
-    
+
     #[rstest]
     fn test_edit_lighting_efficacy(mut test_input: InputForProcessing) {
         // Given bulb efficacies not set to 120
@@ -2844,7 +2853,6 @@ mod tests {
             .unwrap()
             .contains_key("SpaceCoolSystem"));
     }
-
 
     // this test does not exist in Python HEM
     #[rstest]
