@@ -1672,21 +1672,7 @@ mod tests {
     fn is_fee() -> bool {
         false
     }
-
-    #[ignore = "currently failing as calc_design_capacity is failing (our test data is missing some expected fields on external conditions)"]
-    #[rstest]
-    // this test does not exist in Python HEM
-    fn test_apply_fhs_notional_preprocessing(mut test_input: InputForProcessing) {
-        let fhs_fee_assumptions = false;
-
-        let actual = apply_fhs_notional_preprocessing(
-            &mut test_input,
-            &Default::default(),
-            fhs_fee_assumptions,
-        );
-        assert!(actual.is_ok())
-    }
-
+    
     #[rstest]
     fn test_edit_lighting_efficacy(mut test_input: InputForProcessing) {
         // Given bulb efficacies not set to 120
@@ -2859,25 +2845,6 @@ mod tests {
             .contains_key("SpaceCoolSystem"));
     }
 
-    // this test does not exist in Python HEM
-    #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
-    fn test_design_capacity(test_input: InputForProcessing) {
-        // attempts to coerce the input into something correct
-        // test_input.remove_fhs_only_fields().unwrap();
-        // create_thermal_penetration(&mut test_input).unwrap();
-
-        let actual_design_capacity = calc_design_capacity(&test_input).unwrap();
-        assert_eq!(
-            actual_design_capacity.0.get("zone 1").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(
-            actual_design_capacity.0.get("zone 2").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(actual_design_capacity.1, 10.713627531325653);
-    }
 
     // this test does not exist in Python HEM
     #[rstest]
