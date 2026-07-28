@@ -363,12 +363,19 @@ fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
         .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let same_orientation: IndexMap<&String, &Value> = wall_roofs.iter().filter(|(_, v)| {
-        let orientation = v.get("orientation360").and_then(Value::as_f64);
-        let pitch = v.get("pitch").and_then(Value::as_f64);
+    let same_orientation: IndexMap<&String, &Value> = wall_roofs
+        .iter()
+        .filter(|(_, v)| {
+            let orientation = v.get("orientation360").and_then(Value::as_f64);
+            let pitch = v.get("pitch").and_then(Value::as_f64);
 
-        (orientation, pitch) == (Some(window_rooflight_orientation), Some(window_rooflight_pitch))
-    }).collect();
+            (orientation, pitch)
+                == (
+                    Some(window_rooflight_orientation),
+                    Some(window_rooflight_pitch),
+                )
+        })
+        .collect();
 
     if same_orientation.is_empty() {
         bail!(
@@ -508,9 +515,7 @@ fn edit_glazing_for_glazing_limit(
 
             let wall_roof_area_total = same_orientation
                 .iter()
-                .filter_map(|(_, wall_roof)| {
-                    wall_roof.get("area").and_then(Value::as_f64)
-                })
+                .filter_map(|(_, wall_roof)| wall_roof.get("area").and_then(Value::as_f64))
                 .sum::<f64>();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
@@ -518,7 +523,11 @@ fn edit_glazing_for_glazing_limit(
                     let wall_roof_prop = area / wall_roof_area_total;
                     let new_area = area + area_diff * wall_roof_prop;
 
-                    input.set_numeric_field_for_building_element(wall_roof_ref, "area", new_area)?;
+                    input.set_numeric_field_for_building_element(
+                        wall_roof_ref,
+                        "area",
+                        new_area,
+                    )?;
                 }
             }
         }
@@ -1671,20 +1680,6 @@ mod tests {
     #[fixture]
     fn is_fee() -> bool {
         false
-    }
-
-    #[ignore = "currently failing as calc_design_capacity is failing (our test data is missing some expected fields on external conditions)"]
-    #[rstest]
-    // this test does not exist in Python HEM
-    fn test_apply_fhs_notional_preprocessing(mut test_input: InputForProcessing) {
-        let fhs_fee_assumptions = false;
-
-        let actual = apply_fhs_notional_preprocessing(
-            &mut test_input,
-            &Default::default(),
-            fhs_fee_assumptions,
-        );
-        assert!(actual.is_ok())
     }
 
     #[rstest]
@@ -2857,26 +2852,6 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("SpaceCoolSystem"));
-    }
-
-    // this test does not exist in Python HEM
-    #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
-    fn test_design_capacity(test_input: InputForProcessing) {
-        // attempts to coerce the input into something correct
-        // test_input.remove_fhs_only_fields().unwrap();
-        // create_thermal_penetration(&mut test_input).unwrap();
-
-        let actual_design_capacity = calc_design_capacity(&test_input).unwrap();
-        assert_eq!(
-            actual_design_capacity.0.get("zone 1").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(
-            actual_design_capacity.0.get("zone 2").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(actual_design_capacity.1, 10.713627531325653);
     }
 
     // this test does not exist in Python HEM

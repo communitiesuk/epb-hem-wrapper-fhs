@@ -435,7 +435,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "ignored until fixtures can be fully implemented"]
     fn test_with_custom_fuel(
         heat_network_project: Input,
         heat_network_output_summary: OutputSummary,
@@ -454,7 +453,7 @@ mod tests {
                     standing_charge: 0.into(),
                 },
                 FuelOutput {
-                    fuel: FuelType::MainsGas,
+                    fuel: FuelType::Custom,
                     eer_energy: 1500.,
                     unit_price: None,
                     standing_charge: None,
