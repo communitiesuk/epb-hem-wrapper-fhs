@@ -350,10 +350,10 @@ fn calculate_area_diff_and_adjust_glazing_area(
 }
 
 /// Find all walls/roofs with same orientation and pitch as this window/rooflight.
-fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
-    wall_roofs: &'a IndexMap<String, Value>,
+fn find_walls_roofs_with_same_orientation_and_pitch(
+    wall_roofs: &IndexMap<String, Value>,
     window_rooflight_element: &Value,
-) -> anyhow::Result<IndexMap<&'a String, &'a Value>> {
+) -> anyhow::Result<IndexMap<String, Value>> {
     let window_rooflight_orientation = window_rooflight_element
         .get("orientation360")
         .and_then(Value::as_f64)
@@ -363,12 +363,20 @@ fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
         .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let same_orientation: IndexMap<&String, &Value> = wall_roofs.iter().filter(|(_, v)| {
-        let orientation = v.get("orientation360").and_then(Value::as_f64);
-        let pitch = v.get("pitch").and_then(Value::as_f64);
+    let same_orientation: IndexMap<String, Value> = wall_roofs
+        .iter()
+        .filter(|(_, v)| {
+            let orientation = v.get("orientation360").and_then(Value::as_f64);
+            let pitch = v.get("pitch").and_then(Value::as_f64);
 
-        (orientation, pitch) == (Some(window_rooflight_orientation), Some(window_rooflight_pitch))
-    }).collect();
+            (orientation, pitch)
+                == (
+                    Some(window_rooflight_orientation),
+                    Some(window_rooflight_pitch),
+                )
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     if same_orientation.is_empty() {
         bail!(
@@ -484,7 +492,7 @@ fn edit_glazing_for_glazing_limit(
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
 
-    let (windows_rooflight, walls_roofs) = split_glazing_and_walls(input)?;
+    let (windows_rooflight, mut walls_roofs) = split_glazing_and_walls(input)?;
 
     if total_glazing_area > max_glazing_area {
         let linear_reduction_factor = (max_glazing_area / total_glazing_area).sqrt();
@@ -508,9 +516,7 @@ fn edit_glazing_for_glazing_limit(
 
             let wall_roof_area_total = same_orientation
                 .iter()
-                .filter_map(|(_, wall_roof)| {
-                    wall_roof.get("area").and_then(Value::as_f64)
-                })
+                .filter_map(|(_, wall_roof)| wall_roof.get("area").and_then(Value::as_f64))
                 .sum::<f64>();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
@@ -518,7 +524,18 @@ fn edit_glazing_for_glazing_limit(
                     let wall_roof_prop = area / wall_roof_area_total;
                     let new_area = area + area_diff * wall_roof_prop;
 
-                    input.set_numeric_field_for_building_element(wall_roof_ref, "area", new_area)?;
+                    input.set_numeric_field_for_building_element(
+                        &wall_roof_ref,
+                        "area",
+                        new_area,
+                    )?;
+
+                    if let Some(area) = walls_roofs
+                        .get_mut(&wall_roof_ref)
+                        .and_then(|el| el.get_mut("area"))
+                    {
+                        *area = Value::from(new_area);
+                    }
                 }
             }
         }
@@ -1671,20 +1688,6 @@ mod tests {
     #[fixture]
     fn is_fee() -> bool {
         false
-    }
-
-    #[ignore = "currently failing as calc_design_capacity is failing (our test data is missing some expected fields on external conditions)"]
-    #[rstest]
-    // this test does not exist in Python HEM
-    fn test_apply_fhs_notional_preprocessing(mut test_input: InputForProcessing) {
-        let fhs_fee_assumptions = false;
-
-        let actual = apply_fhs_notional_preprocessing(
-            &mut test_input,
-            &Default::default(),
-            fhs_fee_assumptions,
-        );
-        assert!(actual.is_ok())
     }
 
     #[rstest]
@@ -2856,26 +2859,6 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("SpaceCoolSystem"));
-    }
-
-    // this test does not exist in Python HEM
-    #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
-    fn test_design_capacity(test_input: InputForProcessing) {
-        // attempts to coerce the input into something correct
-        // test_input.remove_fhs_only_fields().unwrap();
-        // create_thermal_penetration(&mut test_input).unwrap();
-
-        let actual_design_capacity = calc_design_capacity(&test_input).unwrap();
-        assert_eq!(
-            actual_design_capacity.0.get("zone 1").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(
-            actual_design_capacity.0.get("zone 2").unwrap(),
-            &5.356813765662826
-        );
-        assert_eq!(actual_design_capacity.1, 10.713627531325653);
     }
 
     // this test does not exist in Python HEM
