@@ -8,6 +8,10 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
 use pyo3::prelude::*;
+use rand::SeedableRng;
+use rand_distr::{Distribution, Poisson};
+use rand_mt::Mt;
+use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
 use std::fmt::{Debug, Formatter};
@@ -62,6 +66,12 @@ pub struct DrawoffGenerator {
     which_shower: isize,
     which_bath: isize,
     which_other: isize,
+}
+
+fn mt_random_f64(rng: &mut Mt) -> f64 {
+    let a = (rng.next_u32() >> 5) as f64;
+    let b = (rng.next_u32() >> 6) as f64;
+    ((a as u64) << 26 | (b as u64)) as f64 / 2_f64.powi(53)
 }
 
 pub fn reset_events_and_provide_drawoff_generator(
@@ -321,7 +331,7 @@ impl From<SimpleLabelBasedOn900KSample> for WaterHeatingEventType {
 #[derive(Debug)]
 pub struct HotWaterEventGenerator {
     week: IndexMap<DayOfWeek, IndexMap<SimpleLabelBasedOn900KSample, DayDigest>>,
-    rng: Py<PyAny>,
+    rng: Mt,
 }
 
 impl HotWaterEventGenerator {
@@ -343,28 +353,16 @@ impl HotWaterEventGenerator {
             ]);
 
         #[pyfunction]
-        fn make_rng(py: Python<'_>, seed: u64) -> PyResult<Py<PyAny>> {
-            let random = py.import("random")?;
-            let rng = random.getattr("Random")?.call1((seed,))?;
-            Ok(rng.unbind())
-        }
-
-        #[pyfunction]
         fn make_rng_poisson(py: Python<'_>, seed: u64) -> PyResult<Py<PyAny>> {
             let np_random = py.import("numpy.random")?;
             let rng_poisson = np_random.getattr("default_rng")?.call1((seed,))?;
             Ok(rng_poisson.unbind())
         }
-
-        let rng = Python::attach(|py| -> PyResult<Py<PyAny>> {
-            make_rng(py, hw_seed.unwrap_or(RNG_SEED))
-        })
-        .map_err(|e| anyhow!(e))?;
-
         let rng_poisson = Python::attach(|py| -> PyResult<Py<PyAny>> {
             make_rng_poisson(py, hw_seed.unwrap_or(RNG_SEED))
         })
         .map_err(|e| anyhow!(e))?;
+        let rng = Mt::new_with_key([hw_seed.unwrap_or(RNG_SEED) as u32]);
 
         let mut decile: i8 = -1;
         let mut banding_correction = 1.0;
@@ -488,7 +486,7 @@ impl HotWaterEventGenerator {
         time: usize,
         event_type: SimpleLabelBasedOn900KSample,
         digest: &mut DayDigest,
-    ) -> anyhow::Result<Vec<HourEvent>> {
+    ) -> Vec<HourEvent> {
         let mut out: Vec<HourEvent> = Default::default();
         let hourly_event_distribution = digest.hourly_event_distribution.as_mut().expect(
             "Found a DayDigest value that did not have its hourly event distribution set on it",
@@ -496,21 +494,16 @@ impl HotWaterEventGenerator {
         let count = hourly_event_distribution[time % 24].poisson_arr
             [hourly_event_distribution[time % 24].poisson_arr_idx];
         hourly_event_distribution[time % 24].poisson_arr_idx += 1;
-
         for _ in 0..(count as usize) {
-            let random =
-                Python::attach(|py| -> PyResult<f64> { random(py, self.rng.clone_ref(py)) })
-                    .map_err(|e| anyhow!(e))?;
-
             out.push(HourEvent {
-                time: time as f64 + random,
+                time: time as f64 + mt_random_f64(&mut self.rng),
                 event_type,
                 volume: digest.mean_event_volume,
                 duration: digest.mean_duration,
             });
         }
 
-        Ok(out)
+        out
     }
 
     pub fn overlap_check(
@@ -519,7 +512,7 @@ impl HotWaterEventGenerator {
         matching_types: &[WaterHeatingEventType],
         event_start: f64,
         duration: f64,
-    ) -> anyhow::Result<()> {
+    ) {
         let mut event_start = event_start;
         let hourly_events_idx = event_start.floor() as usize;
         let event_start_events: Vec<HourlyHotWaterEvent> =
@@ -531,20 +524,17 @@ impl HotWaterEventGenerator {
                     && event_start + duration / 60. < existing_event.end)
             {
                 // events are overlapping, and we need to reroll the time until they aren't
-                event_start = self.reroll_event_time(event_start)?;
-                self.overlap_check(hourly_events, matching_types, event_start, duration)?;
+                event_start = self.reroll_event_time(event_start);
+                self.overlap_check(hourly_events, matching_types, event_start, duration);
             }
         }
-        Ok(())
     }
 
     /// Sometimes events will overlap, and we need to change the time so they don't
     /// do this by adding random value between 0-30 mins to current time
     /// until it does not overlap with anything
-    fn reroll_event_time(&mut self, time: f64) -> anyhow::Result<f64> {
-        let random = Python::attach(|py| -> PyResult<f64> { random(py, self.rng.clone_ref(py)) })
-            .map_err(|e| anyhow!(e))?;
-        Ok((time + random / 2.) % 8760.)
+    fn reroll_event_time(&mut self, time: f64) -> f64 {
+        (time + mt_random_f64(&mut self.rng) / 2.) % 8760.
     }
 
     pub fn build_annual_hw_events(&mut self, start_day: usize) -> anyhow::Result<Vec<HourEvent>> {
@@ -563,7 +553,7 @@ impl HotWaterEventGenerator {
                         hour + (day * 24),
                         event_type,
                         list_days[day % 7].get_mut(&event_type).unwrap(),
-                    )?;
+                    );
                     annual_hw_events.append(&mut events_to_append);
                 }
             }
