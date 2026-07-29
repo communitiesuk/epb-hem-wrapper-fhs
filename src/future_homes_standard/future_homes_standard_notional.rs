@@ -350,10 +350,10 @@ fn calculate_area_diff_and_adjust_glazing_area(
 }
 
 /// Find all walls/roofs with same orientation and pitch as this window/rooflight.
-fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
-    wall_roofs: &'a IndexMap<String, Value>,
+fn find_walls_roofs_with_same_orientation_and_pitch(
+    wall_roofs: &IndexMap<String, Value>,
     window_rooflight_element: &Value,
-) -> anyhow::Result<IndexMap<&'a String, &'a Value>> {
+) -> anyhow::Result<IndexMap<String, Value>> {
     let window_rooflight_orientation = window_rooflight_element
         .get("orientation360")
         .and_then(Value::as_f64)
@@ -363,7 +363,7 @@ fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
         .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let same_orientation: IndexMap<&String, &Value> = wall_roofs
+    let same_orientation: IndexMap<String, Value> = wall_roofs
         .iter()
         .filter(|(_, v)| {
             let orientation = v.get("orientation360").and_then(Value::as_f64);
@@ -375,6 +375,7 @@ fn find_walls_roofs_with_same_orientation_and_pitch<'a>(
                     Some(window_rooflight_pitch),
                 )
         })
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
     if same_orientation.is_empty() {
@@ -491,7 +492,7 @@ fn edit_glazing_for_glazing_limit(
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
 
-    let (windows_rooflight, walls_roofs) = split_glazing_and_walls(input)?;
+    let (windows_rooflight, mut walls_roofs) = split_glazing_and_walls(input)?;
 
     if total_glazing_area > max_glazing_area {
         let linear_reduction_factor = (max_glazing_area / total_glazing_area).sqrt();
@@ -524,10 +525,17 @@ fn edit_glazing_for_glazing_limit(
                     let new_area = area + area_diff * wall_roof_prop;
 
                     input.set_numeric_field_for_building_element(
-                        wall_roof_ref,
+                        &wall_roof_ref,
                         "area",
                         new_area,
                     )?;
+
+                    if let Some(area) = walls_roofs
+                        .get_mut(&wall_roof_ref)
+                        .and_then(|el| el.get_mut("area"))
+                    {
+                        *area = Value::from(new_area);
+                    }
                 }
             }
         }
