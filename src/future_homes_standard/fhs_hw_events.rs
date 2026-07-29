@@ -7,9 +7,9 @@ use home_energy_model::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
-use rand::{RngExt, SeedableRng};
+use rand::SeedableRng;
 use rand_distr::{Distribution, Poisson};
-use rand_mt::Mt64;
+use rand_mt::Mt;
 use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
@@ -60,6 +60,12 @@ pub struct DrawoffGenerator {
     which_shower: isize,
     which_bath: isize,
     which_other: isize,
+}
+
+fn mt_random_f64(rng: &mut Mt) -> f64 {
+    let a = (rng.next_u32() >> 5) as f64;
+    let b = (rng.next_u32() >> 6) as f64;
+    ((a as u64) << 26 | (b as u64)) as f64 / 2_f64.powi(53)
 }
 
 pub fn reset_events_and_provide_drawoff_generator(
@@ -319,7 +325,7 @@ impl From<SimpleLabelBasedOn900KSample> for WaterHeatingEventType {
 #[derive(Debug)]
 pub struct HotWaterEventGenerator {
     week: IndexMap<DayOfWeek, IndexMap<SimpleLabelBasedOn900KSample, DayDigest>>,
-    rng: Mt64,
+    rng: Mt,
 }
 
 impl HotWaterEventGenerator {
@@ -340,7 +346,7 @@ impl HotWaterEventGenerator {
                 (DayOfWeek::Sunday, Default::default()),
             ]);
 
-        let rng = SeedableRng::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
+        let rng = Mt::new_with_key([hw_seed.unwrap_or(RNG_SEED) as u32]);
         let mut rng_poisson = Pcg64::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
 
         let mut decile: i8 = -1;
@@ -475,7 +481,7 @@ impl HotWaterEventGenerator {
         hourly_event_distribution[time % 24].poisson_arr_idx += 1;
         for _ in 0..(count as usize) {
             out.push(HourEvent {
-                time: time as f64 + self.rng.random::<f64>(),
+                time: time as f64 + mt_random_f64(&mut self.rng),
                 event_type,
                 volume: digest.mean_event_volume,
                 duration: digest.mean_duration,
@@ -513,7 +519,7 @@ impl HotWaterEventGenerator {
     /// do this by adding random value between 0-30 mins to current time
     /// until it does not overlap with anything
     fn reroll_event_time(&mut self, time: f64) -> f64 {
-        (time + self.rng.random::<f64>() / 2.) % 8760.
+        (time + mt_random_f64(&mut self.rng) / 2.) % 8760.
     }
 
     pub fn build_annual_hw_events(&mut self, start_day: usize) -> anyhow::Result<Vec<HourEvent>> {
