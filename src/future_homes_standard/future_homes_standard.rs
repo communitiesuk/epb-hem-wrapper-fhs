@@ -3146,9 +3146,8 @@ pub(super) fn create_hot_water_use_pattern(
             hw_event_gen.overlap_check(
                 &mut hourly_events,
                 &[WaterHeatingEventType::Bath, WaterHeatingEventType::Shower],
-                event_start,
-                duration,
-            )?;
+                event_start, duration,
+            );
             hourly_events
                 .get_mut(event_start.floor() as usize)
                 .unwrap()

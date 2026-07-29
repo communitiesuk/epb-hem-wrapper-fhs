@@ -8,10 +8,7 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
 use pyo3::prelude::*;
-use rand::SeedableRng;
-use rand_distr::{Distribution, Poisson};
 use rand_mt::Mt;
-use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
 use std::fmt::{Debug, Formatter};
@@ -35,11 +32,6 @@ const OTHER_HW_FACTOR_M: [f64; 13] = [
 ];
 const STANDARD_FILL: f64 = 73.;
 pub(super) const STANDARD_BATH_SIZE: f64 = 180.;
-
-#[pyfunction]
-fn random(py: Python<'_>, rng: Py<PyAny>) -> PyResult<f64> {
-    rng.call_method0(py, "random")?.extract::<f64>(py)
-}
 
 fn bath_size_displaced(n_occupants: f64, bath_size: f64) -> anyhow::Result<f64> {
     // number of adults and children derived from Metabolic gains BSA calc
