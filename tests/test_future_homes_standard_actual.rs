@@ -1,6 +1,5 @@
 use common::DEMO_FILES_DIR;
 use home_energy_model::output_writer::FileOutputWriter;
-use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use std::fs::File;
 use std::io::BufReader;
@@ -32,11 +31,9 @@ fn test_fhs_actual_calculations_succeeds() {
         false,
         false,
         false,
-        &[OutputFormat::Json],
+        &[],
     );
-    // let error = result.err().unwrap().to_string();
-    // assert_eq!(error, "");
-    assert!(result.is_ok());
 
+    assert!(result.is_ok());
     common::delete_temporary_output_directory(demo_input_file_name);
 }
