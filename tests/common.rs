@@ -1,16 +1,19 @@
 use std::fs;
 use std::path::PathBuf;
 
-pub fn create_temporary_output_directory(directory: &str, demo_file_name: &str) -> PathBuf {
-    let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(format!("{directory}{demo_file_name}__results"));
+pub(crate) const TEMPORARY_OUTPUT_DIR: &'static str = "./tests/e2e/test_future_homes_standard_outputs/";
+pub(crate) const DEMO_FILES_DIR: &'static str = "./examples/input/future_homes_standard/";
+
+pub fn create_temporary_output_directory(input_file_name: &str) -> PathBuf {
+    let temp_output_dir = PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
     fs::create_dir_all(&temp_output_dir).unwrap();
     temp_output_dir
 }
 
-pub fn delete_temporary_output_directory(parent_directory: &str, sub_directory: PathBuf) {
-    fs::remove_dir_all(&sub_directory).unwrap();
-    let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(parent_directory);
+pub fn delete_temporary_output_directory(input_file_name: &str) {
+    let temp_output_dir = PathBuf::from(TEMPORARY_OUTPUT_DIR);
+    let temporary_output_sub_dir = PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
+
+    fs::remove_dir_all(&temporary_output_sub_dir).unwrap();
     let _ = fs::remove_dir(temp_output_dir);
 }
