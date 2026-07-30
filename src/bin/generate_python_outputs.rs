@@ -1,33 +1,62 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
-const DEMO_FILES_DIR_PATH: &str = "examples/input/future_homes_standard";
-const FHS_PY_ENTRYPOINT_PATH: &str = "./../epb-py-fhs-wrapper/src/bin/fhs.py";
-const FHS_PY_PATH: &str = "./../epb-py-fhs-wrapper";
-const PYTHON_OUTPUT_DIR_PATH: &str = "tests/e2e/expected_generated_results";
+const DEMO_FILES_DIR: &str = "examples/input/future_homes_standard";
+const FHS_PY_REPO: &str = "https://dev.azure.com/Sustenic/Home%20Energy%20Model%20Reference/_git/Future%20Homes%20Standard%20wrapper";
+const FHS_PY_TAG: &str = "1.0.0a7";
+const FHS_PY_TARGET_DIR: &str = "py_fhs_wrapper";
+const FHS_PY_ENTRYPOINT: &str = "src/bin/fhs.py";
+const PY_OUTPUT_DIR: &str = "tests/e2e/expected_generated_results";
 
 fn main() {
+    let timer = Instant::now();
+
+    python_fhs_repo();
     clear_output_directory();
     install_python_fhs_requirements();
     run_all_python_fhs_files();
+
+    let duration = timer.elapsed();
+    println!("\nTime taken to generate python outputs: {:.2?}", duration);
+}
+
+fn python_fhs_repo() {
+    if !Path::new(FHS_PY_TARGET_DIR).exists() {
+        println!("Cloning python fhs repo...");
+        Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                FHS_PY_TAG,
+                FHS_PY_REPO,
+                FHS_PY_TARGET_DIR,
+            ])
+            .status()
+            .unwrap();
+    } else {
+        println!("⚡ Using existing repository at '{}'", FHS_PY_TARGET_DIR);
+    }
 }
 
 fn clear_output_directory() {
     // delete output directory and its contents if it exists
-    let _ = fs::remove_dir_all(PYTHON_OUTPUT_DIR_PATH);
+    let _ = fs::remove_dir_all(PY_OUTPUT_DIR);
 
     // create empty output directory
-    fs::create_dir_all(PYTHON_OUTPUT_DIR_PATH).unwrap();
+    fs::create_dir_all(PY_OUTPUT_DIR).unwrap();
 }
 
 fn install_python_fhs_requirements() {
     println!("Installing required packages...");
-    run_command(&format!("uv sync --project {}", FHS_PY_PATH));
+    run_command(&format!("uv sync --project {}", FHS_PY_TARGET_DIR));
 }
 
 fn run_all_python_fhs_files() {
-    for entry in fs::read_dir(DEMO_FILES_DIR_PATH).unwrap() {
+    for entry in fs::read_dir(DEMO_FILES_DIR).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
         let file_name = entry.file_name();
@@ -41,21 +70,20 @@ fn run_python_fhs_preprocessing(demo_file_path: &str) {
     let path = Path::new(demo_file_path);
     let file_name = path.file_name().unwrap().to_str().unwrap();
 
-    let copied_demo_file_path = [PYTHON_OUTPUT_DIR_PATH, file_name]
-        .iter()
-        .collect::<PathBuf>();
+    let copied_demo_file_path = [PY_OUTPUT_DIR, file_name].iter().collect::<PathBuf>();
     let copied_demo_file_path = copied_demo_file_path
         .to_str()
         .expect("couldn't make output dir path a string");
     fs::copy(demo_file_path, copied_demo_file_path).unwrap();
 
-    println!("Running Python FHS..");
+    println!("\nRunning Python FHS...");
     let run_python_fhs_cmd = format!(
-        "uv run --project {} {} {} --preprocess-only",
-        FHS_PY_PATH, FHS_PY_ENTRYPOINT_PATH, copied_demo_file_path
+        "uv run --project {} {:?} {} --preprocess-only",
+        FHS_PY_TARGET_DIR,
+        Path::new(FHS_PY_TARGET_DIR).join(FHS_PY_ENTRYPOINT),
+        copied_demo_file_path
     );
     run_command(&run_python_fhs_cmd);
-    println!("\n");
     println!("Python FHS ran");
 }
 
