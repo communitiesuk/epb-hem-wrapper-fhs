@@ -12,7 +12,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::LazyLock;
 mod common;
-use common::{DEMO_FILES_DIR, TEMPORARY_OUTPUT_DIR, PROVIDED_EXPECTED_OUTPUT_DIR, FLOAT_THRESHOLD};
+use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
 
 const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
 const ERRORS_TO_PRINT: usize = 10;
@@ -27,8 +27,7 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 });
 
 #[test]
-fn test_fhs_preprocessing_output_against_provided_results(
-) {
+fn test_fhs_preprocessing_output_against_provided_results() {
     let demo_file_names = [
         "DESN-H-End-02-ESH-cMEV",
         "DESN-H-End-02-HP-iMEV-pre-heat",
@@ -44,9 +43,9 @@ fn test_fhs_preprocessing_output_against_provided_results(
         // the other cases use the default one
         let use_london_weather_file = *file_name == "demo_FHS";
         let external_conditions = use_london_weather_file.then_some(
-            cibse_weather_data_to_external_conditions(
+            cibse_weather_data_to_external_conditions(BufReader::new(
                 File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
-            )
+            ))
             .unwrap(),
         );
 
@@ -60,7 +59,7 @@ fn test_fhs_preprocessing_output_against_provided_results(
                 file_name,
                 &mut file_differences,
                 mode,
-                PROVIDED_EXPECTED_OUTPUT_DIR
+                PROVIDED_EXPECTED_OUTPUT_DIR,
             );
         }
 
@@ -71,11 +70,8 @@ fn test_fhs_preprocessing_output_against_provided_results(
                 ""
             )
         }
-        
-        differences.push(format!(
-            "{file_name}: {}",
-            file_differences.join(", "),
-        ));
+
+        differences.push(format!("{file_name}: {}", file_differences.join(", "),));
         total_difference_count += file_difference_count;
         common::delete_temporary_output_directory(file_name);
     }
@@ -111,7 +107,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                     demo_input_file_name,
                     &mut file_differences,
                     mode,
-                    GENERATED_EXPECTED_OUTPUT_DIR
+                    GENERATED_EXPECTED_OUTPUT_DIR,
                 );
             }
             if file_difference_count > 0 {
