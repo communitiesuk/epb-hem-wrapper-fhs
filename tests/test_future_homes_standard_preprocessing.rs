@@ -12,12 +12,9 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::LazyLock;
 mod common;
-use common::{DEMO_FILES_DIR, TEMPORARY_OUTPUT_DIR};
+use common::{DEMO_FILES_DIR, TEMPORARY_OUTPUT_DIR, PROVIDED_EXPECTED_OUTPUT_DIR, FLOAT_THRESHOLD};
 
-const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_provided_results/future_homes_standard/";
 const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
-
-const FLOAT_THRESHOLD: f64 = 1e-6; // 0.000001
 const ERRORS_TO_PRINT: usize = 10;
 
 static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
