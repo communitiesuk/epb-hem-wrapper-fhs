@@ -176,7 +176,7 @@ fn run_fhs_preprocessing(
         format!("{}__{{}}.{{}}", input_file_name),
     );
 
-    println!("\nStarting to run {input_file_name}.json");
+    println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
     let result = run_wrappers(
         input,
         output_writer,
@@ -190,10 +190,10 @@ fn run_fhs_preprocessing(
     );
     assert!(
         result.is_ok(),
-        "\nError running fhs preprocessing for: {}.json",
+        "\nError running Rust FHS preprocessing for: {}.json",
         input_file_name
     );
-    println!("Finished running {input_file_name}.json");
+    println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
 }
 
 fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
