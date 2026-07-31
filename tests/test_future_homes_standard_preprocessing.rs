@@ -4,6 +4,7 @@ use home_energy_model::read_weather_file::{
 };
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
+use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -11,7 +12,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use rayon::prelude::*;
 
 mod common;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
@@ -89,12 +89,13 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
 #[test]
 fn test_fhs_preprocessing_output_against_generated_results() {
-     let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR).unwrap()
-         .map(|entry| entry.unwrap().path())
-         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
-         .collect::<Vec<PathBuf>>()
-         .into_par_iter()
-         .map(|path| {
+    let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<PathBuf>>()
+        .into_par_iter()
+        .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
 
@@ -118,15 +119,19 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                 )
             }
             common::delete_temporary_output_directory(demo_input_file_name);
-            (format!("{demo_input_file_name}: {}", file_differences.join(", "), ), file_difference_count)
-        }).collect();
-    let (differences, total_difference_count) = differences
-        .into_iter()
-        .fold((Vec::new(), 0), |(mut names, total), (name, count)| {
-            names.push(name);
-            (names, total + count)
-        });
-
+            (
+                format!("{demo_input_file_name}: {}", file_differences.join(", "),),
+                file_difference_count,
+            )
+        })
+        .collect();
+    let (differences, total_difference_count) =
+        differences
+            .into_iter()
+            .fold((Vec::new(), 0), |(mut names, total), (name, count)| {
+                names.push(name);
+                (names, total + count)
+            });
 
     assert_eq!(
         total_difference_count,
@@ -343,8 +348,12 @@ pub(crate) fn preprocessed_input_matches_expected(
                 // skip comparing values of "Events" and "schedule keys as these are affected by different
                 // implementations of random number generators in Python vs Rust
                 // skip comparing "priority due to know bug
-                let keys_to_skip = ["Events".to_string(),"schedule".to_string(), "priority".to_string()];
-                if keys_to_skip.contains(key){
+                let keys_to_skip = [
+                    "Events".to_string(),
+                    "schedule".to_string(),
+                    "priority".to_string(),
+                ];
+                if keys_to_skip.contains(key) {
                     continue;
                 }
                 let actual_value = actual_obj.get(key).unwrap_or(&Value::Null);
