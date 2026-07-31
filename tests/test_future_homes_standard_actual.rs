@@ -25,7 +25,7 @@ fn test_fhs_actual_calculations_succeeds() {
 
     let result = run_wrappers(
         demo_input_file,
-        output_writer,
+        &output_writer,
         None,
         None,
         &FhsFlags::FHS,
