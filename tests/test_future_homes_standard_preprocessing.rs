@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::LazyLock;
+
 mod common;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
 
@@ -87,14 +88,10 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
 #[test]
 fn test_fhs_preprocessing_output_against_generated_results() {
-    let mut total_difference_count = 0;
-    let mut differences = vec![];
-
-    for entry in fs::read_dir(DEMO_FILES_DIR).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-
-        if !path.is_dir() && entry.file_name().to_str().unwrap().ends_with(".json") {
+     let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR).unwrap()
+         .map(|entry| entry.unwrap().path())
+         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+         .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
 
@@ -117,14 +114,16 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                     ""
                 )
             }
-            differences.push(format!(
-                "{demo_input_file_name}: {}",
-                file_differences.join(", "),
-            ));
-            total_difference_count += file_difference_count;
             common::delete_temporary_output_directory(demo_input_file_name);
-        }
-    }
+            (format!("{demo_input_file_name}: {}", file_differences.join(", "), ), file_difference_count)
+        }).collect();
+    let (differences, total_difference_count) = differences
+        .into_iter()
+        .fold((Vec::new(), 0), |(mut names, total), (name, count)| {
+            names.push(name);
+            (names, total + count)
+        });
+
 
     assert_eq!(
         total_difference_count,
