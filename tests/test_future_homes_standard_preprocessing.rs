@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use rayon::prelude::*;
 
 mod common;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
@@ -91,6 +92,8 @@ fn test_fhs_preprocessing_output_against_generated_results() {
      let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR).unwrap()
          .map(|entry| entry.unwrap().path())
          .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+         .collect::<Vec<PathBuf>>()
+         .into_par_iter()
          .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
