@@ -1,5 +1,6 @@
+use rayon::prelude::*;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
@@ -56,42 +57,32 @@ fn install_python_fhs_requirements() {
 }
 
 fn run_all_python_fhs_files() {
-    let mut file_count = 0;
+    let file_count = fs::read_dir(DEMO_FILES_DIR)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .par_bridge()
+        .map(|path| {
+            run_python_fhs_preprocessing(&path);
+        })
+        .count();
 
-    for entry in fs::read_dir(DEMO_FILES_DIR).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        let file_name = entry.file_name();
-        if !path.is_dir() && file_name.to_str().unwrap().ends_with(".json") {
-            run_python_fhs_preprocessing(path.to_str().unwrap());
-            file_count += 1;
-        }
-    }
-
-    println!("\n🐍  Ran preprocessing for {} files in total", file_count);
+    println!("\n🐍  Ran preprocessing for {file_count} files in total");
 }
 
-fn run_python_fhs_preprocessing(demo_file_path: &str) {
-    let path = Path::new(demo_file_path);
-    let file_name = path.file_name().unwrap().to_str().unwrap();
+fn run_python_fhs_preprocessing(demo_file_path: &Path) {
+    let file_name = demo_file_path.file_name().unwrap();
+    let copied_demo_file_path = Path::new(PY_PREPROCESS_OUTPUT_DIR).join(file_name);
 
-    let copied_demo_file_path = [PY_PREPROCESS_OUTPUT_DIR, file_name]
-        .iter()
-        .collect::<PathBuf>();
-    let copied_demo_file_path = copied_demo_file_path
-        .to_str()
-        .expect("couldn't make output dir path a string");
-    fs::copy(demo_file_path, copied_demo_file_path).unwrap();
+    fs::copy(demo_file_path, &copied_demo_file_path).unwrap();
 
-    println!("\nRunning Python FHS preprocessing...");
+    let entrypoint = Path::new(PY_FHS_TARGET_DIR).join(PY_FHS_ENTRYPOINT);
     let run_python_fhs_cmd = format!(
-        "uv run --project {} {:?} {} --preprocess-only",
-        PY_FHS_TARGET_DIR,
-        Path::new(PY_FHS_TARGET_DIR).join(PY_FHS_ENTRYPOINT),
-        copied_demo_file_path
+        "uv run --project {} {:?} {:?} --preprocess-only",
+        PY_FHS_TARGET_DIR, entrypoint, copied_demo_file_path
     );
+
     run_command(&run_python_fhs_cmd);
-    println!("Python FHS preprocessing ran");
 }
 
 fn run_command(cmd: &str) -> String {
@@ -107,5 +98,6 @@ fn run_command(cmd: &str) -> String {
 
     println!("{stdout}");
     println!("{stderr}");
+
     stderr
 }
