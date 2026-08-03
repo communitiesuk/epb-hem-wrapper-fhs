@@ -13,8 +13,10 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 mod common;
-use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
+use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, TEMPORARY_OUTPUT_DIR};
 
+pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str =
+    "./tests/e2e/expected_provided_results/future_homes_standard/";
 const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
 const ERRORS_TO_PRINT: usize = 10;
 
