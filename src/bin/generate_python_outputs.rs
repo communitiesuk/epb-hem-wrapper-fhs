@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -61,7 +61,8 @@ fn run_all_python_fhs_files() {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
-        .par_bridge()
+        .collect::<Vec<PathBuf>>()
+        .into_par_iter()
         .map(|path| {
             run_python_fhs_preprocessing(&path);
         })
