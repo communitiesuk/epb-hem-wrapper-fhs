@@ -9,6 +9,10 @@ examples/input/future_homes_standard/*__results/*
 # Ignore generated files used for e2e test comparison
 tests/e2e/expected_generated_results
 
+# Ignore temporary folders used in e2e tests
+tests/e2e/temp_output_for_provided
+tests/e2e/temp_output_for_generated
+
 # Ignore python fhs repo used in generate_python_outputs
 /py_fhs_wrapper
 

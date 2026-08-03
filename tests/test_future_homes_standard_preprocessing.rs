@@ -4,17 +4,20 @@ use home_energy_model::read_weather_file::{
 };
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
+use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 mod common;
-use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD, PROVIDED_EXPECTED_OUTPUT_DIR, TEMPORARY_OUTPUT_DIR};
+use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
 
+pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str =
+    "./tests/e2e/expected_provided_results/future_homes_standard/";
 const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
 const ERRORS_TO_PRINT: usize = 10;
 
@@ -38,6 +41,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
     let mut total_difference_count = 0;
     let mut differences = vec![];
+    let temp_output_dir = "./tests/e2e/temp_output_for_provided/";
 
     for file_name in &demo_file_names {
         // In the Python the London weather file is only specified for demo_FHS,
@@ -50,7 +54,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
             .unwrap(),
         );
 
-        run_fhs_preprocessing(file_name, external_conditions);
+        run_fhs_preprocessing(file_name, external_conditions, temp_output_dir);
 
         let mut file_difference_count = 0;
         let mut file_differences = vec![];
@@ -61,6 +65,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
                 &mut file_differences,
                 mode,
                 PROVIDED_EXPECTED_OUTPUT_DIR,
+                temp_output_dir,
             );
         }
 
@@ -74,8 +79,8 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
         differences.push(format!("{file_name}: {}", file_differences.join(", "),));
         total_difference_count += file_difference_count;
-        common::delete_temporary_output_directory(file_name);
     }
+    let _ = fs::remove_dir_all(temp_output_dir);
 
     assert_eq!(
         total_difference_count,
@@ -88,15 +93,19 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
 #[test]
 fn test_fhs_preprocessing_output_against_generated_results() {
+    let temp_output_dir = "./tests/e2e/temp_output_for_generated/";
+
     let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<PathBuf>>()
+        .into_par_iter()
         .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
 
-            run_fhs_preprocessing(demo_input_file_name, None);
+            run_fhs_preprocessing(demo_input_file_name, None, temp_output_dir);
 
             let mut file_difference_count = 0;
             let mut file_differences = vec![];
@@ -106,6 +115,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                     &mut file_differences,
                     mode,
                     GENERATED_EXPECTED_OUTPUT_DIR,
+                    temp_output_dir,
                 );
             }
             if file_difference_count > 0 {
@@ -115,7 +125,6 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                     ""
                 )
             }
-            common::delete_temporary_output_directory(demo_input_file_name);
             (
                 format!("{demo_input_file_name}: {}", file_differences.join(", "),),
                 file_difference_count,
@@ -129,6 +138,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                 names.push(name);
                 (names, total + count)
             });
+    let _ = fs::remove_dir_all(temp_output_dir);
 
     assert_eq!(
         total_difference_count,
@@ -144,9 +154,10 @@ fn mode_differences(
     failing_modes: &mut Vec<String>,
     mode: &str,
     expected_output_dir: &str,
+    temp_output_dir: &str,
 ) -> usize {
     let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-    let actual_output = file_value(TEMPORARY_OUTPUT_DIR, demo_input_file_name, mode);
+    let actual_output = file_value(temp_output_dir, demo_input_file_name, mode);
     let mut errors = vec![];
     let mode_difference_count =
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
@@ -161,15 +172,16 @@ fn mode_differences(
 fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
+    temp_output_dir: &str,
 ) -> () {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
     let input = BufReader::new(File::open(input_file_path).unwrap());
-
-    let temporary_output_sub_dir = common::create_temporary_output_directory(input_file_name);
+    let temp_output_sub_dir = PathBuf::from(format!("{temp_output_dir}{input_file_name}__results"));
+    fs::create_dir_all(&temp_output_sub_dir).unwrap();
 
     let output_writer = FileOutputWriter::new(
-        temporary_output_sub_dir.clone(),
+        temp_output_sub_dir.clone(),
         format!("{}__{{}}.{{}}", input_file_name),
     );
 
