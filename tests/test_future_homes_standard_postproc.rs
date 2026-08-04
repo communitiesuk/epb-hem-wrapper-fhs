@@ -40,6 +40,21 @@ fn test_fhs_postproc_result_files() {
 
     assert!(result.is_ok());
 
+    let differences = postproc_results_differences(demo_input_file_name);
+    common::delete_temporary_output_directory(demo_input_file_name);
+
+    println!("TEST FINISHED: {:?}", timer.elapsed());
+
+    assert_eq!(
+        differences.len(),
+        0,
+        "\n\nTotal differences: {}\n{}\n\n",
+        differences.len(),
+        differences.iter().join("\n")
+    );
+}
+
+fn postproc_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
     let postproc_file_suffixes = &[
         "FHS__postproc_summary.csv",
         "FHS_notional__postproc_summary.csv",
@@ -47,25 +62,13 @@ fn test_fhs_postproc_result_files() {
         "FHS_FEE_notional__postproc.csv",
     ];
 
-    let mut difference_count = 0;
     let mut differences = Vec::new();
 
     for suffix in postproc_file_suffixes {
         let mut file_differences = postproc_file_differences(demo_input_file_name, suffix);
-        difference_count = difference_count + file_differences.len();
         differences.append(&mut file_differences);
     }
-    common::delete_temporary_output_directory(demo_input_file_name);
-
-    println!("TEST FINISHED: {:?}", timer.elapsed());
-
-    assert_eq!(
-        difference_count,
-        0,
-        "\n\nTotal differences: {}\n{}\n\n",
-        difference_count,
-        differences.iter().join("\n")
-    );
+    differences
 }
 
 fn demo_input(demo_input_file_name: &&str) -> BufReader<File> {
