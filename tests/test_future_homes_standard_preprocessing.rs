@@ -6,14 +6,12 @@ use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
 use parking_lot::{Mutex, RwLock};
-use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Write};
-use std::ops::Index;
-use std::path::{Path};
+use std::path::Path;
 use std::str::from_utf8;
 use std::sync::{Arc, LazyLock};
 
@@ -145,7 +143,6 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
         differences.push(format!("{file_name}: {}", file_differences.join(", "),));
         total_difference_count += file_difference_count;
-        common::delete_temporary_output_directory(file_name);
     }
 
     assert_eq!(
@@ -241,7 +238,7 @@ fn run_fhs_preprocessing(
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
     let input = BufReader::new(File::open(input_file_path).unwrap());
-    
+
     let result = run_wrappers(
         input,
         output_writer,
