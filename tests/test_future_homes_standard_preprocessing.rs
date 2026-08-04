@@ -7,7 +7,7 @@ use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
-use std::fs;
+use std::{assert_eq, fs};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -44,32 +44,11 @@ fn test_fhs_preprocessing_output_against_provided_results() {
     let temp_output_dir = "./tests/e2e/temp_output_for_provided/";
 
     for file_name in &demo_file_names {
-        // In the Python the London weather file is only specified for demo_FHS,
-        // the other cases use the default one
-        let use_london_weather_file = *file_name == "demo_FHS";
-        let external_conditions = use_london_weather_file.then_some(
-            cibse_weather_data_to_external_conditions(BufReader::new(
-                File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
-            ))
-            .unwrap(),
-        );
-
+        let external_conditions = get_external_conditions_for(file_name);
         run_fhs_preprocessing(file_name, external_conditions, temp_output_dir);
+        let file_differences = get_file_differences(temp_output_dir, PROVIDED_EXPECTED_OUTPUT_DIR, file_name);
 
-        let mut file_difference_count = 0;
-        let mut file_differences = vec![];
-
-        for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-            file_difference_count += mode_differences(
-                file_name,
-                &mut file_differences,
-                mode,
-                PROVIDED_EXPECTED_OUTPUT_DIR,
-                temp_output_dir,
-            );
-        }
-
-        if file_difference_count > 0 {
+        if file_differences.len() > 0 {
             println!(
                 "\nmismatches found for {file_name}: {}\n\n{:-^120}",
                 file_differences.join(", "),
@@ -78,7 +57,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
         }
 
         differences.push(format!("{file_name}: {}", file_differences.join(", "),));
-        total_difference_count += file_difference_count;
+        total_difference_count += file_differences.len();
     }
     let _ = fs::remove_dir_all(temp_output_dir);
 
@@ -107,18 +86,9 @@ fn test_fhs_preprocessing_output_against_generated_results() {
 
             run_fhs_preprocessing(demo_input_file_name, None, temp_output_dir);
 
-            let mut file_difference_count = 0;
-            let mut file_differences = vec![];
-            for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-                file_difference_count += mode_differences(
-                    demo_input_file_name,
-                    &mut file_differences,
-                    mode,
-                    GENERATED_EXPECTED_OUTPUT_DIR,
-                    temp_output_dir,
-                );
-            }
-            if file_difference_count > 0 {
+            let file_differences = get_file_differences(temp_output_dir, GENERATED_EXPECTED_OUTPUT_DIR, &demo_input_file_name);
+
+            if file_differences.len() > 0 {
                 println!(
                     "\nmismatches found for {demo_input_file_name}: {}\n\n{:-^120}",
                     file_differences.join(", "),
@@ -127,7 +97,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
             }
             (
                 format!("{demo_input_file_name}: {}", file_differences.join(", "),),
-                file_difference_count,
+                file_differences.len(),
             )
         })
         .collect();
@@ -212,6 +182,34 @@ fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
         fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
     let output: Value = serde_json::from_str(&file).unwrap();
     output
+}
+
+fn get_file_differences(temp_output_dir: &str, expected_output_dir: &str, file_name: &&str) -> Vec<String> {
+    let mut file_differences = vec![];
+    for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
+        mode_differences(
+            file_name,
+            &mut file_differences,
+            mode,
+            expected_output_dir,
+            temp_output_dir,
+        );
+    }
+
+    file_differences.to_vec()
+}
+
+fn get_external_conditions_for(file_name: &&str) -> Option<ExternalConditions> {
+    // In the Python the London weather file is only specified for demo_FHS,
+    // the other cases use the default one
+    let use_london_weather_file = *file_name == "demo_FHS";
+    let external_conditions = use_london_weather_file.then_some(
+        cibse_weather_data_to_external_conditions(BufReader::new(
+            File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
+        ))
+        .unwrap(),
+    );
+    external_conditions
 }
 
 pub struct Location(Vec<String>);
