@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Future Homes Standard (FHS) is a wrapper around the Home Energy Model (HEM) - 
-the UK Government’s proposed National Calculation Methodology for assessing the energy performance of dwellings. 
-FHS deals with assessing compliance with Part L of the building regulations and can do so by creating an actual 
+The Future Homes Standard (FHS) is a wrapper around the Home Energy Model (HEM) -
+the UK Government’s proposed National Calculation Methodology for assessing the energy performance of dwellings.
+FHS deals with assessing compliance with Part L of the building regulations and can do so by creating an actual
 and notional building which are both assessed using the core HEM and corresponding FHS postprocessing steps.
 
 Please note that the FHS wrapper is currently in development and should not be used for any official purpose.
@@ -19,15 +19,9 @@ the wrapper written in Python commissioned by DESNZ.
 Requires the `rustup` toolchain to use. ([Instructions](https://rustup.rs) for installation. For macOS, don't use
 Homebrew to install Rust.)
 
-To run tests:
-
-```bash
-cargo test
-```
-
 Running the engine requires an input JSON file that conforms to the [FHS input schema](schema/input_fhs.schema.json).
 
-Example input files for demonstration purposes can be found at 
+Example input files for demonstration purposes can be found at
 [examples/input/future_homes_standard](examples/input/future_homes_standard).
 
 #### FHS Compliance mode
@@ -64,7 +58,8 @@ cargo run --release --features="clap indicatif" -- path/to/input.json --mode "ac
 
 #### Weather file option
 
-The wrapper uses a representative weather file by default but there is also the option to provide a weather file, for example:
+The wrapper uses a representative weather file by default but there is also the option to provide a weather file, for
+example:
 
 ```bash
 cargo run --release --features="clap indicatif" -- path/to/input.json -e path/to/weather_file.epw
@@ -72,13 +67,50 @@ cargo run --release --features="clap indicatif" -- path/to/input.json -e path/to
 
 #### Core output formats
 
-Optionally, the core output format can be specified. Valid values are `csv` (default), `json` or `json csv`: 
+Optionally, the core output format can be specified. Valid values are `csv` (default), `json` or `json csv`:
 
 ```
 cargo run --release --features="clap indicatif" -- path/to/input.json --core-output-formats "json"
 ```
 
 The `clap` feature above is mandatory. The `indicatif` feature switches on the output of a progress bar.
+
+## Running tests
+
+To run all unit tests:
+
+```bash
+just unit
+```
+
+To run e2e preprocessing tests:
+
+First, generate the python preprocessing output files. You'll only need to do this once.
+To generate the files again once the Python has been updated you will need to update the
+`generate_python_outputs` script to point to the new tag or branch. Currently, it points
+to `1.0.0a7`.
+
+```bash
+cargo run --bin generate_python_outputs
+```
+
+then:
+
+```bash
+just e2e-preproc
+```
+
+To run e2e postprocessing tests:
+
+```bash
+just e2e-postproc
+```
+
+To run all e2e tests:
+
+```bash
+just e2e
+```
 
 ## Contributing
 
