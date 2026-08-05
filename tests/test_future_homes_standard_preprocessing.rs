@@ -128,15 +128,16 @@ fn mode_differences(
     demo_input_file_name: &str,
     failing_modes: &mut Vec<String>,
     mode: &str,
+    actual_files: &IndexMap<String, String>,
     expected_output_dir: &str,
-    files: &IndexMap<String, String>,
 ) -> usize {
-    let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-    // TODO extract getting of actual output to function
-    let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{demo_input_file_name}__{suffix}.json");
-    let actual_file = files.get(&file_path).unwrap();
-    let actual_output = serde_json::from_str(&actual_file).unwrap();
+    let (actual_output, expected_output) = file_values(
+        demo_input_file_name,
+        mode,
+        actual_files,
+        expected_output_dir,
+    );
+
     let mut errors = vec![];
     let mode_difference_count =
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
@@ -177,13 +178,24 @@ fn run_fhs_preprocessing(
     println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
 }
 
-fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
+fn file_values(
+    file_name: &str,
+    mode: &str,
+    actual_files: &IndexMap<String, String>,
+    expected_output_dir: &str,
+) -> (Value, Value) {
     let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{directory}{file_name}__results/{file_name}__{suffix}.json");
-    let file =
-        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
-    let output: Value = serde_json::from_str(&file).unwrap();
-    output
+    let filename_with_suffix = format!("{file_name}__{suffix}.json");
+
+    let actual_str = actual_files.get(&filename_with_suffix).unwrap();
+    let actual_output = serde_json::from_str(&actual_str).unwrap();
+
+    let expected_path = format!("{expected_output_dir}{file_name}__results/{filename_with_suffix}");
+    let expected_str = fs::read_to_string(&expected_path)
+        .unwrap_or_else(|_| panic!("Output file not found at {expected_path}"));
+    let expected_output = serde_json::from_str(&expected_str).unwrap();
+
+    (actual_output, expected_output)
 }
 
 fn get_file_differences(
@@ -197,8 +209,8 @@ fn get_file_differences(
             file_name,
             &mut file_differences,
             mode,
-            expected_output_dir,
             files,
+            expected_output_dir,
         );
     }
 
