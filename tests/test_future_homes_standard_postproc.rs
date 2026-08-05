@@ -39,7 +39,7 @@ fn test_fhs_postproc_result_files() {
 
     let differences = postproc_csv_results_differences(demo_input_file_name);
     let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
-    
+
     delete_temporary_output_directory(demo_input_file_name);
 
     assert!(
