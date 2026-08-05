@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::str::from_utf8;
 use std::sync::{Arc, LazyLock};
 use std::{assert_eq, fs};
 
@@ -478,21 +477,19 @@ fn print_differences(differences: &[MismatchType], max_to_print: Option<usize>) 
 }
 
 #[derive(Clone, Debug)]
-struct FileWriter(Arc<RwLock<String>>);
+struct FileWriter(Arc<RwLock<Vec<u8>>>);
 
 impl FileWriter {
     fn new() -> Self {
-        Self(Arc::new(RwLock::new(String::with_capacity(2usize.pow(14)))))
+        Self(Arc::new(RwLock::new(Vec::with_capacity(2usize.pow(14)))))
     }
 }
 
 impl Write for FileWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let utf8 =
-            from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        self.0.write().push_str(utf8);
+        self.0.write().extend_from_slice(buf);
 
-        Ok(utf8.len())
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -525,7 +522,11 @@ impl InMemoryDirectoryOutputWriter {
         self.files
             .lock()
             .iter()
-            .map(|(k, v)| (k.clone(), v.0.read().clone()))
+            .map(|(k, v)| {
+                let bytes = v.0.read();
+                let string_content = String::from_utf8_lossy(&bytes).to_string();
+                (k.clone(), string_content)
+            })
             .collect()
     }
 }
@@ -546,7 +547,7 @@ impl OutputWriter for InMemoryDirectoryOutputWriter {
             .clone();
 
         // BufWriter prevents acquiring the RwLock on every byte chunk
-        Ok(BufWriter::new(file_writer))
+        Ok(BufWriter::with_capacity(2usize.pow(14), file_writer))
     }
 }
 
