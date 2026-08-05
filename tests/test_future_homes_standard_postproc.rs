@@ -5,15 +5,13 @@ use itertools::Itertools;
 use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
-use std::time::Instant;
+use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
 mod common;
-use crate::common::{
-    create_temporary_output_directory, DEMO_FILES_DIR, FLOAT_THRESHOLD, TEMPORARY_OUTPUT_DIR,
-};
-pub const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
+use crate::common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
+const TEMPORARY_OUTPUT_DIR: &'static str = "./tests/e2e/test_future_homes_standard_outputs/";
+const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
 
 #[test]
 fn test_fhs_postproc_result_files() {
@@ -41,9 +39,9 @@ fn test_fhs_postproc_result_files() {
 
     let differences = postproc_csv_results_differences(demo_input_file_name);
     let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
-
-    common::delete_temporary_output_directory(demo_input_file_name);
     
+    delete_temporary_output_directory(demo_input_file_name);
+
     assert!(
         differences.is_empty() && metrics_differences.is_empty(),
         "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
@@ -54,10 +52,26 @@ fn test_fhs_postproc_result_files() {
     );
 }
 
-fn demo_input(demo_input_file_name: &&str) -> BufReader<File> {
+fn create_temporary_output_directory(input_file_name: &str) -> PathBuf {
+    let temp_output_dir =
+        PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
+    fs::create_dir_all(&temp_output_dir).unwrap();
+    temp_output_dir
+}
+
+fn delete_temporary_output_directory(input_file_name: &str) {
+    let temp_output_dir = PathBuf::from(TEMPORARY_OUTPUT_DIR);
+    let temporary_output_sub_dir =
+        PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
+
+    fs::remove_dir_all(&temporary_output_sub_dir).unwrap();
+    let _ = fs::remove_dir(temp_output_dir);
+}
+
+fn demo_input(input_file_name: &&str) -> BufReader<File> {
     BufReader::new(
         File::open(Path::new(&format!(
-            "{DEMO_FILES_DIR}{demo_input_file_name}.json"
+            "{DEMO_FILES_DIR}{input_file_name}.json"
         )))
         .unwrap(),
     )

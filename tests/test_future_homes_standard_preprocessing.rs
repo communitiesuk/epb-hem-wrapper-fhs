@@ -1,17 +1,20 @@
-use home_energy_model::output_writer::FileOutputWriter;
+use home_energy_model::output_writer::OutputWriter;
 use home_energy_model::read_weather_file::{
     cibse_weather_data_to_external_conditions, ExternalConditions,
 };
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
+use indexmap::IndexMap;
+use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
-use std::{assert_eq, fs};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::str::from_utf8;
+use std::sync::{Arc, LazyLock};
+use std::{assert_eq, fs};
 
 mod common;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
@@ -41,12 +44,16 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
     let mut total_difference_count = 0;
     let mut differences = vec![];
-    let temp_output_dir = "./tests/e2e/temp_output_for_provided/";
 
     for file_name in &demo_file_names {
         let external_conditions = get_external_conditions_for(file_name);
-        run_fhs_preprocessing(file_name, external_conditions, temp_output_dir);
-        let file_differences = get_file_differences(temp_output_dir, PROVIDED_EXPECTED_OUTPUT_DIR, file_name);
+        let output_writer = InMemoryDirectoryOutputWriter::new(file_name);
+
+        run_fhs_preprocessing(file_name, external_conditions, output_writer.clone());
+
+        let files = output_writer.files();
+        let file_differences =
+            get_file_differences(PROVIDED_EXPECTED_OUTPUT_DIR, file_name, &files);
 
         if file_differences.len() > 0 {
             println!(
@@ -59,7 +66,6 @@ fn test_fhs_preprocessing_output_against_provided_results() {
         differences.push(format!("{file_name}: {}", file_differences.join(", "),));
         total_difference_count += file_differences.len();
     }
-    let _ = fs::remove_dir_all(temp_output_dir);
 
     assert_eq!(
         total_difference_count,
@@ -72,8 +78,6 @@ fn test_fhs_preprocessing_output_against_provided_results() {
 
 #[test]
 fn test_fhs_preprocessing_output_against_generated_results() {
-    let temp_output_dir = "./tests/e2e/temp_output_for_generated/";
-
     let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -83,10 +87,13 @@ fn test_fhs_preprocessing_output_against_generated_results() {
         .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-            run_fhs_preprocessing(demo_input_file_name, None, temp_output_dir);
+            run_fhs_preprocessing(demo_input_file_name, None, output_writer.clone());
 
-            let file_differences = get_file_differences(temp_output_dir, GENERATED_EXPECTED_OUTPUT_DIR, &demo_input_file_name);
+            let files = output_writer.files();
+            let file_differences =
+                get_file_differences(GENERATED_EXPECTED_OUTPUT_DIR, &demo_input_file_name, &files);
 
             if file_differences.len() > 0 {
                 println!(
@@ -108,7 +115,6 @@ fn test_fhs_preprocessing_output_against_generated_results() {
                 names.push(name);
                 (names, total + count)
             });
-    let _ = fs::remove_dir_all(temp_output_dir);
 
     assert_eq!(
         total_difference_count,
@@ -124,10 +130,14 @@ fn mode_differences(
     failing_modes: &mut Vec<String>,
     mode: &str,
     expected_output_dir: &str,
-    temp_output_dir: &str,
+    files: &IndexMap<String, String>,
 ) -> usize {
     let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-    let actual_output = file_value(temp_output_dir, demo_input_file_name, mode);
+    // TODO extract getting of actual output to function
+    let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
+    let file_path = format!("{demo_input_file_name}__{suffix}.json");
+    let actual_file = files.get(&file_path).unwrap();
+    let actual_output = serde_json::from_str(&actual_file).unwrap();
     let mut errors = vec![];
     let mode_difference_count =
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
@@ -142,18 +152,11 @@ fn mode_differences(
 fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
-    temp_output_dir: &str,
+    output_writer: impl OutputWriter,
 ) -> () {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
     let input = BufReader::new(File::open(input_file_path).unwrap());
-    let temp_output_sub_dir = PathBuf::from(format!("{temp_output_dir}{input_file_name}__results"));
-    fs::create_dir_all(&temp_output_sub_dir).unwrap();
-
-    let output_writer = FileOutputWriter::new(
-        temp_output_sub_dir.clone(),
-        format!("{}__{{}}.{{}}", input_file_name),
-    );
 
     println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
     let result = run_wrappers(
@@ -184,7 +187,11 @@ fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
     output
 }
 
-fn get_file_differences(temp_output_dir: &str, expected_output_dir: &str, file_name: &&str) -> Vec<String> {
+fn get_file_differences(
+    expected_output_dir: &str,
+    file_name: &&str,
+    files: &IndexMap<String, String>,
+) -> Vec<String> {
     let mut file_differences = vec![];
     for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
         mode_differences(
@@ -192,7 +199,7 @@ fn get_file_differences(temp_output_dir: &str, expected_output_dir: &str, file_n
             &mut file_differences,
             mode,
             expected_output_dir,
-            temp_output_dir,
+            files,
         );
     }
 
@@ -456,6 +463,79 @@ fn print_differences(differences: &[MismatchType], max_to_print: Option<usize>) 
                 );
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FileWriter(Arc<RwLock<String>>);
+
+impl FileWriter {
+    fn new() -> Self {
+        Self(Arc::new(RwLock::new(String::with_capacity(2usize.pow(14)))))
+    }
+}
+
+impl Write for FileWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let utf8 =
+            from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        self.0.write().push_str(utf8);
+
+        Ok(utf8.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InMemoryDirectoryOutputWriter {
+    input_filename: String,
+    files: Arc<Mutex<IndexMap<String, FileWriter>>>,
+}
+
+impl InMemoryDirectoryOutputWriter {
+    fn new(input_filename: &str) -> Self {
+        Self {
+            input_filename: input_filename.split('.').next().unwrap().to_string(),
+            files: Arc::new(Mutex::new(IndexMap::new())),
+        }
+    }
+
+    fn output_file_index(&self, location_key: &str, file_extension: &str) -> String {
+        format!(
+            "{}__{}.{}",
+            self.input_filename, location_key, file_extension
+        )
+    }
+
+    pub fn files(&self) -> IndexMap<String, String> {
+        self.files
+            .lock()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.0.read().clone()))
+            .collect()
+    }
+}
+
+impl OutputWriter for InMemoryDirectoryOutputWriter {
+    fn writer_for_location_key(
+        &self,
+        location_key: &str,
+        file_extension: &str,
+    ) -> anyhow::Result<impl Write> {
+        let key = self.output_file_index(location_key, file_extension);
+
+        let file_writer = self
+            .files
+            .lock()
+            .entry(key)
+            .or_insert_with(FileWriter::new)
+            .clone();
+
+        // BufWriter prevents acquiring the RwLock on every byte chunk
+        Ok(BufWriter::new(file_writer))
     }
 }
 
