@@ -6,7 +6,6 @@ use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-use std::time::Instant;
 use std::{fmt, fs};
 
 mod common;
@@ -43,7 +42,7 @@ fn test_fhs_postproc_result_files() {
     let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
 
     common::delete_temporary_output_directory(demo_input_file_name);
-    
+
     assert!(
         differences.is_empty() && metrics_differences.is_empty(),
         "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
