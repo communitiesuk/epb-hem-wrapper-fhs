@@ -11,3 +11,6 @@ e2e-postproc:
 
 generate-python-outputs:
     cargo run --bin generate_python_outputs
+
+e2e-preproc-provided:
+    cargo test test_fhs_preprocessing_output_against_provided_results
