@@ -2,11 +2,12 @@ use csv::ReaderBuilder;
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use itertools::Itertools;
-use std::fmt;
+use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::time::Instant;
+use std::{fmt, fs};
 
 mod common;
 use crate::common::{
@@ -40,35 +41,21 @@ fn test_fhs_postproc_result_files() {
 
     assert!(result.is_ok());
 
-    let differences = postproc_results_differences(demo_input_file_name);
+    let differences = postproc_csv_results_differences(demo_input_file_name);
+    let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
+
     common::delete_temporary_output_directory(demo_input_file_name);
 
     println!("TEST FINISHED: {:?}", timer.elapsed());
 
-    assert_eq!(
+    assert!(
+        differences.is_empty() && metrics_differences.is_empty(),
+        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
         differences.len(),
-        0,
-        "\n\nTotal differences: {}\n{}\n\n",
-        differences.len(),
-        differences.iter().join("\n")
+        differences.iter().join("\n"),
+        metrics_differences.len(),
+        metrics_differences.iter().join("\n")
     );
-}
-
-fn postproc_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
-    let postproc_file_suffixes = &[
-        "FHS__postproc_summary.csv",
-        "FHS_notional__postproc_summary.csv",
-        "FHS_FEE__postproc.csv",
-        "FHS_FEE_notional__postproc.csv",
-    ];
-
-    let mut differences = Vec::new();
-
-    for suffix in postproc_file_suffixes {
-        let mut file_differences = postproc_file_differences(demo_input_file_name, suffix);
-        differences.append(&mut file_differences);
-    }
-    differences
 }
 
 fn demo_input(demo_input_file_name: &&str) -> BufReader<File> {
@@ -80,67 +67,32 @@ fn demo_input(demo_input_file_name: &&str) -> BufReader<File> {
     )
 }
 
-fn postproc_file_path(dir: &str, file_name: &str, suffix: &str) -> String {
-    format!("{dir}/{file_name}__results/{file_name}__{suffix}")
-}
+fn postproc_csv_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
+    let postproc_file_suffixes = &[
+        "__FHS__postproc_summary.csv",
+        "__FHS_notional__postproc_summary.csv",
+        "__FHS_FEE__postproc.csv",
+        "__FHS_FEE_notional__postproc.csv",
+    ];
 
-#[derive(Debug, Clone)]
-pub enum Difference {
-    Number {
-        actual: f64,
-        expected: f64,
-        numerical_difference: f64,
-        file_name: String,
-        row_name: String,
-    },
-    String {
-        actual: String,
-        expected: String,
-        file_name: String,
-        row_name: String,
-    },
-}
+    let mut differences = Vec::new();
 
-impl fmt::Display for Difference {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // assumption here that actual is Rust and expected is Python
-        match self {
-            Difference::String {
-                actual,
-                expected,
-                file_name,
-                row_name,
-            } => {
-                write!(
-                    f,
-                    "file {file_name} - row: {row_name}, 🦀: \"{actual}\", 🐍: \"{expected}\""
-                )
-            }
-            Difference::Number {
-                actual,
-                expected,
-                numerical_difference,
-                file_name,
-                row_name,
-            } => {
-                write!(
-                    f,
-                    "file {file_name} - row: {row_name}, 🦀: {actual}, 🐍: {expected}, Diff: {numerical_difference}"
-                )
-            }
-        }
+    for suffix in postproc_file_suffixes {
+        let mut file_differences = postproc_csv_file_differences(demo_input_file_name, suffix);
+        differences.append(&mut file_differences);
     }
+    differences
 }
 
-fn postproc_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
+fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
     let mut actual_postproc_file = ReaderBuilder::new()
         .has_headers(false)
-        .from_path(postproc_file_path(TEMPORARY_OUTPUT_DIR, file_name, suffix))
+        .from_path(result_file_path(TEMPORARY_OUTPUT_DIR, file_name, suffix))
         .unwrap();
 
     let mut expected_postproc_file = ReaderBuilder::new()
         .has_headers(false)
-        .from_path(postproc_file_path(
+        .from_path(result_file_path(
             EXPECTED_POSTPROC_OUTPUT_DIR,
             file_name,
             suffix,
@@ -171,7 +123,7 @@ fn postproc_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
                             actual: actual_f64,
                             expected: expected_f64,
                             file_name: format!("{file_name}__{suffix}"),
-                            row_name: row_name.into(),
+                            location: row_name.into(),
                             numerical_difference,
                         });
                     }
@@ -182,7 +134,7 @@ fn postproc_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
                             actual: actual_value.to_string(),
                             expected: expected_value.to_string(),
                             file_name: format!("{file_name}__{suffix}"),
-                            row_name: row_name.into(),
+                            location: row_name.into(),
                         });
                     }
                 }
@@ -190,4 +142,181 @@ fn postproc_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
         }
     }
     file_differences
+}
+
+fn result_file_path(dir: &str, file_name: &str, suffix: &str) -> String {
+    format!("{dir}/{file_name}__results/{file_name}{suffix}")
+}
+
+#[derive(Debug, Clone)]
+pub enum Difference {
+    Number {
+        actual: f64,
+        expected: f64,
+        numerical_difference: f64,
+        file_name: String,
+        location: String,
+    },
+    String {
+        actual: String,
+        expected: String,
+        file_name: String,
+        location: String,
+    },
+    Key {
+        actual: String,
+        expected: String,
+        file_name: String,
+        description: String,
+    },
+}
+
+impl fmt::Display for Difference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // assumption here that actual is Rust and expected is Python
+        match self {
+            Difference::String {
+                actual,
+                expected,
+                file_name,
+                location,
+            } => {
+                write!(
+                    f,
+                    "file {file_name} - {location}, 🦀: \"{actual}\", 🐍: \"{expected}\""
+                )
+            }
+            Difference::Number {
+                actual,
+                expected,
+                numerical_difference,
+                file_name,
+                location,
+            } => {
+                write!(
+                    f,
+                    "file {file_name} - {location}, 🦀: {actual}, 🐍: {expected}, Diff: {numerical_difference}"
+                )
+            }
+            Difference::Key {
+                actual,
+                expected,
+                file_name,
+                description,
+            } => {
+                write!(
+                    f,
+                    "file {file_name} - {description}, 🦀: \"{actual}\", 🐍: \"{expected}\""
+                )
+            }
+        }
+    }
+}
+
+fn postproc_metrics_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
+    let metrics_files = &[
+        "FHS_metrics.json",
+        "FHS_notional_metrics.json",
+        "FHS_FEE_metrics.json",
+        "FHS_FEE_notional_metrics.json",
+    ];
+
+    let mut differences = Vec::new();
+    for metrics_file_name in metrics_files {
+        let mut file_differences =
+            metrics_file_differences(demo_input_file_name, metrics_file_name);
+        differences.append(&mut file_differences);
+    }
+
+    differences
+}
+
+fn metrics_file_value(directory: &str, input_file_name: &str, metrics_file_name: &str) -> Value {
+    let file_path = format!("{directory}/{input_file_name}__results/{metrics_file_name}");
+    let file =
+        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
+    serde_json::from_str(&file).unwrap()
+}
+
+fn metrics_file_differences(
+    demo_input_file_name: &str,
+    metrics_file_name: &str,
+) -> Vec<Difference> {
+    let mut differences = vec![];
+    let actual_output = metrics_file_value(
+        TEMPORARY_OUTPUT_DIR,
+        demo_input_file_name,
+        metrics_file_name,
+    );
+    let expected_output = metrics_file_value(
+        EXPECTED_POSTPROC_OUTPUT_DIR,
+        demo_input_file_name,
+        metrics_file_name,
+    );
+    let file_path = format!("{demo_input_file_name}__results/{metrics_file_name}");
+    differences.append(
+        metric_output_differences(&actual_output, &expected_output, file_path.as_str()).as_mut(),
+    );
+
+    differences
+}
+
+pub(crate) fn metric_output_differences(
+    actual: &Value,
+    expected: &Value,
+    file_path: &str,
+) -> Vec<Difference> {
+    let mut differences = vec![];
+
+    let actual_metric = actual.get("eer").unwrap();
+    let expected_metric = expected.get("eer").unwrap();
+
+    let actual_description = actual_metric.get("description").unwrap();
+    let actual_grade = actual_metric.get("grade").unwrap();
+    let actual_units = actual_metric.get("units").unwrap();
+    let actual_value = actual_metric.get("value").unwrap().as_f64().unwrap();
+
+    let expected_description = expected_metric.get("description").unwrap();
+    let expected_grade = expected_metric.get("grade").unwrap();
+    let expected_units = expected_metric.get("units").unwrap();
+    let expected_value = expected_metric.get("value").unwrap().as_f64().unwrap();
+
+    if actual_description != expected_description {
+        differences.push(Difference::String {
+            actual: actual_description.to_string(),
+            expected: expected_description.to_string(),
+            file_name: file_path.to_string(),
+            location: "description".to_string(),
+        })
+    }
+
+    if actual_grade != expected_grade {
+        differences.push(Difference::String {
+            actual: actual_grade.to_string(),
+            expected: expected_grade.to_string(),
+            file_name: file_path.to_string(),
+            location: "grade".to_string(),
+        })
+    }
+
+    if actual_units != expected_units {
+        differences.push(Difference::String {
+            actual: actual_units.to_string(),
+            expected: expected_units.to_string(),
+            file_name: file_path.to_string(),
+            location: "units".to_string(),
+        })
+    }
+
+    let numerical_difference = (actual_value - expected_value).abs();
+    if numerical_difference > FLOAT_THRESHOLD {
+        differences.push(Difference::Number {
+            actual: actual_value,
+            expected: expected_value,
+            numerical_difference,
+            file_name: file_path.to_string(),
+            location: "value".to_string(),
+        })
+    }
+    differences
 }
