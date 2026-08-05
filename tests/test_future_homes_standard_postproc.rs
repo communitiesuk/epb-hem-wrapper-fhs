@@ -17,7 +17,6 @@ pub const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_pos
 
 #[test]
 fn test_fhs_postproc_result_files() {
-    let timer = Instant::now();
     let demo_input_file_name = "DESN-H-End-02-ESH-cMEV";
     let demo_input = demo_input(&demo_input_file_name);
 
@@ -37,7 +36,6 @@ fn test_fhs_postproc_result_files() {
         false,
         &[],
     );
-    println!("RUN WRAPPERS FINISHED: {:?}", timer.elapsed());
 
     assert!(result.is_ok());
 
@@ -45,9 +43,7 @@ fn test_fhs_postproc_result_files() {
     let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
 
     common::delete_temporary_output_directory(demo_input_file_name);
-
-    println!("TEST FINISHED: {:?}", timer.elapsed());
-
+    
     assert!(
         differences.is_empty() && metrics_differences.is_empty(),
         "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
