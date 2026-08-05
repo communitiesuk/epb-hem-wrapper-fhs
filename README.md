@@ -85,13 +85,15 @@ just unit
 
 To run e2e preprocessing tests:
 
-First, generate the python preprocessing output files. You'll only need to do this once.
-To generate the files again once the Python has been updated you will need to update the
+First, generate the Python preprocessing output files. You'll only need to do this once. The process will clone the
+Python FHS wrapper repo to py_fhs_wrapper at the root of the project if the directory doesn't already exist.
+To generate the files again using a new Python version, you will need to delete your local py_fhs_wrapper repo (if it
+exists) and update the
 `generate_python_outputs` script to point to the new tag or branch. Currently, it points
 to `1.0.0a7`.
 
 ```bash
-cargo run --bin generate_python_outputs
+just generate-python-outputs
 ```
 
 then:
