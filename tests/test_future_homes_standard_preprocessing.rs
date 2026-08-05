@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::str::from_utf8;
 use std::sync::{Arc, LazyLock};
@@ -536,12 +536,17 @@ impl OutputWriter for InMemoryDirectoryOutputWriter {
         location_key: &str,
         file_extension: &str,
     ) -> anyhow::Result<impl Write> {
-        Ok(self
+        let key = self.output_file_index(location_key, file_extension);
+
+        let file_writer = self
             .files
             .lock()
-            .entry(self.output_file_index(location_key, file_extension))
+            .entry(key)
             .or_insert_with(FileWriter::new)
-            .clone())
+            .clone();
+
+        // BufWriter prevents acquiring the RwLock on every byte chunk
+        Ok(BufWriter::new(file_writer))
     }
 }
 
