@@ -35,7 +35,7 @@ pub(crate) struct InMemoryDirectoryOutputWriter {
 }
 
 impl InMemoryDirectoryOutputWriter {
-    pub(crate) fn new(input_filename: &str) -> Self {
+    pub fn new(input_filename: &str) -> Self {
         Self {
             input_filename: input_filename.split('.').next().unwrap().to_string(),
             files: Arc::new(Mutex::new(IndexMap::new())),
