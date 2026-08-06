@@ -5,17 +5,17 @@ use home_energy_model::read_weather_file::{
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
-use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::{assert_eq, fs};
 
 mod common;
+use crate::common::InMemoryDirectoryOutputWriter;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
 
 pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str =
@@ -485,81 +485,6 @@ fn print_differences(differences: &[MismatchType], max_to_print: Option<usize>) 
                 );
             }
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct FileWriter(Arc<RwLock<Vec<u8>>>);
-
-impl FileWriter {
-    fn new() -> Self {
-        Self(Arc::new(RwLock::new(Vec::with_capacity(2usize.pow(14)))))
-    }
-}
-
-impl Write for FileWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write().extend_from_slice(buf);
-
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-struct InMemoryDirectoryOutputWriter {
-    input_filename: String,
-    files: Arc<Mutex<IndexMap<String, FileWriter>>>,
-}
-
-impl InMemoryDirectoryOutputWriter {
-    fn new(input_filename: &str) -> Self {
-        Self {
-            input_filename: input_filename.split('.').next().unwrap().to_string(),
-            files: Arc::new(Mutex::new(IndexMap::new())),
-        }
-    }
-
-    fn output_file_index(&self, location_key: &str, file_extension: &str) -> String {
-        format!(
-            "{}__{}.{}",
-            self.input_filename, location_key, file_extension
-        )
-    }
-
-    pub fn files(&self) -> IndexMap<String, String> {
-        self.files
-            .lock()
-            .iter()
-            .map(|(k, v)| {
-                let bytes = v.0.read();
-                let string_content = String::from_utf8_lossy(&bytes).to_string();
-                (k.clone(), string_content)
-            })
-            .collect()
-    }
-}
-
-impl OutputWriter for InMemoryDirectoryOutputWriter {
-    fn writer_for_location_key(
-        &self,
-        location_key: &str,
-        file_extension: &str,
-    ) -> anyhow::Result<impl Write> {
-        let key = self.output_file_index(location_key, file_extension);
-
-        let file_writer = self
-            .files
-            .lock()
-            .entry(key)
-            .or_insert_with(FileWriter::new)
-            .clone();
-
-        // BufWriter prevents acquiring the RwLock on every byte chunk
-        Ok(BufWriter::with_capacity(2usize.pow(14), file_writer))
     }
 }
 
