@@ -16,4 +16,5 @@ jobs:
           pip install numpy==2.1.0
       - uses: extractions/setup-just@v4
       - run: just unit
+      - run: just e2e-preproc-provided
       - run: cargo rustc --lib --no-default-features -- -Awarnings

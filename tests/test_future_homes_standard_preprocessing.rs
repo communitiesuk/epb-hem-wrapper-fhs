@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::str::from_utf8;
 use std::sync::{Arc, LazyLock};
 use std::{assert_eq, fs};
 
@@ -49,7 +48,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
         let external_conditions = get_external_conditions_for(file_name);
         let output_writer = InMemoryDirectoryOutputWriter::new(file_name);
 
-        run_fhs_preprocessing(file_name, external_conditions, output_writer.clone());
+        run_fhs_preprocessing(file_name, external_conditions, &output_writer);
 
         let files = output_writer.files();
         let file_differences =
@@ -89,7 +88,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
             let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-            run_fhs_preprocessing(demo_input_file_name, None, output_writer.clone());
+            run_fhs_preprocessing(demo_input_file_name, None, &output_writer);
 
             let files = output_writer.files();
             let file_differences =
@@ -129,15 +128,16 @@ fn mode_differences(
     demo_input_file_name: &str,
     failing_modes: &mut Vec<String>,
     mode: &str,
+    actual_files: &IndexMap<String, String>,
     expected_output_dir: &str,
-    files: &IndexMap<String, String>,
 ) -> usize {
-    let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-    // TODO extract getting of actual output to function
-    let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{demo_input_file_name}__{suffix}.json");
-    let actual_file = files.get(&file_path).unwrap();
-    let actual_output = serde_json::from_str(&actual_file).unwrap();
+    let (actual_output, expected_output) = file_values(
+        demo_input_file_name,
+        mode,
+        actual_files,
+        expected_output_dir,
+    );
+
     let mut errors = vec![];
     let mode_difference_count =
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
@@ -152,7 +152,7 @@ fn mode_differences(
 fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
-    output_writer: impl OutputWriter,
+    output_writer: &impl OutputWriter,
 ) -> () {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
@@ -178,13 +178,24 @@ fn run_fhs_preprocessing(
     println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
 }
 
-fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
+fn file_values(
+    file_name: &str,
+    mode: &str,
+    actual_files: &IndexMap<String, String>,
+    expected_output_dir: &str,
+) -> (Value, Value) {
     let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{directory}{file_name}__results/{file_name}__{suffix}.json");
-    let file =
-        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
-    let output: Value = serde_json::from_str(&file).unwrap();
-    output
+    let filename_with_suffix = format!("{file_name}__{suffix}.json");
+
+    let actual_str = actual_files.get(&filename_with_suffix).unwrap();
+    let actual_output = serde_json::from_str(&actual_str).unwrap();
+
+    let expected_path = format!("{expected_output_dir}{file_name}__results/{filename_with_suffix}");
+    let expected_str = fs::read_to_string(&expected_path)
+        .unwrap_or_else(|_| panic!("Output file not found at {expected_path}"));
+    let expected_output = serde_json::from_str(&expected_str).unwrap();
+
+    (actual_output, expected_output)
 }
 
 fn get_file_differences(
@@ -198,8 +209,8 @@ fn get_file_differences(
             file_name,
             &mut file_differences,
             mode,
-            expected_output_dir,
             files,
+            expected_output_dir,
         );
     }
 
@@ -467,21 +478,19 @@ fn print_differences(differences: &[MismatchType], max_to_print: Option<usize>) 
 }
 
 #[derive(Clone, Debug)]
-struct FileWriter(Arc<RwLock<String>>);
+struct FileWriter(Arc<RwLock<Vec<u8>>>);
 
 impl FileWriter {
     fn new() -> Self {
-        Self(Arc::new(RwLock::new(String::with_capacity(2usize.pow(14)))))
+        Self(Arc::new(RwLock::new(Vec::with_capacity(2usize.pow(14)))))
     }
 }
 
 impl Write for FileWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let utf8 =
-            from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        self.0.write().push_str(utf8);
+        self.0.write().extend_from_slice(buf);
 
-        Ok(utf8.len())
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -514,7 +523,11 @@ impl InMemoryDirectoryOutputWriter {
         self.files
             .lock()
             .iter()
-            .map(|(k, v)| (k.clone(), v.0.read().clone()))
+            .map(|(k, v)| {
+                let bytes = v.0.read();
+                let string_content = String::from_utf8_lossy(&bytes).to_string();
+                (k.clone(), string_content)
+            })
             .collect()
     }
 }
@@ -535,7 +548,7 @@ impl OutputWriter for InMemoryDirectoryOutputWriter {
             .clone();
 
         // BufWriter prevents acquiring the RwLock on every byte chunk
-        Ok(BufWriter::new(file_writer))
+        Ok(BufWriter::with_capacity(2usize.pow(14), file_writer))
     }
 }
 

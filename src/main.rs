@@ -175,7 +175,7 @@ fn main() -> anyhow::Result<()> {
 
     let response = run_wrappers(
         BufReader::new(File::open(Path::new(input_file))?),
-        file_output,
+        &file_output,
         external_conditions,
         args.tariff_file.as_ref().map(|f| f.as_str()),
         &project_flags,
