@@ -25,7 +25,7 @@ fn test_fhs_postproc_result_files() {
 
     let result = run_wrappers(
         demo_input,
-        output_writer,
+        &output_writer,
         None,
         None,
         &FhsFlags::FHS_COMPLIANCE,
@@ -67,7 +67,7 @@ fn test_fhs_postproc_compliance_differences() {
 
     let result = run_wrappers(
         demo_input,
-        output_writer,
+        &output_writer,
         None,
         None,
         &FhsFlags::FHS_COMPLIANCE,
@@ -195,34 +195,55 @@ fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Differenc
 }
 
 fn postproc_csv_compliance_differences(demo_input_file_name: &str) -> Vec<Difference> {
-
-    let python_compliance_scores = get_compliance_scores(demo_input_file_name, EXPECTED_POSTPROC_OUTPUT_DIR);
+    let python_compliance_scores =
+        get_compliance_scores(demo_input_file_name, EXPECTED_POSTPROC_OUTPUT_DIR);
     let rust_compliance_scores = get_compliance_scores(demo_input_file_name, TEMPORARY_OUTPUT_DIR);
 
     let mut differences = Vec::new();
 
-    if python_compliance_scores.emission_rate_is_compliant != rust_compliance_scores.emission_rate_is_compliant {
-        differences.push(Difference::String { 
-            actual: rust_compliance_scores.emission_rate_is_compliant.to_string(), 
-            expected: python_compliance_scores.emission_rate_is_compliant.to_string(), 
-            file_name: demo_input_file_name.to_string(), 
-            location: "Emission Rate (DER <= TER)".to_string() });
+    if python_compliance_scores.emission_rate_is_compliant
+        != rust_compliance_scores.emission_rate_is_compliant
+    {
+        differences.push(Difference::String {
+            actual: rust_compliance_scores
+                .emission_rate_is_compliant
+                .to_string(),
+            expected: python_compliance_scores
+                .emission_rate_is_compliant
+                .to_string(),
+            file_name: demo_input_file_name.to_string(),
+            location: "Emission Rate (DER <= TER)".to_string(),
+        });
     }
 
-    if python_compliance_scores.primary_energy_rate_is_compliant != rust_compliance_scores.primary_energy_rate_is_compliant {
-        differences.push(Difference::String { 
-            actual: rust_compliance_scores.primary_energy_rate_is_compliant.to_string(), 
-            expected: python_compliance_scores.primary_energy_rate_is_compliant.to_string(), 
-            file_name: demo_input_file_name.to_string(), 
-            location: "Primary Energy Rate (DPER <= TPER)".to_string() });
+    if python_compliance_scores.primary_energy_rate_is_compliant
+        != rust_compliance_scores.primary_energy_rate_is_compliant
+    {
+        differences.push(Difference::String {
+            actual: rust_compliance_scores
+                .primary_energy_rate_is_compliant
+                .to_string(),
+            expected: python_compliance_scores
+                .primary_energy_rate_is_compliant
+                .to_string(),
+            file_name: demo_input_file_name.to_string(),
+            location: "Primary Energy Rate (DPER <= TPER)".to_string(),
+        });
     }
 
-    if python_compliance_scores.fabric_energy_efficiency_is_compliant != rust_compliance_scores.fabric_energy_efficiency_is_compliant {
-        differences.push(Difference::String { 
-            actual: rust_compliance_scores.fabric_energy_efficiency_is_compliant.to_string(), 
-            expected: python_compliance_scores.fabric_energy_efficiency_is_compliant.to_string(), 
-            file_name: demo_input_file_name.to_string(), 
-            location: "Fabric Energy Efficiciency (Dwelling <= Notional)".to_string() });
+    if python_compliance_scores.fabric_energy_efficiency_is_compliant
+        != rust_compliance_scores.fabric_energy_efficiency_is_compliant
+    {
+        differences.push(Difference::String {
+            actual: rust_compliance_scores
+                .fabric_energy_efficiency_is_compliant
+                .to_string(),
+            expected: python_compliance_scores
+                .fabric_energy_efficiency_is_compliant
+                .to_string(),
+            file_name: demo_input_file_name.to_string(),
+            location: "Fabric Energy Efficiciency (Dwelling <= Notional)".to_string(),
+        });
     }
 
     differences
@@ -231,11 +252,10 @@ fn postproc_csv_compliance_differences(demo_input_file_name: &str) -> Vec<Differ
 struct ComplianceScores {
     emission_rate_is_compliant: bool,
     primary_energy_rate_is_compliant: bool,
-    fabric_energy_efficiency_is_compliant: bool
+    fabric_energy_efficiency_is_compliant: bool,
 }
 
 fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> ComplianceScores {
-
     let mut postproc_summary_file = ReaderBuilder::new()
         .has_headers(true)
         .from_path(result_file_path(
@@ -245,11 +265,29 @@ fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> 
         ))
         .unwrap();
 
-    // TODO improve readability. Can we 
+    // TODO improve readability. Can we
     // get the third field in the first record
 
-    let dwelling_emission_rate = postproc_summary_file.records().next().unwrap().unwrap().iter().nth(2).unwrap().parse::<f64>().unwrap();
-    let dwelling_primary_energy_rate = postproc_summary_file.records().next().unwrap().unwrap().iter().nth(2).unwrap().parse::<f64>().unwrap();
+    let dwelling_emission_rate = postproc_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .nth(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let dwelling_primary_energy_rate = postproc_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .nth(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
 
     let mut notional_postproc_summary_file = ReaderBuilder::new()
         .has_headers(true)
@@ -260,8 +298,24 @@ fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> 
         ))
         .unwrap();
 
-    let notional_emission_rate = notional_postproc_summary_file.records().next().unwrap().unwrap().get(2).unwrap().parse::<f64>().unwrap();
-    let notional_primary_energy_rate = notional_postproc_summary_file.records().next().unwrap().unwrap().get(2).unwrap().parse::<f64>().unwrap();
+    let notional_emission_rate = notional_postproc_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .get(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let notional_primary_energy_rate = notional_postproc_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .get(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
 
     let mut postproc_fee_summary_file = ReaderBuilder::new()
         .has_headers(false)
@@ -272,7 +326,15 @@ fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> 
         ))
         .unwrap();
 
-    let dwelling_fabric_energy_efficiency = postproc_fee_summary_file.records().next().unwrap().unwrap().get(2).unwrap().parse::<f64>().unwrap();
+    let dwelling_fabric_energy_efficiency = postproc_fee_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .get(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
 
     let mut notional_postproc_fee_summary_file = ReaderBuilder::new()
         .has_headers(false)
@@ -283,12 +345,22 @@ fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> 
         ))
         .unwrap();
 
-    let notional_fabric_energy_efficiency = notional_postproc_fee_summary_file.records().next().unwrap().unwrap().get(2).unwrap().parse::<f64>().unwrap();
+    let notional_fabric_energy_efficiency = notional_postproc_fee_summary_file
+        .records()
+        .next()
+        .unwrap()
+        .unwrap()
+        .get(2)
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
 
     ComplianceScores {
         emission_rate_is_compliant: dwelling_emission_rate <= notional_emission_rate,
-        primary_energy_rate_is_compliant: dwelling_primary_energy_rate <= notional_primary_energy_rate,
-        fabric_energy_efficiency_is_compliant: dwelling_fabric_energy_efficiency <= notional_fabric_energy_efficiency
+        primary_energy_rate_is_compliant: dwelling_primary_energy_rate
+            <= notional_primary_energy_rate,
+        fabric_energy_efficiency_is_compliant: dwelling_fabric_energy_efficiency
+            <= notional_fabric_energy_efficiency,
     }
 }
 

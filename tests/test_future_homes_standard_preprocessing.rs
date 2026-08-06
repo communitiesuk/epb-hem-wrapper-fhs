@@ -48,7 +48,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
         let external_conditions = get_external_conditions_for(file_name);
         let output_writer = InMemoryDirectoryOutputWriter::new(file_name);
 
-        run_fhs_preprocessing(file_name, external_conditions, output_writer.clone());
+        run_fhs_preprocessing(file_name, external_conditions, &output_writer);
 
         let files = output_writer.files();
         let file_differences =
@@ -88,7 +88,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
             let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-            run_fhs_preprocessing(demo_input_file_name, None, output_writer.clone());
+            run_fhs_preprocessing(demo_input_file_name, None, &output_writer);
 
             let files = output_writer.files();
             let file_differences =
@@ -152,7 +152,7 @@ fn mode_differences(
 fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
-    output_writer: impl OutputWriter,
+    output_writer: &impl OutputWriter,
 ) -> () {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
