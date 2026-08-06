@@ -1,15 +1,17 @@
 use csv::ReaderBuilder;
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
+use indexmap::IndexMap;
 use itertools::Itertools;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
 mod common;
-use crate::common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
+use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
 const TEMPORARY_OUTPUT_DIR: &'static str = "./tests/e2e/test_future_homes_standard_outputs/";
 const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
 
@@ -60,10 +62,7 @@ fn test_fhs_postproc_compliance_differences() {
     let demo_input_file_name = "DESN-H-End-02-ESH-cMEV";
     let demo_input = demo_input(&demo_input_file_name);
 
-    let output_writer = FileOutputWriter::new(
-        create_temporary_output_directory(demo_input_file_name),
-        format!("{demo_input_file_name}__{{}}.{{}}"),
-    );
+    let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
     let result = run_wrappers(
         demo_input,
@@ -79,10 +78,9 @@ fn test_fhs_postproc_compliance_differences() {
 
     assert!(result.is_ok());
 
-    let differences = postproc_csv_compliance_differences(demo_input_file_name);
+    let actual_files = &output_writer.files();
+    let differences = postproc_csv_compliance_differences(demo_input_file_name, actual_files);
     // let metrics_differences = postproc_metrics_compliance_differences(demo_input_file_name);
-
-    delete_temporary_output_directory(demo_input_file_name);
 
     assert!(
         differences.is_empty(),
@@ -137,13 +135,17 @@ fn postproc_csv_results_differences(demo_input_file_name: &str) -> Vec<Differenc
 fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
     let mut actual_postproc_file = ReaderBuilder::new()
         .has_headers(false)
-        .from_path(result_file_path(TEMPORARY_OUTPUT_DIR, file_name, suffix))
+        .from_path(result_file_path(
+            Some(TEMPORARY_OUTPUT_DIR),
+            file_name,
+            suffix,
+        ))
         .unwrap();
 
     let mut expected_postproc_file = ReaderBuilder::new()
         .has_headers(false)
         .from_path(result_file_path(
-            EXPECTED_POSTPROC_OUTPUT_DIR,
+            Some(EXPECTED_POSTPROC_OUTPUT_DIR),
             file_name,
             suffix,
         ))
@@ -194,10 +196,12 @@ fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Differenc
     file_differences
 }
 
-fn postproc_csv_compliance_differences(demo_input_file_name: &str) -> Vec<Difference> {
-    let python_compliance_scores =
-        get_compliance_scores(demo_input_file_name, EXPECTED_POSTPROC_OUTPUT_DIR);
-    let rust_compliance_scores = get_compliance_scores(demo_input_file_name, TEMPORARY_OUTPUT_DIR);
+fn postproc_csv_compliance_differences(
+    demo_input_file_name: &str,
+    rust_files: &IndexMap<String, String>,
+) -> Vec<Difference> {
+    let python_compliance_scores = get_compliance_scores(demo_input_file_name, None);
+    let rust_compliance_scores = get_compliance_scores(demo_input_file_name, Some(rust_files));
 
     let mut differences = Vec::new();
 
@@ -249,107 +253,107 @@ fn postproc_csv_compliance_differences(demo_input_file_name: &str) -> Vec<Differ
     differences
 }
 
+fn summary_file(
+    demo_input_file_name: &str,
+    rust_files: Option<&IndexMap<String, String>>,
+    suffix: &str,
+) -> IndexMap<String, csv::StringRecord> {
+    let bytes = match rust_files {
+        Some(rust_files) => {
+            let filename_with_suffix = &format!("{demo_input_file_name}{suffix}");
+            Cow::Borrowed(
+                rust_files
+                    .get(filename_with_suffix)
+                    .expect(&format!("File not found: {filename_with_suffix}"))
+                    .as_bytes(),
+            )
+        }
+        None => {
+            let path = python_result_file_path(demo_input_file_name, suffix);
+            Cow::Owned(fs::read(&path).expect(&format!("File not found: {path}")))
+        }
+    };
+
+    ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(bytes.as_ref())
+        .records()
+        .flatten()
+        .filter_map(|rec| {
+            let key = rec.get(0)?.to_string();
+            Some((key, rec))
+        })
+        .collect()
+}
+
 struct ComplianceScores {
     emission_rate_is_compliant: bool,
     primary_energy_rate_is_compliant: bool,
     fabric_energy_efficiency_is_compliant: bool,
 }
 
-fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> ComplianceScores {
-    let mut postproc_summary_file = ReaderBuilder::new()
-        .has_headers(true)
-        .from_path(result_file_path(
-            output_directory,
-            demo_input_file_name,
-            "__FHS__postproc_summary.csv",
-        ))
-        .unwrap();
-
-    // TODO improve readability. Can we
-    // get the third field in the first record
-
+fn get_compliance_scores(
+    demo_input_file_name: &str,
+    rust_files: Option<&IndexMap<String, String>>,
+) -> ComplianceScores {
+    let postproc_summary_file = summary_file(
+        demo_input_file_name,
+        rust_files,
+        "__FHS__postproc_summary.csv",
+    );
     let dwelling_emission_rate = postproc_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
-        .iter()
-        .nth(2)
+        .get("DER")
+        .expect("DER not found in postproc summary")
+        .get(2)
         .unwrap()
         .parse::<f64>()
         .unwrap();
     let dwelling_primary_energy_rate = postproc_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
-        .iter()
-        .nth(2)
+        .get("DPER")
+        .expect("DPER not found in postproc summary")
+        .get(2)
         .unwrap()
         .parse::<f64>()
         .unwrap();
 
-    let mut notional_postproc_summary_file = ReaderBuilder::new()
-        .has_headers(true)
-        .from_path(result_file_path(
-            output_directory,
-            demo_input_file_name,
-            "__FHS_notional__postproc_summary.csv",
-        ))
-        .unwrap();
-
+    let notional_postproc_summary_file = summary_file(
+        demo_input_file_name,
+        rust_files,
+        "__FHS_notional__postproc_summary.csv",
+    );
     let notional_emission_rate = notional_postproc_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
+        .get("TER")
+        .expect("TER not found in notional postproc summary")
         .get(2)
         .unwrap()
         .parse::<f64>()
         .unwrap();
     let notional_primary_energy_rate = notional_postproc_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
+        .get("TPER")
+        .expect("TPER not found in notional postproc summary")
         .get(2)
         .unwrap()
         .parse::<f64>()
         .unwrap();
 
-    let mut postproc_fee_summary_file = ReaderBuilder::new()
-        .has_headers(false)
-        .from_path(result_file_path(
-            output_directory,
-            demo_input_file_name,
-            "__FHS_FEE__postproc.csv",
-        ))
-        .unwrap();
-
+    let postproc_fee_summary_file =
+        summary_file(demo_input_file_name, rust_files, "__FHS_FEE__postproc.csv");
     let dwelling_fabric_energy_efficiency = postproc_fee_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
+        .get("Fabric Energy Efficiency")
+        .expect("Fabric Energy Efficiency not found in FEE postproc summary")
         .get(2)
         .unwrap()
         .parse::<f64>()
         .unwrap();
 
-    let mut notional_postproc_fee_summary_file = ReaderBuilder::new()
-        .has_headers(false)
-        .from_path(result_file_path(
-            output_directory,
-            demo_input_file_name,
-            "__FHS_FEE_notional__postproc.csv",
-        ))
-        .unwrap();
-
+    let notional_postproc_fee_summary_file = summary_file(
+        demo_input_file_name,
+        rust_files,
+        "__FHS_FEE_notional__postproc.csv",
+    );
     let notional_fabric_energy_efficiency = notional_postproc_fee_summary_file
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
+        .get("Fabric Energy Efficiency")
+        .expect("Fabric Energy Efficiency not found in FEE notional postproc summary")
         .get(2)
         .unwrap()
         .parse::<f64>()
@@ -364,8 +368,15 @@ fn get_compliance_scores(demo_input_file_name: &str, output_directory: &str) -> 
     }
 }
 
-fn result_file_path(dir: &str, file_name: &str, suffix: &str) -> String {
-    format!("{dir}/{file_name}__results/{file_name}{suffix}")
+fn result_file_path(dir: Option<&str>, file_name: &str, suffix: &str) -> String {
+    match dir {
+        Some(dir) => format!("{dir}/{file_name}__results/{file_name}{suffix}"),
+        None => format!("{file_name}{suffix}"),
+    }
+}
+
+fn python_result_file_path(file_name: &str, suffix: &str) -> String {
+    format!("{EXPECTED_POSTPROC_OUTPUT_DIR}/{file_name}__results/{file_name}{suffix}")
 }
 
 #[derive(Debug, Clone)]
