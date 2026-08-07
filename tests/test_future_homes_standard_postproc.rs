@@ -1,4 +1,4 @@
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, StringRecord};
 use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
@@ -257,20 +257,20 @@ fn summary_file(
     demo_input_file_name: &str,
     rust_files: Option<&IndexMap<String, String>>,
     suffix: &str,
-) -> IndexMap<String, csv::StringRecord> {
+) -> IndexMap<String, StringRecord> {
     let bytes = match rust_files {
         Some(rust_files) => {
             let filename_with_suffix = &format!("{demo_input_file_name}{suffix}");
             Cow::Borrowed(
                 rust_files
                     .get(filename_with_suffix)
-                    .expect(&format!("File not found: {filename_with_suffix}"))
+                    .unwrap_or_else(|| panic!("File not found: {filename_with_suffix}"))
                     .as_bytes(),
             )
         }
         None => {
             let path = python_result_file_path(demo_input_file_name, suffix);
-            Cow::Owned(fs::read(&path).expect(&format!("File not found: {path}")))
+            Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
 
@@ -284,6 +284,16 @@ fn summary_file(
             Some((key, rec))
         })
         .collect()
+}
+
+fn summary_field(key: &str, summary_file_map: &IndexMap<String, StringRecord>) -> f64 {
+    summary_file_map
+        .get(key)
+        .unwrap_or_else(|| panic!("{key} not found in postproc summary"))
+        .get(2)
+        .unwrap_or_else(|| panic!("{key} field 3 not found in postproc summary"))
+        .parse::<f64>()
+        .unwrap_or_else(|_| panic!("Unable to parse {key} field 3"))
 }
 
 struct ComplianceScores {
@@ -301,63 +311,31 @@ fn get_compliance_scores(
         rust_files,
         "__FHS__postproc_summary.csv",
     );
-    let dwelling_emission_rate = postproc_summary_file
-        .get("DER")
-        .expect("DER not found in postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
-    let dwelling_primary_energy_rate = postproc_summary_file
-        .get("DPER")
-        .expect("DPER not found in postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
+    let dwelling_emission_rate = summary_field("DER", &postproc_summary_file);
+    let dwelling_primary_energy_rate = summary_field("DPER", &postproc_summary_file);
 
     let notional_postproc_summary_file = summary_file(
         demo_input_file_name,
         rust_files,
         "__FHS_notional__postproc_summary.csv",
     );
-    let notional_emission_rate = notional_postproc_summary_file
-        .get("TER")
-        .expect("TER not found in notional postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
-    let notional_primary_energy_rate = notional_postproc_summary_file
-        .get("TPER")
-        .expect("TPER not found in notional postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
+    let notional_emission_rate = summary_field("TER", &notional_postproc_summary_file);
+    let notional_primary_energy_rate = summary_field("TPER", &notional_postproc_summary_file);
 
     let postproc_fee_summary_file =
         summary_file(demo_input_file_name, rust_files, "__FHS_FEE__postproc.csv");
-    let dwelling_fabric_energy_efficiency = postproc_fee_summary_file
-        .get("Fabric Energy Efficiency")
-        .expect("Fabric Energy Efficiency not found in FEE postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
+    let dwelling_fabric_energy_efficiency =
+        summary_field("Fabric Energy Efficiency", &postproc_fee_summary_file);
 
     let notional_postproc_fee_summary_file = summary_file(
         demo_input_file_name,
         rust_files,
         "__FHS_FEE_notional__postproc.csv",
     );
-    let notional_fabric_energy_efficiency = notional_postproc_fee_summary_file
-        .get("Fabric Energy Efficiency")
-        .expect("Fabric Energy Efficiency not found in FEE notional postproc summary")
-        .get(2)
-        .unwrap()
-        .parse::<f64>()
-        .unwrap();
+    let notional_fabric_energy_efficiency = summary_field(
+        "Fabric Energy Efficiency",
+        &notional_postproc_fee_summary_file,
+    );
 
     ComplianceScores {
         emission_rate_is_compliant: dwelling_emission_rate <= notional_emission_rate,
