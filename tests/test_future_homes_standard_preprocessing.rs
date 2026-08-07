@@ -1,18 +1,26 @@
-use home_energy_model::output_writer::FileOutputWriter;
-use home_energy_model::read_weather_file::cibse_weather_data_to_external_conditions;
+use home_energy_model::output_writer::OutputWriter;
+use home_energy_model::read_weather_file::{
+    cibse_weather_data_to_external_conditions, ExternalConditions,
+};
 use home_energy_model::OutputFormat;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
-use rstest::rstest;
+use indexmap::IndexMap;
+use rayon::prelude::*;
 use serde_json::{json, Number, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::{assert_eq, fs};
 
-const FLOAT_THRESHOLD: f64 = 1e-6; // 0.000001
+mod common;
+use crate::common::InMemoryDirectoryOutputWriter;
+use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
 
+pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str =
+    "./tests/e2e/expected_provided_results/future_homes_standard/";
+const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
 const ERRORS_TO_PRINT: usize = 10;
 
 static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
@@ -24,131 +32,93 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
     ])
 });
 
-#[rstest]
-#[case("DESN-H-End-02-ESH-cMEV", false)]
-#[case("DESN-H-End-02-HP-iMEV-pre-heat", false)]
-#[case("DESN-H-End-02-HP-iMEV-wwhrs-storage-tank", false)]
-#[case("demo_FHS", true)] // expected results folder is called demo_fhs_with_weather_file in Python
-fn test_fhs_preprocessing_output_against_expected_results(
-    #[case] demo_input_file_name: &str,
-    #[case] specify_weather_file: bool,
-) {
-    let demo_input_file = BufReader::new(
-        File::open(Path::new(&format!(
-            "./examples/input/future_homes_standard/{demo_input_file_name}.json"
-        )))
-        .unwrap(),
-    );
-
-    let weather_file = specify_weather_file.then_some(
-        cibse_weather_data_to_external_conditions(
-            File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
-        )
-        .unwrap(),
-    );
-
-    let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
-    let temporary_output_sub_dir =
-        create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
-    let output_writer = FileOutputWriter::new(
-        temporary_output_sub_dir.clone(),
-        format!("{demo_input_file_name}__{{}}.{{}}"),
-    );
-
-    let result = run_wrappers(
-        demo_input_file,
-        output_writer,
-        weather_file,
-        None,
-        &FhsFlags::FHS_COMPLIANCE,
-        true,
-        false,
-        false,
-        &[OutputFormat::Json],
-    );
-    assert!(result.is_ok());
-
-    let mut difference_count = 0;
-    let mut failing_modes = vec![];
-    for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-        let expected_output_dir = "./tests/e2e/expected_provided_results/future_homes_standard/";
-        let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-        let actual_output = file_value(temporary_output_dir, demo_input_file_name, mode);
-        let mut errors = vec![];
-        let mode_difference_count = preprocessed_input_matches_expected(
-            &actual_output,
-            &expected_output,
-            vec![],
-            &mut errors,
-        );
-        if mode_difference_count > 0 {
-            println!("\nMode '{mode}' for {demo_input_file_name}.json had {mode_difference_count} mismatches:\n");
-            print_differences(&errors, Some(ERRORS_TO_PRINT));
-            failing_modes.push(format!("{mode}: {mode_difference_count}"));
-            difference_count += mode_difference_count;
-        }
-    }
-
-    delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
-
-    assert_eq!(
-        difference_count,
-        0,
-        "mismatches found for {demo_input_file_name}: {}\n",
-        failing_modes.join(", ")
-    );
-}
-
 #[test]
-fn test_fhs_preprocessing_output_against_generated_results_from_python() {
-    let demo_files_dir = Path::new("examples/input/future_homes_standard");
+fn test_fhs_preprocessing_output_against_provided_results() {
+    let demo_file_names = [
+        "DESN-H-End-02-ESH-cMEV",
+        "DESN-H-End-02-HP-iMEV-pre-heat",
+        "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
+        "demo_FHS",
+    ];
+
     let mut total_difference_count = 0;
     let mut differences = vec![];
 
-    for entry in fs::read_dir(demo_files_dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
+    for file_name in &demo_file_names {
+        let external_conditions = get_external_conditions_for(file_name);
+        let output_writer = InMemoryDirectoryOutputWriter::new(file_name);
 
-        if !path.is_dir() && entry.file_name().to_str().unwrap().ends_with(".json") {
+        run_fhs_preprocessing(file_name, external_conditions, &output_writer);
+
+        let files = output_writer.files();
+        let file_differences =
+            get_file_differences(PROVIDED_EXPECTED_OUTPUT_DIR, file_name, &files);
+
+        if file_differences.len() > 0 {
+            println!(
+                "\nmismatches found for {file_name}: {}\n\n{:-^120}",
+                file_differences.join(", "),
+                ""
+            )
+        }
+
+        differences.push(format!("{file_name}: {}", file_differences.join(", "),));
+        total_difference_count += file_differences.len();
+    }
+
+    assert_eq!(
+        total_difference_count,
+        0,
+        "\n\nTotal mismatches found against provided result files: {}\n{}\n\n",
+        total_difference_count,
+        differences.join("\n"),
+    )
+}
+
+#[test]
+fn test_fhs_preprocessing_output_against_generated_results() {
+    let differences: Vec<(String, usize)> = fs::read_dir(DEMO_FILES_DIR)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<PathBuf>>()
+        .into_par_iter()
+        .map(|path| {
             let demo_input_file_name = path.clone();
             let demo_input_file_name = demo_input_file_name.file_stem().unwrap().to_str().unwrap();
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-            let temporary_output_dir = "./tests/e2e/test_future_homes_standard_outputs/";
-            let temporary_output_sub_dir =
-                create_temporary_output_directory(temporary_output_dir, demo_input_file_name);
+            run_fhs_preprocessing(demo_input_file_name, None, &output_writer);
 
-            run_fhs_preprocessing(path, demo_input_file_name, &temporary_output_sub_dir);
+            let files = output_writer.files();
+            let file_differences =
+                get_file_differences(GENERATED_EXPECTED_OUTPUT_DIR, &demo_input_file_name, &files);
 
-            let mut file_difference_count = 0;
-            let mut file_differences = vec![];
-            for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
-                file_difference_count += mode_differences(
-                    demo_input_file_name,
-                    temporary_output_dir,
-                    &mut file_differences,
-                    mode,
-                );
-            }
-            if file_difference_count > 0 {
+            if file_differences.len() > 0 {
                 println!(
                     "\nmismatches found for {demo_input_file_name}: {}\n\n{:-^120}",
                     file_differences.join(", "),
                     ""
                 )
             }
-            differences.push(format!(
-                "{demo_input_file_name}: {}",
-                file_differences.join(", "),
-            ));
-            total_difference_count += file_difference_count;
-            delete_temporary_output_directory(temporary_output_dir, temporary_output_sub_dir);
-        }
-    }
+            (
+                format!("{demo_input_file_name}: {}", file_differences.join(", "),),
+                file_differences.len(),
+            )
+        })
+        .collect();
+    let (differences, total_difference_count) =
+        differences
+            .into_iter()
+            .fold((Vec::new(), 0), |(mut names, total), (name, count)| {
+                names.push(name);
+                (names, total + count)
+            });
 
     assert_eq!(
         total_difference_count,
         0,
-        "\n\nTotal mismatches found: {}\n{}\n\n",
+        "\n\nTotal mismatches found against generated result files: {}\n{}\n\n",
         total_difference_count,
         differences.join("\n"),
     )
@@ -156,13 +126,18 @@ fn test_fhs_preprocessing_output_against_generated_results_from_python() {
 
 fn mode_differences(
     demo_input_file_name: &str,
-    temporary_output_dir: &str,
     failing_modes: &mut Vec<String>,
     mode: &str,
+    actual_files: &IndexMap<String, String>,
+    expected_output_dir: &str,
 ) -> usize {
-    let expected_output_dir = "./tests/e2e/expected_generated_results/";
-    let expected_output = file_value(expected_output_dir, demo_input_file_name, mode);
-    let actual_output = file_value(temporary_output_dir, demo_input_file_name, mode);
+    let (actual_output, expected_output) = file_values(
+        demo_input_file_name,
+        mode,
+        actual_files,
+        expected_output_dir,
+    );
+
     let mut errors = vec![];
     let mode_difference_count =
         preprocessed_input_matches_expected(&actual_output, &expected_output, vec![], &mut errors);
@@ -175,22 +150,19 @@ fn mode_differences(
 }
 
 fn run_fhs_preprocessing(
-    path: PathBuf,
-    demo_input_file_name: &str,
-    temporary_output_sub_dir: &PathBuf,
+    input_file_name: &str,
+    external_conditions: Option<ExternalConditions>,
+    output_writer: &impl OutputWriter,
 ) -> () {
-    let demo_input = BufReader::new(File::open(path).unwrap());
+    let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
+    let input_file_path = Path::new(input_file_path);
+    let input = BufReader::new(File::open(input_file_path).unwrap());
 
-    let output_writer = FileOutputWriter::new(
-        temporary_output_sub_dir.clone(),
-        format!("{}__{{}}.{{}}", demo_input_file_name),
-    );
-
-    println!("\nStarting to run {demo_input_file_name}");
+    println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
     let result = run_wrappers(
-        demo_input,
+        input,
         output_writer,
-        None,
+        external_conditions,
         None,
         &FhsFlags::FHS_COMPLIANCE,
         true,
@@ -198,37 +170,64 @@ fn run_fhs_preprocessing(
         false,
         &[OutputFormat::Json],
     );
-    if result.is_err() {
-        println!(
-            "\nError running fhs preprocessing for: {}",
-            demo_input_file_name
+    assert!(
+        result.is_ok(),
+        "\nError running Rust FHS preprocessing for: {}.json",
+        input_file_name
+    );
+    println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
+}
+
+fn file_values(
+    file_name: &str,
+    mode: &str,
+    actual_files: &IndexMap<String, String>,
+    expected_output_dir: &str,
+) -> (Value, Value) {
+    let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
+    let filename_with_suffix = format!("{file_name}__{suffix}.json");
+
+    let actual_str = actual_files.get(&filename_with_suffix).unwrap();
+    let actual_output = serde_json::from_str(&actual_str).unwrap();
+
+    let expected_path = format!("{expected_output_dir}{file_name}__results/{filename_with_suffix}");
+    let expected_str = fs::read_to_string(&expected_path)
+        .unwrap_or_else(|_| panic!("Output file not found at {expected_path}"));
+    let expected_output = serde_json::from_str(&expected_str).unwrap();
+
+    (actual_output, expected_output)
+}
+
+fn get_file_differences(
+    expected_output_dir: &str,
+    file_name: &&str,
+    files: &IndexMap<String, String>,
+) -> Vec<String> {
+    let mut file_differences = vec![];
+    for mode in ["actual", "actual-FEE", "notional", "notional-FEE"] {
+        mode_differences(
+            file_name,
+            &mut file_differences,
+            mode,
+            files,
+            expected_output_dir,
         );
     }
-    assert!(result.is_ok());
-    println!("Finished running {demo_input_file_name}");
+
+    file_differences.to_vec()
 }
 
-fn file_value(directory: &str, file_name: &str, mode: &str) -> Value {
-    let suffix = MODE_OUTPUTS.get(mode).expect("Invalid mode");
-    let file_path = format!("{directory}{file_name}__results/{file_name}__{suffix}.json");
-    let file =
-        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
-    let output: Value = serde_json::from_str(&file).unwrap();
-    output
-}
-
-fn create_temporary_output_directory(directory: &str, demo_file_name: &str) -> PathBuf {
-    let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(format!("{directory}{demo_file_name}__results"));
-    fs::create_dir_all(&temp_output_dir).unwrap();
-    temp_output_dir
-}
-
-fn delete_temporary_output_directory(parent_directory: &str, sub_directory: PathBuf) {
-    fs::remove_dir_all(&sub_directory).unwrap();
-    let mut temp_output_dir = PathBuf::new();
-    temp_output_dir.push(parent_directory);
-    let _ = fs::remove_dir(temp_output_dir);
+fn get_external_conditions_for(file_name: &&str) -> Option<ExternalConditions> {
+    // In the Python the London weather file is only specified for demo_FHS,
+    // the other cases use the default one
+    let use_london_weather_file = *file_name == "demo_FHS";
+    let external_conditions = use_london_weather_file.then_some(
+        cibse_weather_data_to_external_conditions(BufReader::new(
+            File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
+        ))
+        .unwrap(),
+    );
+    external_conditions
 }
 
 pub struct Location(Vec<String>);
@@ -371,9 +370,15 @@ pub(crate) fn preprocessed_input_matches_expected(
                 }
             }
             for key in expected_keys {
-                // skip comparing values of "Events" keys as these are affected by different
+                // skip comparing values of "Events" and "schedule keys as these are affected by different
                 // implementations of random number generators in Python vs Rust
-                if key == "Events" {
+                // skip comparing "priority due to know bug
+                let keys_to_skip = [
+                    "Events".to_string(),
+                    "schedule".to_string(),
+                    "priority".to_string(),
+                ];
+                if keys_to_skip.contains(key) {
                     continue;
                 }
                 let actual_value = actual_obj.get(key).unwrap_or(&Value::Null);

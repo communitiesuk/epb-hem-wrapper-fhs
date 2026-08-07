@@ -160,9 +160,8 @@ impl HemWrapper for ChosenWrapper {
 #[instrument(skip_all)]
 #[allow(clippy::too_many_arguments)]
 pub fn run_wrappers(
-    // TODO: consider if this should move to main.rs
     input: impl Read,
-    output_writer: impl OutputWriter,
+    output_writer: &impl OutputWriter,
     external_conditions_data: Option<ExternalConditions>,
     tariff_data_file: Option<&str>,
     flags: &FhsFlags,
@@ -259,7 +258,7 @@ pub fn run_wrappers(
         if preprocess_only {
             for (calculation_key, input_for_processing) in inputs_by_key {
                 let location_key = format!("{}__preproc", calculation_key.as_str());
-                write_preproc_file(&input_for_processing, &output_writer, &location_key, "json")?;
+                write_preproc_file(&input_for_processing, output_writer, &location_key, "json")?;
             }
 
             return Ok(None);
@@ -289,7 +288,7 @@ pub fn run_wrappers(
                 wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
         }
 
-        run_wrapper_postprocessing(&output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
+        run_wrapper_postprocessing(output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
     }))
         .map_err(|e| {

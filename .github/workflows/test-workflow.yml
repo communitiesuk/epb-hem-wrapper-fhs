@@ -12,4 +12,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       - run: just unit
+      - run: just e2e-preproc-provided
       - run: cargo rustc --lib --no-default-features -- -Awarnings
