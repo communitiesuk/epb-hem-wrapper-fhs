@@ -11,7 +11,7 @@ use std::{fmt, fs};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
+const PYTHON_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
 
 #[test]
 fn test_fhs_postproc_result_files() {
@@ -73,8 +73,8 @@ fn test_fhs_postproc_compliance_differences() {
 
     assert!(result.is_ok());
 
-    let actual_files = &output_writer.files();
-    let differences = postproc_csv_compliance_differences(demo_input_file_name, actual_files);
+    let rust_files = &output_writer.files();
+    let differences = postproc_csv_compliance_differences(demo_input_file_name, rust_files);
     // let metrics_differences = postproc_metrics_compliance_differences(demo_input_file_name);
 
     assert!(
@@ -132,12 +132,12 @@ fn postproc_csv_file_differences(
                 rust_value.parse::<f64>().ok(),
                 python_value.parse::<f64>().ok(),
             ) {
-                (Some(actual_f64), Some(expected_f64)) => {
-                    let numerical_difference = (actual_f64 - expected_f64).abs();
+                (Some(rust_f64), Some(python_f64)) => {
+                    let numerical_difference = (rust_f64 - python_f64).abs();
                     if numerical_difference > FLOAT_THRESHOLD {
                         file_differences.push(Difference::Number {
-                            actual: actual_f64,
-                            expected: expected_f64,
+                            rust: rust_f64,
+                            python: python_f64,
                             file_name: format!("{file_name}__{suffix}"),
                             location: row_name.into(),
                             numerical_difference,
@@ -147,8 +147,8 @@ fn postproc_csv_file_differences(
                 _ => {
                     if rust_value.to_string() != python_value.to_string() {
                         file_differences.push(Difference::String {
-                            actual: rust_value.to_string(),
-                            expected: python_value.to_string(),
+                            rust: rust_value.to_string(),
+                            python: python_value.to_string(),
                             file_name: format!("{file_name}__{suffix}"),
                             location: row_name.into(),
                         });
@@ -173,10 +173,10 @@ fn postproc_csv_compliance_differences(
         != rust_compliance_scores.emission_rate_is_compliant
     {
         differences.push(Difference::String {
-            actual: rust_compliance_scores
+            rust: rust_compliance_scores
                 .emission_rate_is_compliant
                 .to_string(),
-            expected: python_compliance_scores
+            python: python_compliance_scores
                 .emission_rate_is_compliant
                 .to_string(),
             file_name: demo_input_file_name.to_string(),
@@ -188,10 +188,10 @@ fn postproc_csv_compliance_differences(
         != rust_compliance_scores.primary_energy_rate_is_compliant
     {
         differences.push(Difference::String {
-            actual: rust_compliance_scores
+            rust: rust_compliance_scores
                 .primary_energy_rate_is_compliant
                 .to_string(),
-            expected: python_compliance_scores
+            python: python_compliance_scores
                 .primary_energy_rate_is_compliant
                 .to_string(),
             file_name: demo_input_file_name.to_string(),
@@ -203,10 +203,10 @@ fn postproc_csv_compliance_differences(
         != rust_compliance_scores.fabric_energy_efficiency_is_compliant
     {
         differences.push(Difference::String {
-            actual: rust_compliance_scores
+            rust: rust_compliance_scores
                 .fabric_energy_efficiency_is_compliant
                 .to_string(),
-            expected: python_compliance_scores
+            python: python_compliance_scores
                 .fabric_energy_efficiency_is_compliant
                 .to_string(),
             file_name: demo_input_file_name.to_string(),
@@ -232,9 +232,8 @@ fn postproc_file(
                 .as_bytes(),
         ),
         None => {
-            let path = format!(
-                "{EXPECTED_POSTPROC_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}"
-            );
+            let path =
+                format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
             Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
@@ -314,21 +313,21 @@ fn get_compliance_scores(
 #[derive(Debug, Clone)]
 pub enum Difference {
     Number {
-        actual: f64,
-        expected: f64,
+        rust: f64,
+        python: f64,
         numerical_difference: f64,
         file_name: String,
         location: String,
     },
     String {
-        actual: String,
-        expected: String,
+        rust: String,
+        python: String,
         file_name: String,
         location: String,
     },
     Key {
-        actual: String,
-        expected: String,
+        rust: String,
+        python: String,
         file_name: String,
         description: String,
     },
@@ -336,40 +335,39 @@ pub enum Difference {
 
 impl fmt::Display for Difference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // assumption here that actual is Rust and expected is Python
         match self {
             Difference::String {
-                actual,
-                expected,
+                rust,
+                python,
                 file_name,
                 location,
             } => {
                 write!(
                     f,
-                    "file {file_name} - {location}, 🦀: \"{actual}\", 🐍: \"{expected}\""
+                    "file {file_name} - {location}, 🦀: \"{rust}\", 🐍: \"{python}\""
                 )
             }
             Difference::Number {
-                actual,
-                expected,
+                rust,
+                python,
                 numerical_difference,
                 file_name,
                 location,
             } => {
                 write!(
                     f,
-                    "file {file_name} - {location}, 🦀: {actual}, 🐍: {expected}, Diff: {numerical_difference}"
+                    "file {file_name} - {location}, 🦀: {rust}, 🐍: {python}, Diff: {numerical_difference}"
                 )
             }
             Difference::Key {
-                actual,
-                expected,
+                rust,
+                python,
                 file_name,
                 description,
             } => {
                 write!(
                     f,
-                    "file {file_name} - {description}, 🦀: \"{actual}\", 🐍: \"{expected}\""
+                    "file {file_name} - {description}, 🦀: \"{rust}\", 🐍: \"{python}\""
                 )
             }
         }
@@ -412,7 +410,7 @@ fn metrics_file_differences(
     .unwrap();
     let file_path = format!("{demo_input_file_name}__results/{metrics_file_name}");
     let python_output = serde_json::from_str(
-        &fs::read_to_string(format!("{EXPECTED_POSTPROC_OUTPUT_DIR}/{file_path}")).unwrap(),
+        &fs::read_to_string(format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{file_path}")).unwrap(),
     )
     .unwrap();
 
@@ -424,57 +422,57 @@ fn metrics_file_differences(
 }
 
 pub(crate) fn metric_output_differences(
-    actual: &Value,
-    expected: &Value,
+    rust: &Value,
+    python: &Value,
     file_path: &str,
 ) -> Vec<Difference> {
     let mut differences = vec![];
 
-    let actual_metric = actual.get("eer").unwrap();
-    let expected_metric = expected.get("eer").unwrap();
+    let rust_metric = rust.get("eer").unwrap();
+    let python_metric = python.get("eer").unwrap();
 
-    let actual_description = actual_metric.get("description").unwrap();
-    let actual_grade = actual_metric.get("grade").unwrap();
-    let actual_units = actual_metric.get("units").unwrap();
-    let actual_value = actual_metric.get("value").unwrap().as_f64().unwrap();
+    let rust_description = rust_metric.get("description").unwrap();
+    let rust_grade = rust_metric.get("grade").unwrap();
+    let rust_units = rust_metric.get("units").unwrap();
+    let rust_value = rust_metric.get("value").unwrap().as_f64().unwrap();
 
-    let expected_description = expected_metric.get("description").unwrap();
-    let expected_grade = expected_metric.get("grade").unwrap();
-    let expected_units = expected_metric.get("units").unwrap();
-    let expected_value = expected_metric.get("value").unwrap().as_f64().unwrap();
+    let python_description = python_metric.get("description").unwrap();
+    let python_grade = python_metric.get("grade").unwrap();
+    let python_units = python_metric.get("units").unwrap();
+    let python_value = python_metric.get("value").unwrap().as_f64().unwrap();
 
-    if actual_description != expected_description {
+    if rust_description != python_description {
         differences.push(Difference::String {
-            actual: actual_description.to_string(),
-            expected: expected_description.to_string(),
+            rust: rust_description.to_string(),
+            python: python_description.to_string(),
             file_name: file_path.to_string(),
             location: "description".to_string(),
         })
     }
 
-    if actual_grade != expected_grade {
+    if rust_grade != python_grade {
         differences.push(Difference::String {
-            actual: actual_grade.to_string(),
-            expected: expected_grade.to_string(),
+            rust: rust_grade.to_string(),
+            python: python_grade.to_string(),
             file_name: file_path.to_string(),
             location: "grade".to_string(),
         })
     }
 
-    if actual_units != expected_units {
+    if rust_units != python_units {
         differences.push(Difference::String {
-            actual: actual_units.to_string(),
-            expected: expected_units.to_string(),
+            rust: rust_units.to_string(),
+            python: python_units.to_string(),
             file_name: file_path.to_string(),
             location: "units".to_string(),
         })
     }
 
-    let numerical_difference = (actual_value - expected_value).abs();
+    let numerical_difference = (rust_value - python_value).abs();
     if numerical_difference > FLOAT_THRESHOLD {
         differences.push(Difference::Number {
-            actual: actual_value,
-            expected: expected_value,
+            rust: rust_value,
+            python: python_value,
             numerical_difference,
             file_name: file_path.to_string(),
             location: "value".to_string(),
