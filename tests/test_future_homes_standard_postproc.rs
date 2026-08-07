@@ -1,5 +1,4 @@
 use csv::{ReaderBuilder, StringRecord};
-use home_energy_model::output_writer::FileOutputWriter;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -7,12 +6,11 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{fmt, fs};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const TEMPORARY_OUTPUT_DIR: &'static str = "./tests/e2e/test_future_homes_standard_outputs/";
 const EXPECTED_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
 
 #[test]
@@ -20,10 +18,7 @@ fn test_fhs_postproc_result_files() {
     let demo_input_file_name = "DESN-H-End-02-ESH-cMEV";
     let demo_input = demo_input(&demo_input_file_name);
 
-    let output_writer = FileOutputWriter::new(
-        create_temporary_output_directory(demo_input_file_name),
-        format!("{demo_input_file_name}__{{}}.{{}}"),
-    );
+    let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
     let result = run_wrappers(
         demo_input,
@@ -39,10 +34,10 @@ fn test_fhs_postproc_result_files() {
 
     assert!(result.is_ok());
 
-    let differences = postproc_csv_results_differences(demo_input_file_name);
-    let metrics_differences = postproc_metrics_results_differences(demo_input_file_name);
-
-    delete_temporary_output_directory(demo_input_file_name);
+    let rust_files = &output_writer.files();
+    let differences = postproc_csv_results_differences(demo_input_file_name, rust_files);
+    let metrics_differences =
+        postproc_metrics_results_differences(demo_input_file_name, rust_files);
 
     assert!(
         differences.is_empty() && metrics_differences.is_empty(),
@@ -90,22 +85,6 @@ fn test_fhs_postproc_compliance_differences() {
     );
 }
 
-fn create_temporary_output_directory(input_file_name: &str) -> PathBuf {
-    let temp_output_dir =
-        PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
-    fs::create_dir_all(&temp_output_dir).unwrap();
-    temp_output_dir
-}
-
-fn delete_temporary_output_directory(input_file_name: &str) {
-    let temp_output_dir = PathBuf::from(TEMPORARY_OUTPUT_DIR);
-    let temporary_output_sub_dir =
-        PathBuf::from(format!("{TEMPORARY_OUTPUT_DIR}{input_file_name}__results"));
-
-    fs::remove_dir_all(&temporary_output_sub_dir).unwrap();
-    let _ = fs::remove_dir(temp_output_dir);
-}
-
 fn demo_input(input_file_name: &&str) -> BufReader<File> {
     BufReader::new(
         File::open(Path::new(&format!(
@@ -115,7 +94,10 @@ fn demo_input(input_file_name: &&str) -> BufReader<File> {
     )
 }
 
-fn postproc_csv_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
+fn postproc_csv_results_differences(
+    demo_input_file_name: &str,
+    rust_files: &IndexMap<String, String>,
+) -> Vec<Difference> {
     let postproc_file_suffixes = &[
         "__FHS__postproc_summary.csv",
         "__FHS_notional__postproc_summary.csv",
@@ -126,47 +108,29 @@ fn postproc_csv_results_differences(demo_input_file_name: &str) -> Vec<Differenc
     let mut differences = Vec::new();
 
     for suffix in postproc_file_suffixes {
-        let mut file_differences = postproc_csv_file_differences(demo_input_file_name, suffix);
+        let mut file_differences =
+            postproc_csv_file_differences(demo_input_file_name, suffix, rust_files);
         differences.append(&mut file_differences);
     }
     differences
 }
 
-fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Difference> {
-    let mut actual_postproc_file = ReaderBuilder::new()
-        .has_headers(false)
-        .from_path(result_file_path(
-            Some(TEMPORARY_OUTPUT_DIR),
-            file_name,
-            suffix,
-        ))
-        .unwrap();
-
-    let mut expected_postproc_file = ReaderBuilder::new()
-        .has_headers(false)
-        .from_path(result_file_path(
-            Some(EXPECTED_POSTPROC_OUTPUT_DIR),
-            file_name,
-            suffix,
-        ))
-        .unwrap();
+fn postproc_csv_file_differences(
+    file_name: &str,
+    suffix: &str,
+    rust_files: &IndexMap<String, String>,
+) -> Vec<Difference> {
+    let rust_postproc_file = postproc_file(file_name, Some(rust_files), suffix);
+    let python_postproc_file = postproc_file(file_name, None, suffix);
 
     let mut file_differences: Vec<Difference> = vec![];
 
-    for (actual_record, expected_record) in actual_postproc_file
-        .records()
-        .zip(expected_postproc_file.records())
-    {
-        let row_name = actual_record.as_ref().unwrap().get(0).unwrap();
-        for (actual_value, expected_value) in actual_record
-            .as_ref()
-            .unwrap()
-            .iter()
-            .zip(expected_record.unwrap().iter())
-        {
+    for (rust_record, python_record) in rust_postproc_file.into_iter().zip(python_postproc_file) {
+        let row_name = &rust_record.0;
+        for (rust_value, python_value) in rust_record.1.iter().zip(python_record.1.iter()) {
             match (
-                actual_value.parse::<f64>().ok(),
-                expected_value.parse::<f64>().ok(),
+                rust_value.parse::<f64>().ok(),
+                python_value.parse::<f64>().ok(),
             ) {
                 (Some(actual_f64), Some(expected_f64)) => {
                     let numerical_difference = (actual_f64 - expected_f64).abs();
@@ -181,10 +145,10 @@ fn postproc_csv_file_differences(file_name: &str, suffix: &str) -> Vec<Differenc
                     }
                 }
                 _ => {
-                    if actual_value.to_string() != expected_value.to_string() {
+                    if rust_value.to_string() != python_value.to_string() {
                         file_differences.push(Difference::String {
-                            actual: actual_value.to_string(),
-                            expected: expected_value.to_string(),
+                            actual: rust_value.to_string(),
+                            expected: python_value.to_string(),
                             file_name: format!("{file_name}__{suffix}"),
                             location: row_name.into(),
                         });
@@ -253,23 +217,24 @@ fn postproc_csv_compliance_differences(
     differences
 }
 
-fn summary_file(
-    demo_input_file_name: &str,
+fn postproc_file(
+    filename: &str,
     rust_files: Option<&IndexMap<String, String>>,
     suffix: &str,
 ) -> IndexMap<String, StringRecord> {
+    let filename_with_suffix = &format!("{filename}{suffix}");
+
     let bytes = match rust_files {
-        Some(rust_files) => {
-            let filename_with_suffix = &format!("{demo_input_file_name}{suffix}");
-            Cow::Borrowed(
-                rust_files
-                    .get(filename_with_suffix)
-                    .unwrap_or_else(|| panic!("File not found: {filename_with_suffix}"))
-                    .as_bytes(),
-            )
-        }
+        Some(rust_files) => Cow::Borrowed(
+            rust_files
+                .get(filename_with_suffix)
+                .unwrap_or_else(|| panic!("File not found: {filename_with_suffix}"))
+                .as_bytes(),
+        ),
         None => {
-            let path = python_result_file_path(demo_input_file_name, suffix);
+            let path = format!(
+                "{EXPECTED_POSTPROC_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}"
+            );
             Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
@@ -286,7 +251,7 @@ fn summary_file(
         .collect()
 }
 
-fn summary_field(key: &str, summary_file_map: &IndexMap<String, StringRecord>) -> f64 {
+fn field_value(key: &str, summary_file_map: &IndexMap<String, StringRecord>) -> f64 {
     summary_file_map
         .get(key)
         .unwrap_or_else(|| panic!("{key} not found in postproc summary"))
@@ -306,33 +271,33 @@ fn get_compliance_scores(
     demo_input_file_name: &str,
     rust_files: Option<&IndexMap<String, String>>,
 ) -> ComplianceScores {
-    let postproc_summary_file = summary_file(
+    let postproc_summary_file = postproc_file(
         demo_input_file_name,
         rust_files,
         "__FHS__postproc_summary.csv",
     );
-    let dwelling_emission_rate = summary_field("DER", &postproc_summary_file);
-    let dwelling_primary_energy_rate = summary_field("DPER", &postproc_summary_file);
+    let dwelling_emission_rate = field_value("DER", &postproc_summary_file);
+    let dwelling_primary_energy_rate = field_value("DPER", &postproc_summary_file);
 
-    let notional_postproc_summary_file = summary_file(
+    let notional_postproc_summary_file = postproc_file(
         demo_input_file_name,
         rust_files,
         "__FHS_notional__postproc_summary.csv",
     );
-    let notional_emission_rate = summary_field("TER", &notional_postproc_summary_file);
-    let notional_primary_energy_rate = summary_field("TPER", &notional_postproc_summary_file);
+    let notional_emission_rate = field_value("TER", &notional_postproc_summary_file);
+    let notional_primary_energy_rate = field_value("TPER", &notional_postproc_summary_file);
 
     let postproc_fee_summary_file =
-        summary_file(demo_input_file_name, rust_files, "__FHS_FEE__postproc.csv");
+        postproc_file(demo_input_file_name, rust_files, "__FHS_FEE__postproc.csv");
     let dwelling_fabric_energy_efficiency =
-        summary_field("Fabric Energy Efficiency", &postproc_fee_summary_file);
+        field_value("Fabric Energy Efficiency", &postproc_fee_summary_file);
 
-    let notional_postproc_fee_summary_file = summary_file(
+    let notional_postproc_fee_summary_file = postproc_file(
         demo_input_file_name,
         rust_files,
         "__FHS_FEE_notional__postproc.csv",
     );
-    let notional_fabric_energy_efficiency = summary_field(
+    let notional_fabric_energy_efficiency = field_value(
         "Fabric Energy Efficiency",
         &notional_postproc_fee_summary_file,
     );
@@ -344,17 +309,6 @@ fn get_compliance_scores(
         fabric_energy_efficiency_is_compliant: dwelling_fabric_energy_efficiency
             <= notional_fabric_energy_efficiency,
     }
-}
-
-fn result_file_path(dir: Option<&str>, file_name: &str, suffix: &str) -> String {
-    match dir {
-        Some(dir) => format!("{dir}/{file_name}__results/{file_name}{suffix}"),
-        None => format!("{file_name}{suffix}"),
-    }
-}
-
-fn python_result_file_path(file_name: &str, suffix: &str) -> String {
-    format!("{EXPECTED_POSTPROC_OUTPUT_DIR}/{file_name}__results/{file_name}{suffix}")
 }
 
 #[derive(Debug, Clone)]
@@ -422,7 +376,10 @@ impl fmt::Display for Difference {
     }
 }
 
-fn postproc_metrics_results_differences(demo_input_file_name: &str) -> Vec<Difference> {
+fn postproc_metrics_results_differences(
+    demo_input_file_name: &str,
+    rust_files: &IndexMap<String, String>,
+) -> Vec<Difference> {
     let metrics_files = &[
         "FHS_metrics.json",
         "FHS_notional_metrics.json",
@@ -433,38 +390,34 @@ fn postproc_metrics_results_differences(demo_input_file_name: &str) -> Vec<Diffe
     let mut differences = Vec::new();
     for metrics_file_name in metrics_files {
         let mut file_differences =
-            metrics_file_differences(demo_input_file_name, metrics_file_name);
+            metrics_file_differences(demo_input_file_name, metrics_file_name, rust_files);
         differences.append(&mut file_differences);
     }
 
     differences
 }
 
-fn metrics_file_value(directory: &str, input_file_name: &str, metrics_file_name: &str) -> Value {
-    let file_path = format!("{directory}/{input_file_name}__results/{metrics_file_name}");
-    let file =
-        fs::read_to_string(&file_path).expect(&format!("Output file not found at {file_path}"));
-    serde_json::from_str(&file).unwrap()
-}
-
 fn metrics_file_differences(
     demo_input_file_name: &str,
     metrics_file_name: &str,
+    rust_files: &IndexMap<String, String>,
 ) -> Vec<Difference> {
     let mut differences = vec![];
-    let actual_output = metrics_file_value(
-        TEMPORARY_OUTPUT_DIR,
-        demo_input_file_name,
-        metrics_file_name,
-    );
-    let expected_output = metrics_file_value(
-        EXPECTED_POSTPROC_OUTPUT_DIR,
-        demo_input_file_name,
-        metrics_file_name,
-    );
+    let rust_output = serde_json::from_str(
+        rust_files
+            .get(&format!("{demo_input_file_name}__{metrics_file_name}"))
+            .unwrap()
+            .as_str(),
+    )
+    .unwrap();
     let file_path = format!("{demo_input_file_name}__results/{metrics_file_name}");
+    let python_output = serde_json::from_str(
+        &fs::read_to_string(format!("{EXPECTED_POSTPROC_OUTPUT_DIR}/{file_path}")).unwrap(),
+    )
+    .unwrap();
+
     differences.append(
-        metric_output_differences(&actual_output, &expected_output, file_path.as_str()).as_mut(),
+        metric_output_differences(&rust_output, &python_output, file_path.as_str()).as_mut(),
     );
 
     differences
