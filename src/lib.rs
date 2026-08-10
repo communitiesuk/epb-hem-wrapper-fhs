@@ -160,7 +160,6 @@ impl HemWrapper for ChosenWrapper {
 #[instrument(skip_all)]
 #[allow(clippy::too_many_arguments)]
 pub fn run_wrappers(
-    // TODO: consider if this should move to main.rs
     input: impl Read,
     output_writer: &impl OutputWriter,
     external_conditions_data: Option<ExternalConditions>,
