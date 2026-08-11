@@ -14,6 +14,7 @@ bitflags = "2.12.1"
 clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
 #home-energy-model = { path = "../epb-home-energy-model", features = ["clap"] }
+numpy_rust= { git = "https://github.com/Hard-Luck/numpy_rust", branch = "main"}
 home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "main", features = ["clap"] }
 indexmap = { version = "2.12.1", features = ["serde"] }
 itertools = "0.15.0"
