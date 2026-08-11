@@ -2,9 +2,7 @@ use home_energy_model::{
     core::units::{DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT},
     input::ApplianceGainsEvent,
 };
-use rand::{RngExt, SeedableRng};
-use rand_distr::{Distribution, Normal, Poisson};
-use rand_pcg::Pcg64;
+use numpy_rust::Pcg64;
 
 pub(super) struct FhsAppliance {
     pub(super) standby_w: f64,
@@ -61,31 +59,22 @@ impl FhsAppliance {
         duration_std_dev: f64,
     ) -> anyhow::Result<(Vec<ApplianceGainsEvent>, Vec<f64>)> {
         // upstream Python here constructs a seed sequence from consecutive numbers - instead, here we sum the series
-        let mut appliance_rng = Pcg64::seed_from_u64(
-            (0..(flat_profile.len() + annual_expected_uses.ceil() as usize))
-                .map(|x| (x + seed) as u64)
-                .sum::<u64>(),
-        );
-        let events = flat_profile
+        let seed = (0..(flat_profile.len() + annual_expected_uses.ceil() as usize))
+            .map(|x| (x + seed) as u64)
+            .collect::<Vec<u64>>();
+        let mut appliance_rng = Pcg64::from_seed_slice(seed.as_slice());
+        let lamda = flat_profile
             .iter()
-            .map(|x| {
-                let lambda =
-                    (x * annual_expected_uses / DAYS_PER_YEAR as f64).max(f64::MIN_POSITIVE); // ensure lambda > 0. for poisson distribution
-                let poisson = Poisson::new(lambda)?;
-                Ok(poisson.sample(&mut appliance_rng))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|x| x * annual_expected_uses / DAYS_PER_YEAR as f64)
+            .collect::<Vec<f64>>();
+        let events = appliance_rng.poisson_array_from_slice(lamda.as_slice(), flat_profile.len());
         let num_events = events.iter().copied().map(|x| x as usize).sum::<usize>();
 
-        let normal_distribution = Normal::new(0., duration_std_dev)?;
-        let mut event_size_deviations = normal_distribution
-            .sample_iter(&mut appliance_rng)
-            .take(num_events)
-            .collect::<Vec<_>>();
+        let mut event_size_deviations = appliance_rng.normal(0., duration_std_dev, num_events);
 
         for deviation in event_size_deviations.iter_mut() {
-            if *deviation < -1. {
-                *deviation = normal_distribution.sample(&mut appliance_rng).max(-1.);
+            if *deviation < -1.0 {
+                *deviation = appliance_rng.normal(0.0, duration_std_dev, 1)[0].max(-1.0);
             }
         }
 
@@ -122,8 +111,8 @@ impl FhsAppliance {
 
         let mut event_count: usize = Default::default();
         for (step, num_events_in_step) in events.into_iter().enumerate() {
-            let mut start_offset = appliance_rng.random::<f64>();
-            for e in 0..(num_events_in_step.floor() as usize) {
+            let mut start_offset = appliance_rng.random();
+            for e in 0..(num_events_in_step as usize) {
                 let demand_w_event = expected_demand_w_event;
                 let duration =
                     event_duration * (1. + event_size_deviations[event_count]) / f_appliance;
