@@ -2,6 +2,7 @@ use csv::{ReaderBuilder, StringRecord};
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
 use itertools::Itertools;
+use rayon::prelude::*;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::fs::File;
@@ -53,34 +54,52 @@ fn test_fhs_postproc_result_files() {
 fn test_fhs_postproc_compliance_differences() {
     // even if we get different Target and Dwelling values
     // we may still get the correct compliance result (Target and Dwelling differences)
+    let demo_files = [
+        "DESN-H-End-02-ESH-cMEV",
+        "demo_FHS",
+        "DESN-H-End-02-HP-iMEV-pre-heat",
+        "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
+    ];
+    let differences: Vec<(String, usize)> = demo_files
+        .par_iter()
+        .map(|demo_input_file_name| {
+            let demo_input = demo_input(&demo_input_file_name);
 
-    let demo_input_file_name = "DESN-H-End-02-ESH-cMEV";
-    let demo_input = demo_input(&demo_input_file_name);
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-    let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
+            let result = run_wrappers(
+                demo_input,
+                &output_writer,
+                None,
+                None,
+                &FhsFlags::FHS_COMPLIANCE,
+                false,
+                false,
+                false,
+                &[],
+            );
 
-    let result = run_wrappers(
-        demo_input,
-        &output_writer,
-        None,
-        None,
-        &FhsFlags::FHS_COMPLIANCE,
-        false,
-        false,
-        false,
-        &[],
-    );
+            assert!(result.is_ok());
 
-    assert!(result.is_ok());
+            let rust_files = &output_writer.files();
+            let differences = postproc_csv_compliance_differences(demo_input_file_name, rust_files);
 
-    let rust_files = &output_writer.files();
-    let differences = postproc_csv_compliance_differences(demo_input_file_name, rust_files);
-    // let metrics_differences = postproc_metrics_compliance_differences(demo_input_file_name);
+            (differences.iter().join("\n"), differences.len())
+        })
+        .collect();
+    let (differences, total_difference_count) =
+        differences
+            .into_iter()
+            .fold((Vec::new(), 0), |(mut names, total), (name, count)| {
+                names.push(name);
+                (names, total + count)
+            });
 
-    assert!(
-        differences.is_empty(),
-        "\n\nTotal postproc file differences: {}\n{}\n\n",
-        differences.len(),
+    assert_eq!(
+        total_difference_count,
+        0,
+        "\n\nTotal compliance differences: {}\n{}\n\n",
+        total_difference_count,
         differences.iter().join("\n"),
     );
 }
