@@ -586,7 +586,10 @@ pub(crate) fn edit_thermal_bridging(input: &mut InputForProcessing) -> anyhow::R
                 element.insert("heat_transfer_coeff".into(), json!(0.));
             }
             "ThermalBridgeLinear" => {
-                let junction_type = element.get("junction_type").and_then(|junc| junc.as_str()).and_then(|junc| if TABLE_R2.contains_key(junc) { Some(junc) } else { None }).ok_or_else(|| anyhow!("Thermal bridging junction type was expected to be set and one of the values in SAP10.2 Table R2."))?;
+                let junction_type = element.get("junction_type")
+                    .and_then(|junc| junc.as_str())
+                    .filter(|&junc| TABLE_R2.contains_key(junc))
+                    .ok_or_else(|| anyhow!("Thermal bridging junction type was expected to be set and one of the values in SAP10.2 Table R2."))?;
                 element.insert(
                     "linear_thermal_transmittance".into(),
                     json!(TABLE_R2[junction_type]),

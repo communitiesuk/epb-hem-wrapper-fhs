@@ -12,7 +12,7 @@ use std::{fmt, fs};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const PYTHON_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_results/";
+const PYTHON_POSTPROC_OUTPUT_DIR: &str = "./tests/e2e/expected_postproc_results/";
 
 #[test]
 fn test_fhs_postproc_result_files() {
@@ -86,7 +86,7 @@ fn test_fhs_postproc_compliance_differences() {
     let differences: Vec<(String, usize)> = demo_files
         .par_iter()
         .map(|demo_input_file_name| {
-            let demo_input = demo_input(&demo_input_file_name);
+            let demo_input = demo_input(demo_input_file_name);
 
             let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
@@ -187,7 +187,7 @@ fn postproc_csv_file_differences(
                     }
                 }
                 _ => {
-                    if rust_value.to_string() != python_value.to_string() {
+                    if rust_value != python_value {
                         file_differences.push(Difference::String {
                             rust: rust_value.to_string(),
                             python: python_value.to_string(),
