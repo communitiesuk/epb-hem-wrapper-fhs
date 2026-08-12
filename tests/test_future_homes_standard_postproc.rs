@@ -7,8 +7,8 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
-use std::{fmt, fs};
+use std::path::{Path, PathBuf};
+use std::{fmt, format, fs, println, vec};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
@@ -16,18 +16,23 @@ const PYTHON_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_
 
 #[test]
 fn test_fhs_postproc_result_files() {
-    let demo_files = [
-        "DESN-H-End-02-ESH-cMEV",
-        "demo_FHS",
-        "DESN-H-End-02-HP-iMEV-pre-heat",
-        "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
-    ];
-    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_files
-        .par_iter()
-        .map(|demo_input_file_name| {
-            let demo_input = demo_input(&demo_input_file_name);
+    let demo_filepaths = fs::read_dir(DEMO_FILES_DIR)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<PathBuf>>();
 
-            let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
+    // TODO in future we could run this in parallel
+    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_filepaths
+        .iter()
+        .map(|demo_input_file_path| {
+            
+            let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
+            let demo_input = demo_input(&demo_file_name);
+
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
+
+            println!("Running {}", demo_file_name);
 
             let result = run_wrappers(
                 demo_input,
@@ -41,12 +46,16 @@ fn test_fhs_postproc_result_files() {
                 &[],
             );
 
-            assert!(result.is_ok());
+            // TODO fix this!
+            if result.is_err() {
+                return (vec![Difference::String { rust: "Failed to run".to_string(), python: "".to_string(), file_name: demo_file_name.to_string(), location: 0.to_string() }], vec![])
+            }
+
 
             let rust_files = &output_writer.files();
-            let differences = postproc_csv_results_differences(demo_input_file_name, rust_files);
+            let differences = postproc_csv_results_differences(demo_file_name, rust_files);
             let metrics_differences =
-                postproc_metrics_results_differences(demo_input_file_name, rust_files);
+                postproc_metrics_results_differences(demo_file_name, rust_files);
 
             (differences, metrics_differences)
         })
@@ -60,6 +69,8 @@ fn test_fhs_postproc_result_files() {
             (diffs, metric_diffs)
         },
     );
+
+    // TODO - how many were fine?
 
     assert!(
         differences.is_empty() && metric_differences.is_empty(),
@@ -474,12 +485,12 @@ pub(crate) fn metric_output_differences(
     let rust_description = rust_metric.get("description").unwrap();
     let rust_grade = rust_metric.get("grade").unwrap();
     let rust_units = rust_metric.get("units").unwrap();
-    let rust_value = rust_metric.get("value").unwrap().as_f64().unwrap();
+    let rust_value = rust_metric.get("value").unwrap();
 
     let python_description = python_metric.get("description").unwrap();
     let python_grade = python_metric.get("grade").unwrap();
     let python_units = python_metric.get("units").unwrap();
-    let python_value = python_metric.get("value").unwrap().as_f64().unwrap();
+    let python_value = python_metric.get("value").unwrap();
 
     if rust_description != python_description {
         differences.push(Difference::String {
@@ -507,6 +518,16 @@ pub(crate) fn metric_output_differences(
             location: "units".to_string(),
         })
     }
+
+    // allow for matching nulls!
+    if rust_value.is_null() && python_value.is_null() {
+        return differences;
+    }
+
+    // TODO - edge case unhandled here where only one is null
+
+    let rust_value = rust_value.as_f64().unwrap();
+    let python_value = python_value.as_f64().unwrap();
 
     let numerical_difference = (rust_value - python_value).abs();
     if numerical_difference > FLOAT_THRESHOLD {
