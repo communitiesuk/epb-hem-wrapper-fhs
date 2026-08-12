@@ -1,5 +1,6 @@
 use crate::future_homes_standard::future_homes_standard::HourlyHotWaterEvent;
 use crate::future_homes_standard::input::InputForProcessing;
+use crate::random::Pcg64;
 use anyhow::{anyhow, bail};
 use csv::Reader;
 use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
@@ -7,10 +8,7 @@ use home_energy_model::input::WaterHeatingEventType;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
-use rand::SeedableRng;
-use rand_distr::{Distribution, Poisson};
 use rand_mt::Mt;
-use rand_pcg::Pcg64;
 use serde::Deserialize;
 use smartstring::alias::String;
 use std::fmt::{Debug, Formatter};
@@ -347,7 +345,7 @@ impl HotWaterEventGenerator {
             ]);
 
         let rng = Mt::new_with_key([hw_seed.unwrap_or(RNG_SEED) as u32]);
-        let mut rng_poisson = Pcg64::seed_from_u64(hw_seed.unwrap_or(RNG_SEED));
+        let mut rng_poisson = Pcg64::from_seed(hw_seed.unwrap_or(RNG_SEED));
 
         let mut decile: i8 = -1;
         let mut banding_correction = 1.0;
@@ -449,14 +447,7 @@ impl HotWaterEventGenerator {
                         poisson_arr: {
                             let lambda = banding_correction * x as f64 * current_digest.event_count
                                 / sum_event_count as f64;
-                            let poisson = Poisson::new(lambda).unwrap_or_else(|_| {
-                                panic!(
-                                    "Unable to create a poisson generator with the lambda {lambda}"
-                                )
-                            });
-                            (0..POISSON_DISTRIBUTION_SIZE)
-                                .map(|_| poisson.sample(&mut rng_poisson))
-                                .collect::<Vec<f64>>()
+                            rng_poisson.poisson_array(lambda, POISSON_DISTRIBUTION_SIZE)
                         },
                         poisson_arr_idx: 0,
                     }));
@@ -567,7 +558,7 @@ struct DayDigest {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PoissonDistribution {
-    poisson_arr: Vec<f64>,
+    poisson_arr: Vec<usize>,
     poisson_arr_idx: usize,
 }
 
