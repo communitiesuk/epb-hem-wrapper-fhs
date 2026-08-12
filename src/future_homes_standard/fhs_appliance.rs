@@ -67,7 +67,7 @@ impl FhsAppliance {
             .map(|x| x * annual_expected_uses / DAYS_PER_YEAR as f64)
             .collect::<Vec<f64>>();
         let events = appliance_rng.poisson_array_from_slice(lambda.as_slice(), flat_profile.len());
-        let num_events = events.iter().copied().map(|x| x as usize).sum::<usize>();
+        let num_events = events.iter().copied().sum::<usize>();
 
         let mut event_size_deviations = appliance_rng.normal(0., duration_std_dev, num_events);
 

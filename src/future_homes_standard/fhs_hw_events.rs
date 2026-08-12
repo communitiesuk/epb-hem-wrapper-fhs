@@ -470,7 +470,7 @@ impl HotWaterEventGenerator {
         let count = hourly_event_distribution[time % 24].poisson_arr
             [hourly_event_distribution[time % 24].poisson_arr_idx];
         hourly_event_distribution[time % 24].poisson_arr_idx += 1;
-        for _ in 0..(count as usize) {
+        for _ in 0..count {
             out.push(HourEvent {
                 time: time as f64 + mt_random_f64(&mut self.rng),
                 event_type,

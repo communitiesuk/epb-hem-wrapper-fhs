@@ -321,6 +321,7 @@ mod distributions {
         }
     }
 
+    #[allow(clippy::excessive_precision)]
     fn random_loggam(x: f64) -> f64 {
         let a = [
             8.333333333333333e-02,
@@ -360,6 +361,8 @@ mod distributions {
 }
 
 mod ziggurat_constants {
+    #![allow(clippy::excessive_precision)]
+
     //! This module contains constants ported or adapted from NumPy 2.5.1
     //! random-generation sources, including ziggurat-derived tables from
     //! numpy/random/src/distributions/ziggurat_constants.h. Applicable upstream
@@ -1282,11 +1285,7 @@ mod tests {
         let events = appliance_rng.poisson_array_from_slice(&lambdas, lambdas.len());
         assert_eq!(events, vec![0, 0, 1, 0, 0]);
 
-        let num_events = events
-            .iter()
-            .copied()
-            .map(|value| value as usize)
-            .sum::<usize>();
+        let num_events = events.iter().copied().sum::<usize>();
         let mut event_size_deviations = appliance_rng.normal(0.0, duration_std_dev, num_events);
         for deviation in &mut event_size_deviations {
             if *deviation < -1.0 {
@@ -1355,7 +1354,7 @@ mod tests {
         pub poisson: [[usize; 100]; 5],
     }
 
-    pub const FIXTURES: [Fixture; 4] = [
+    pub static FIXTURES: [Fixture; 4] = [
         Fixture {
             seed: 0,
             doubles: [
