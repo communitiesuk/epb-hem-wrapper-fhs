@@ -16,37 +16,58 @@ const PYTHON_POSTPROC_OUTPUT_DIR: &'static str = "./tests/e2e/expected_postproc_
 
 #[test]
 fn test_fhs_postproc_result_files() {
-    let demo_input_file_name = "DESN-H-End-02-ESH-cMEV";
-    let demo_input = demo_input(&demo_input_file_name);
+    let demo_files = [
+        "DESN-H-End-02-ESH-cMEV",
+        "demo_FHS",
+        "DESN-H-End-02-HP-iMEV-pre-heat",
+        "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
+    ];
+    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_files
+        .par_iter()
+        .map(|demo_input_file_name| {
+            let demo_input = demo_input(&demo_input_file_name);
 
-    let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
-    let result = run_wrappers(
-        demo_input,
-        &output_writer,
-        None,
-        None,
-        &FhsFlags::FHS_COMPLIANCE,
-        false,
-        false,
-        false,
-        &[],
+            let result = run_wrappers(
+                demo_input,
+                &output_writer,
+                None,
+                None,
+                &FhsFlags::FHS_COMPLIANCE,
+                false,
+                false,
+                false,
+                &[],
+            );
+
+            assert!(result.is_ok());
+
+            let rust_files = &output_writer.files();
+            let differences = postproc_csv_results_differences(demo_input_file_name, rust_files);
+            let metrics_differences =
+                postproc_metrics_results_differences(demo_input_file_name, rust_files);
+
+            (differences, metrics_differences)
+        })
+        .collect();
+
+    let (differences, metric_differences) = postproc_and_metric_differences.into_iter().fold(
+        (vec![], vec![]),
+        |(mut diffs, mut metric_diffs), (diff, metric_diff)| {
+            diffs.extend(diff);
+            metric_diffs.extend(metric_diff);
+            (diffs, metric_diffs)
+        },
     );
 
-    assert!(result.is_ok());
-
-    let rust_files = &output_writer.files();
-    let differences = postproc_csv_results_differences(demo_input_file_name, rust_files);
-    let metrics_differences =
-        postproc_metrics_results_differences(demo_input_file_name, rust_files);
-
     assert!(
-        differences.is_empty() && metrics_differences.is_empty(),
+        differences.is_empty() && metric_differences.is_empty(),
         "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
         differences.len(),
         differences.iter().join("\n"),
-        metrics_differences.len(),
-        metrics_differences.iter().join("\n")
+        metric_differences.len(),
+        metric_differences.iter().join("\n")
     );
 }
 
