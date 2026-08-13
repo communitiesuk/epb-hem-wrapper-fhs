@@ -71,6 +71,8 @@ fn test_fhs_postproc_result_files() {
     );
 }
 
+// TODO: Consider deleting below test once python randomness match is confirmed
+// test_fhs_postproc_result_files supersedes test_fhs_postproc_compliance_differences
 #[test]
 fn test_fhs_postproc_compliance_differences() {
     // even if we get different Target and Dwelling values
