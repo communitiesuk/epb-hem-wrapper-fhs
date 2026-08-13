@@ -53,9 +53,9 @@ pub(crate) trait HemWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: CustomEnergySourceFactors,
         flags: &FhsFlags,
-    ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>>;
+    ) -> anyhow::Result<HashMap<CalculationKey, (InputForProcessing, CustomEnergySourceFactors)>>;
 
     #[allow(clippy::too_many_arguments)]
     fn apply_postprocessing(
@@ -66,7 +66,7 @@ pub(crate) trait HemWrapper {
         core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
     ) -> anyhow::Result<Option<HemResponse>>;
 }
 
@@ -111,9 +111,10 @@ impl HemWrapper for ChosenWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: CustomEnergySourceFactors,
         flags: &FhsFlags,
-    ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
+    ) -> anyhow::Result<HashMap<CalculationKey, (InputForProcessing, CustomEnergySourceFactors)>>
+    {
         match self {
             ChosenWrapper::FhsIndividualCalc(wrapper) => {
                 wrapper.apply_preprocessing(input, custom_energy_supply_factors, flags)
@@ -132,7 +133,7 @@ impl HemWrapper for ChosenWrapper {
         core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
     ) -> anyhow::Result<Option<HemResponse>> {
         match self {
             ChosenWrapper::FhsIndividualCalc(wrapper) => wrapper.apply_postprocessing(
@@ -213,10 +214,10 @@ pub fn run_wrappers(
         #[instrument(skip_all)]
         fn apply_preprocessing_from_wrappers(
             input_for_processing: InputForProcessing,
-            custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+            custom_energy_supply_factors: CustomEnergySourceFactors,
             wrapper: &impl HemWrapper,
             flags: &FhsFlags,
-        ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
+        ) -> anyhow::Result<HashMap<CalculationKey, (InputForProcessing, CustomEnergySourceFactors)>> {
             wrapper.apply_preprocessing(input_for_processing, custom_energy_supply_factors, flags)
         }
 
@@ -240,7 +241,7 @@ pub fn run_wrappers(
         let custom_energy_supply_factors = initial_preprocessing(&mut input_for_processing)?;
 
         let inputs_by_key = match catch_unwind(AssertUnwindSafe(|| {
-            apply_preprocessing_from_wrappers(input_for_processing, &custom_energy_supply_factors, &wrapper, flags)
+            apply_preprocessing_from_wrappers(input_for_processing, custom_energy_supply_factors, &wrapper, flags)
                 .map_err(HemError::InvalidRequest)
         })) {
             Ok(result) => result?,
@@ -256,7 +257,7 @@ pub fn run_wrappers(
 
         // 2b.(!) If preprocess-only flag is present and there is a primary calculation key, write out preprocess file
         if preprocess_only {
-            for (calculation_key, input_for_processing) in inputs_by_key {
+            for (calculation_key, (input_for_processing, _)) in inputs_by_key {
                 let location_key = format!("{}__preproc", calculation_key.as_str());
                 write_preproc_file(&input_for_processing, output_writer, &location_key, "json")?;
             }
@@ -267,7 +268,7 @@ pub fn run_wrappers(
         let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> =
             inputs_by_key.par_iter()
                 .map(|(key, input_value)| {
-                    let finalized = input_value.clone().finalize()?; // TODO avoid cloning here!
+                    let finalized = input_value.0.clone().finalize()?; // TODO avoid cloning here!
                     home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
                         .map(|result_value| (*key, result_value))
                     }).collect();
@@ -283,10 +284,12 @@ pub fn run_wrappers(
             core_output_formats: &[OutputFormat],
             heat_balance: bool,
             detailed_output_heating_cooling: bool,
-            custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+            custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
         ) -> anyhow::Result<Option<HemResponse>> {
                 wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
         }
+
+        let custom_energy_supply_factors = inputs_by_key.iter().map(|(key, (_, factors))| (*key, factors.clone())).collect::<HashMap<_, _>>();
 
         run_wrapper_postprocessing(output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
@@ -299,3 +302,5 @@ pub fn run_wrappers(
             )
         })?
 }
+
+type CustomEnergySourceFactors = IndexMap<Arc<str>, CustomEnergySourceFactor>;

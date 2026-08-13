@@ -86,9 +86,9 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
     input: &mut InputForProcessing,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
     fhs_fee_assumptions: bool,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<()> {
     let is_fee = fhs_fee_assumptions;
     // Check if a heat network is present
     let heat_network_type = check_heatnetwork_status(input)?;
@@ -134,7 +134,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     )?;
 
     // edit space heating system
-    let custom_energy_supply_factors = edit_space_heating_system(
+    edit_space_heating_system(
         input,
         &cold_water_source,
         total_floor_area,
@@ -149,7 +149,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
     // add solar pv
     add_solar_pv(input, is_fee, total_floor_area)?;
 
-    Ok(custom_energy_supply_factors)
+    Ok(())
 }
 
 fn check_heatnetwork_status(input: &InputForProcessing) -> anyhow::Result<Option<HeatNetworkType>> {
@@ -658,9 +658,9 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
     cold_water_source: &str,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_communal: bool,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<()> {
     let notional_heat_network = json!(
      {
         NOTIONAL_HIU: {
@@ -689,7 +689,7 @@ fn edit_add_heatnetwork_heating(
     // condense the custom supply factors down to just a notional heat pump with either:
     // Communal: A standardised set of factors
     // Sleeved: The actual set of factors averaged across all actual custom fuels
-    let custom_energy_supply_factors = if is_communal {
+    *custom_energy_supply_factors = if is_communal {
         [(
             NOTIONAL_HEAT_NETWORK_NAME.into(),
             CustomEnergySourceFactor {
@@ -732,7 +732,7 @@ fn edit_add_heatnetwork_heating(
     input.remove_custom_energy_supplies()?;
     input.add_energy_supply_for_key(NOTIONAL_HEAT_NETWORK_NAME, heat_network_fuel_data)?;
 
-    Ok(custom_energy_supply_factors)
+    Ok(())
 }
 
 /// Apply heatpump heating to notional building calculation
@@ -1358,11 +1358,11 @@ fn edit_space_heating_system(
     cold_water_source: &str,
     total_floor_area: f64,
     heat_network_type: Option<HeatNetworkType>,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_fee: bool,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<()> {
     // FEE calculation which doesn't need the space heating system at this stage.
-    let custom_energy_supply_factors = if !is_fee {
+    if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
         let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
@@ -1370,7 +1370,7 @@ fn edit_space_heating_system(
         if let Some(heat_network_type @ (HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)) =
             heat_network_type
         {
-            let custom_energy_supply_factors = edit_add_heatnetwork_heating(
+            edit_add_heatnetwork_heating(
                 input,
                 cold_water_source,
                 custom_energy_supply_factors,
@@ -1387,7 +1387,6 @@ fn edit_space_heating_system(
                 NOTIONAL_HIU,
                 &ecodesign_controller,
             )?;
-            custom_energy_supply_factors
         } else {
             edit_add_heatpump_heating(input, design_capacity_overall)?;
             let ecodesign_controller: EcoDesignController = serde_json::from_value(json!({
@@ -1406,13 +1405,10 @@ fn edit_space_heating_system(
                 &ecodesign_controller,
             )?;
             edit_storagetank(input, cold_water_source, total_floor_area)?;
-            custom_energy_supply_factors.clone()
         }
-    } else {
-        custom_energy_supply_factors.clone()
     };
 
-    Ok(custom_energy_supply_factors)
+    Ok(())
 }
 
 fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> {
@@ -1990,8 +1986,13 @@ mod tests {
         }))
         .unwrap();
 
-        edit_add_heatnetwork_heating(&mut test_input, "mains water", &Default::default(), true)
-            .unwrap();
+        edit_add_heatnetwork_heating(
+            &mut test_input,
+            "mains water",
+            &mut Default::default(),
+            true,
+        )
+        .unwrap();
 
         assert_eq!(
             json!(test_input.hot_water_source().unwrap()),
@@ -3127,7 +3128,7 @@ mod tests {
             &cold_water_source,
             tfa,
             HeatNetworkType::UnsleevedDhn.into(),
-            &Default::default(),
+            &mut Default::default(),
             is_fee,
         )
         .unwrap();
@@ -3342,7 +3343,7 @@ mod tests {
         is_fee: bool,
         tfa: f64,
     ) {
-        let custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -3358,12 +3359,12 @@ mod tests {
             .unwrap();
 
         // When the notional heating system is created
-        let new_factors = edit_space_heating_system(
+        edit_space_heating_system(
             &mut test_input,
             &cold_water_source,
             tfa,
             HeatNetworkType::SleevedDhn.into(),
-            &custom_energy_factors,
+            &mut custom_energy_factors,
             is_fee,
         )
         .unwrap();
@@ -3444,7 +3445,7 @@ mod tests {
                 }
             }))
             .unwrap();
-        assert_eq!(new_factors, expected_custom_energy_factors);
+        assert_eq!(custom_energy_factors, expected_custom_energy_factors);
 
         // And the notional custom EnergySupply is added
         assert_eq!(
@@ -3467,7 +3468,7 @@ mod tests {
         is_fee: bool,
         tfa: f64,
     ) {
-        let custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -3493,12 +3494,12 @@ mod tests {
         // When the notional heating system is created
         let heat_network_type =
             test_input.input["HeatSourceWet"]["HeatNetwork"]["heat_network_type"].clone();
-        let new_factors = edit_space_heating_system(
+        edit_space_heating_system(
             &mut test_input,
             &cold_water_source,
             tfa,
             serde_json::from_value(heat_network_type).unwrap(),
-            &custom_energy_factors,
+            &mut custom_energy_factors,
             is_fee,
         )
         .unwrap();
@@ -3579,7 +3580,7 @@ mod tests {
                 }
             }))
             .unwrap();
-        assert_eq!(new_factors, expected_custom_energy_factors);
+        assert_eq!(custom_energy_factors, expected_custom_energy_factors);
 
         // And the notional custom EnergySupply is added
         assert_eq!(

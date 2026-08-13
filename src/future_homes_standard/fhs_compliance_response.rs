@@ -2,9 +2,8 @@
 
 use crate::future_homes_standard::future_homes_standard::{calc_final_rates, FinalRates};
 use crate::future_homes_standard::future_homes_standard_fee::calc_fabric_energy_efficiency;
-use crate::CalculationKey;
+use crate::{CalculationKey, CustomEnergySourceFactors};
 use anyhow::anyhow;
-use home_energy_model::input::CustomEnergySourceFactor;
 use home_energy_model::CalculationResult;
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -229,7 +228,7 @@ impl FhsComplianceCalculationResult for CalculatedComplianceResult {
 impl
     TryFrom<(
         &HashMap<CalculationKey, CalculationResult>,
-        &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        &HashMap<CalculationKey, CustomEnergySourceFactors>,
     )> for CalculatedComplianceResult
 {
     type Error = anyhow::Error;
@@ -237,7 +236,7 @@ impl
     fn try_from(
         (results, custom_energy_source_factors): (
             &HashMap<CalculationKey, CalculationResult>,
-            &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+            &HashMap<CalculationKey, CustomEnergySourceFactors>,
         ),
     ) -> Result<Self, Self::Error> {
         let dwelling_fhs_results = results
@@ -269,6 +268,7 @@ impl
         let total_floor_area = dwelling_fhs_results.output.summary.total_floor_area;
 
         let input = dwelling_fhs_results.input.as_ref();
+        let notional_input = notional_fhs_results.input.as_ref();
 
         Ok(Self {
             dwelling_final_rates: calc_final_rates(
@@ -277,15 +277,15 @@ impl
                 &dwelling_fhs_results.output.core.energy_export,
                 &dwelling_fhs_results.output.core.results_end_user,
                 dwelling_fhs_results.output.core.timestep_array.len(),
-                custom_energy_source_factors,
+                &custom_energy_source_factors[&CalculationKey::Fhs],
             )?,
             target_final_rates: calc_final_rates(
-                input,
+                notional_input,
                 &notional_fhs_results.output.core.energy_import,
                 &notional_fhs_results.output.core.energy_export,
                 &notional_fhs_results.output.core.results_end_user,
                 notional_fhs_results.output.core.timestep_array.len(),
-                custom_energy_source_factors,
+                &custom_energy_source_factors[&CalculationKey::FhsNotional],
             )?,
             dwelling_fabric_energy_efficiency: calc_fabric_energy_efficiency(
                 dwelling_fhs_fee_results
@@ -318,7 +318,11 @@ impl
                     (String::from(fuel.as_ref()), {
                         let dwelling_fuel_total =
                             dwelling_energy_use[fuel]["total"] / total_floor_area;
-                        let target_fuel_total = target_energy_use[fuel]["total"] / total_floor_area;
+                        // the "fuel" key here is actually the energy supply name at the moment
+                        let target_fuel_total = target_energy_use
+                            .get(fuel)
+                            .map(|energy_use| energy_use["total"] / total_floor_area)
+                            .unwrap_or_default();
                         PerformanceValue {
                             actual: dwelling_fuel_total,
                             notional: target_fuel_total,
