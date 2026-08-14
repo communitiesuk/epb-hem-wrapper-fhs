@@ -12,7 +12,7 @@ use std::{fmt, format, fs, println, vec};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const PYTHON_POSTPROC_OUTPUT_DIR: &str = "./tests/e2e/expected_postproc_results/";
+const PYTHON_POSTPROC_OUTPUT_DIR: &str = "./tests/e2e/expected_postproc_results";
 
 #[test]
 fn test_fhs_postproc_result_files() {
