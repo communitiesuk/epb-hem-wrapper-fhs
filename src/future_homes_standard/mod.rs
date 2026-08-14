@@ -7,23 +7,22 @@ use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_noti
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::project_lookups::by_fuel;
-use crate::HemWrapper;
 use crate::{CalculationKey, FhsFlags};
+use crate::{CustomEnergySourceFactors, HemWrapper};
 use anyhow::anyhow;
 use future_homes_standard::apply_fhs_postprocessing;
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
-use home_energy_model::input::{CustomEnergySourceFactor, Input};
+use home_energy_model::input::Input;
 use home_energy_model::output::{Output, OutputCore, OutputSummary};
 use home_energy_model::output_writer::OutputWriter;
 use home_energy_model::{write_core_output_files, HemResponse};
 use home_energy_model::{CalculationResult, OutputFormat};
-use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::ser::PrettyFormatter;
 use serde_json::Serializer;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use tracing::error;
 
 mod fhs_appliance;
@@ -63,9 +62,10 @@ impl HemWrapper for FhsIndividualCalcWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: CustomEnergySourceFactors,
         flags: &FhsFlags,
-    ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
+    ) -> anyhow::Result<HashMap<CalculationKey, (InputForProcessing, CustomEnergySourceFactors)>>
+    {
         let calculations: Vec<(CalculationKey, FhsFlags)> = flags
             .iter()
             .map(|flag| {
@@ -79,10 +79,11 @@ impl HemWrapper for FhsIndividualCalcWrapper {
             .enumerate()
             .map(|(i, mut input)| {
                 let (key, flag) = &calculations[i];
-                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flag)?;
-                Ok((*key, input))
+                let mut custom_energy_supply_factors = custom_energy_supply_factors.clone();
+                do_fhs_preprocessing(&mut input, &mut custom_energy_supply_factors, flag)?;
+                Ok((*key, (input, custom_energy_supply_factors)))
             })
-            .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
+            .collect::<anyhow::Result<HashMap<CalculationKey, _>>>()
     }
 
     fn apply_postprocessing(
@@ -93,7 +94,7 @@ impl HemWrapper for FhsIndividualCalcWrapper {
         core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
     ) -> anyhow::Result<Option<HemResponse>> {
         let calculations: Vec<(CalculationKey, FhsFlags)> = flags
             .iter()
@@ -113,7 +114,7 @@ impl HemWrapper for FhsIndividualCalcWrapper {
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
-                    custom_energy_supply_factors,
+                    &custom_energy_supply_factors[key],
                 )?;
                 Ok(())
             })
@@ -141,18 +142,20 @@ impl HemWrapper for FhsComplianceWrapper {
     fn apply_preprocessing(
         &self,
         input: InputForProcessing,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: CustomEnergySourceFactors,
         _flags: &FhsFlags,
-    ) -> anyhow::Result<HashMap<CalculationKey, InputForProcessing>> {
+    ) -> anyhow::Result<HashMap<CalculationKey, (InputForProcessing, CustomEnergySourceFactors)>>
+    {
         vec![input; FHS_COMPLIANCE_CALCULATIONS.len()]
             .into_par_iter()
             .enumerate()
             .map(|(i, mut input)| {
                 let (key, flag) = &FHS_COMPLIANCE_CALCULATIONS[i];
-                do_fhs_preprocessing(&mut input, custom_energy_supply_factors, flag)?;
-                Ok((*key, input))
+                let mut custom_energy_supply_factors = custom_energy_supply_factors.clone();
+                do_fhs_preprocessing(&mut input, &mut custom_energy_supply_factors, flag)?;
+                Ok((*key, (input, custom_energy_supply_factors)))
             })
-            .collect::<anyhow::Result<HashMap<CalculationKey, InputForProcessing>>>()
+            .collect::<anyhow::Result<HashMap<CalculationKey, _>>>()
     }
 
     fn apply_postprocessing(
@@ -163,7 +166,7 @@ impl HemWrapper for FhsComplianceWrapper {
         core_output_formats: &[OutputFormat],
         heat_balance: bool,
         detailed_output_heating_cooling: bool,
-        custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+        custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
     ) -> anyhow::Result<Option<HemResponse>> {
         FHS_COMPLIANCE_CALCULATIONS
             .par_iter()
@@ -175,7 +178,7 @@ impl HemWrapper for FhsComplianceWrapper {
                     core_output_formats,
                     heat_balance,
                     detailed_output_heating_cooling,
-                    custom_energy_supply_factors,
+                    &custom_energy_supply_factors[key],
                 )?;
                 Ok(())
             })
@@ -201,7 +204,7 @@ static FHS_COMPLIANCE_CALCULATIONS: LazyLock<[(CalculationKey, FhsFlags); 4]> =
 
 fn do_fhs_preprocessing(
     input: &mut InputForProcessing,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut CustomEnergySourceFactors,
     flag: &FhsFlags,
 ) -> anyhow::Result<()> {
     // Validate ventilation rates against part F
@@ -251,7 +254,7 @@ fn do_fhs_postprocessing(
     core_output_formats: &[OutputFormat],
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &CustomEnergySourceFactors,
 ) -> anyhow::Result<Option<HemResponse>> {
     let input = &results.input.clone();
     let OutputCore {

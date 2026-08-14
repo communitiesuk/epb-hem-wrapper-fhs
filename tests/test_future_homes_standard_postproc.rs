@@ -26,7 +26,6 @@ fn test_fhs_postproc_result_files() {
     let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_filepaths
         .iter()
         .map(|demo_input_file_path| {
-            
             let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
             let demo_input = demo_input(&demo_file_name);
 
@@ -48,9 +47,16 @@ fn test_fhs_postproc_result_files() {
 
             // TODO fix this!
             if result.is_err() {
-                return (vec![Difference::String { rust: "Failed to run".to_string(), python: "".to_string(), file_name: demo_file_name.to_string(), location: 0.to_string() }], vec![])
+                return (
+                    vec![Difference::String {
+                        rust: "Failed to run".to_string(),
+                        python: "".to_string(),
+                        file_name: demo_file_name.to_string(),
+                        location: 0.to_string(),
+                    }],
+                    vec![],
+                );
             }
-
 
             let rust_files = &output_writer.files();
             let differences = postproc_csv_results_differences(demo_file_name, rust_files);
@@ -82,6 +88,8 @@ fn test_fhs_postproc_result_files() {
     );
 }
 
+// TODO: Consider deleting below test once python randomness match is confirmed
+// test_fhs_postproc_result_files supersedes test_fhs_postproc_compliance_differences
 #[test]
 fn test_fhs_postproc_compliance_differences() {
     // even if we get different Target and Dwelling values
