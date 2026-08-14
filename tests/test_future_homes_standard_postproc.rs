@@ -25,7 +25,7 @@ fn test_fhs_postproc_result_files() {
     let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_files
         .par_iter()
         .map(|demo_input_file_name| {
-            let demo_input = demo_input(&demo_input_file_name);
+            let demo_input = demo_input(demo_input_file_name);
 
             let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
