@@ -22,9 +22,8 @@ fn test_fhs_postproc_result_files() {
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
         .collect::<Vec<PathBuf>>();
 
-    // TODO in future we could run this in parallel
     let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_filepaths
-        .iter()
+        .par_iter()
         .map(|demo_input_file_path| {
             let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
             let demo_input = demo_input(&demo_file_name);
