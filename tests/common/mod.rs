@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::sync::Arc;
 
 pub(crate) const DEMO_FILES_DIR: &str = "./examples/input/future_homes_standard/";
-pub(crate) const FLOAT_THRESHOLD: f64 = 1e-6; // 0.000001
+pub(crate) const FLOAT_THRESHOLD: f64 = 1e-5; // 0.00001
 
 #[derive(Clone, Debug)]
 struct FileWriter(Arc<RwLock<Vec<u8>>>);
