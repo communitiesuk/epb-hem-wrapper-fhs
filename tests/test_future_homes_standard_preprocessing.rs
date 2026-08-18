@@ -18,9 +18,9 @@ mod common;
 use crate::common::InMemoryDirectoryOutputWriter;
 use common::{DEMO_FILES_DIR, FLOAT_THRESHOLD};
 
-pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &'static str =
+pub(crate) const PROVIDED_EXPECTED_OUTPUT_DIR: &str =
     "./tests/e2e/expected_provided_results/future_homes_standard/";
-const GENERATED_EXPECTED_OUTPUT_DIR: &'static str = "./tests/e2e/expected_generated_results/";
+const GENERATED_EXPECTED_OUTPUT_DIR: &str = "./tests/e2e/expected_generated_results/";
 const ERRORS_TO_PRINT: usize = 10;
 
 static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
@@ -54,7 +54,7 @@ fn test_fhs_preprocessing_output_against_provided_results() {
         let file_differences =
             get_file_differences(PROVIDED_EXPECTED_OUTPUT_DIR, file_name, &files);
 
-        if file_differences.len() > 0 {
+        if !file_differences.is_empty() {
             println!(
                 "\nmismatches found for {file_name}: {}\n\n{:-^120}",
                 file_differences.join(", "),
@@ -94,7 +94,7 @@ fn test_fhs_preprocessing_output_against_generated_results() {
             let file_differences =
                 get_file_differences(GENERATED_EXPECTED_OUTPUT_DIR, &demo_input_file_name, &files);
 
-            if file_differences.len() > 0 {
+            if !file_differences.is_empty() {
                 println!(
                     "\nmismatches found for {demo_input_file_name}: {}\n\n{:-^120}",
                     file_differences.join(", "),
@@ -153,7 +153,7 @@ fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
     output_writer: &impl OutputWriter,
-) -> () {
+) {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
     let input = BufReader::new(File::open(input_file_path).unwrap());
@@ -188,7 +188,7 @@ fn file_values(
     let filename_with_suffix = format!("{file_name}__{suffix}.json");
 
     let actual_str = actual_files.get(&filename_with_suffix).unwrap();
-    let actual_output = serde_json::from_str(&actual_str).unwrap();
+    let actual_output = serde_json::from_str(actual_str).unwrap();
 
     let expected_path = format!("{expected_output_dir}{file_name}__results/{filename_with_suffix}");
     let expected_str = fs::read_to_string(&expected_path)
@@ -221,13 +221,12 @@ fn get_external_conditions_for(file_name: &&str) -> Option<ExternalConditions> {
     // In the Python the London weather file is only specified for demo_FHS,
     // the other cases use the default one
     let use_london_weather_file = *file_name == "demo_FHS";
-    let external_conditions = use_london_weather_file.then_some(
+    use_london_weather_file.then_some(
         cibse_weather_data_to_external_conditions(BufReader::new(
             File::open("./examples/input/London_weather_CIBSE_format.csv").unwrap(),
         ))
         .unwrap(),
-    );
-    external_conditions
+    )
 }
 
 pub struct Location(Vec<String>);
@@ -359,7 +358,7 @@ pub(crate) fn preprocessed_input_matches_expected(
 
                     // don't record 'additional key' difference if its value is empty object
                     if let Some(actual) = actual_value.as_object() {
-                        if actual.len() == 0 {
+                        if actual.is_empty() {
                             continue;
                         }
                     }
@@ -370,15 +369,8 @@ pub(crate) fn preprocessed_input_matches_expected(
                 }
             }
             for key in expected_keys {
-                // skip comparing values of "Events" and "schedule keys as these are affected by different
-                // implementations of random number generators in Python vs Rust
-                // skip comparing "priority due to know bug
-                let keys_to_skip = [
-                    "Events".to_string(),
-                    "schedule".to_string(),
-                    "priority".to_string(),
-                ];
-                if keys_to_skip.contains(key) {
+                // skip comparing `priority` due to known bug
+                if key == "priority" {
                     continue;
                 }
                 let actual_value = actual_obj.get(key).unwrap_or(&Value::Null);

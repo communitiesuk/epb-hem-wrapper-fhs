@@ -8,6 +8,7 @@ use crate::future_homes_standard::input::{
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
     JsonAccessResult,
 };
+use crate::CustomEnergySourceFactors;
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::units::{
@@ -380,7 +381,7 @@ pub fn apply_fhs_postprocessing(
     timestep_array: &[f64],
     notional: bool,
     output_mode: &str,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &CustomEnergySourceFactors,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
 
