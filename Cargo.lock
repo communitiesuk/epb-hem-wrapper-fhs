@@ -1187,8 +1187,6 @@ dependencies = [
  "jsonschema",
  "parking_lot",
  "partial_application",
- "rand 0.10.2",
- "rand_distr",
  "rand_mt",
  "rand_pcg",
  "rayon",
