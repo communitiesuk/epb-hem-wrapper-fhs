@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering::Relaxed;
 use std::{fmt, format, fs, println, vec};
 
 mod common;
@@ -21,6 +22,8 @@ fn test_fhs_postproc_result_files() {
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
         .collect::<Vec<PathBuf>>();
+    let atomic_counter = std::sync::atomic::AtomicUsize::new(0);
+    let total_files = demo_filepaths.len();
 
     let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> = demo_filepaths
         .par_iter()
@@ -57,7 +60,9 @@ fn test_fhs_postproc_result_files() {
             let differences = postproc_csv_results_differences(demo_file_name, rust_files);
             let metrics_differences =
                 postproc_metrics_results_differences(demo_file_name, rust_files);
-
+            if differences.is_empty() && metrics_differences.is_empty() {
+                atomic_counter.fetch_add(1, Relaxed);
+            }
             (differences, metrics_differences, None)
         })
         .collect();
@@ -79,16 +84,22 @@ fn test_fhs_postproc_result_files() {
     );
 
     // TODO - how many were fine?
-
+    
+    let fine_files = atomic_counter.load(Relaxed);
+    let with_differences = total_files - fine_files - failed_files.len();
+    
+    println!("\n\nTotal files ran {} - Successful: {}, With Differences: {}, Failed: {}\n\n", total_files, fine_files, with_differences, failed_files.len());
+    
     assert!(
         differences.is_empty() && metric_differences.is_empty() && failed_files.is_empty(),
-        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\nFailed files: {}\n{}\n\n",
+        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\nFailed files: {}\n{}\n\nTotal fine files: {}\n",
         differences.len(),
         differences.iter().join("\n"),
         metric_differences.len(),
         metric_differences.iter().join("\n"),
         failed_files.len(),
-        failed_files.iter().join("\n")
+        failed_files.iter().join("\n"),
+        fine_files
     );
 }
 
