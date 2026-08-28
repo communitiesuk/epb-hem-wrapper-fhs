@@ -1,5 +1,5 @@
 unit:
-    cargo test --lib --release --nocapture
+    cargo test --lib --release -- --nocapture
 
 e2e: e2e-preproc e2e-postproc
 
