@@ -25,47 +25,48 @@ fn test_fhs_postproc_result_files() {
     let atomic_counter = std::sync::atomic::AtomicUsize::new(0);
     let total_files = demo_filepaths.len();
 
-    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> = demo_filepaths
-        .par_iter()
-        .map(|demo_input_file_path| {
-            let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
-            let demo_input = demo_input(&demo_file_name);
+    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> =
+        demo_filepaths
+            .par_iter()
+            .map(|demo_input_file_path| {
+                let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
+                let demo_input = demo_input(&demo_file_name);
 
-            let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
+                let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
 
-            println!("Running {}", demo_file_name);
+                println!("Running {}", demo_file_name);
 
-            let result = run_wrappers(
-                demo_input,
-                &output_writer,
-                None,
-                None,
-                &FhsFlags::FHS_COMPLIANCE,
-                false,
-                false,
-                false,
-                &[],
-            );
-
-            if let Err(e) = result {
-                let failed_file_error = format!(
-                    "💥 Error running project for file {}: {}",
-                    demo_file_name.to_string(),
-                    e
+                let result = run_wrappers(
+                    demo_input,
+                    &output_writer,
+                    None,
+                    None,
+                    &FhsFlags::FHS_COMPLIANCE,
+                    false,
+                    false,
+                    false,
+                    &[],
                 );
-                return (vec![], vec![], Some(failed_file_error));
-            }
 
-            let rust_files = &output_writer.files();
-            let differences = postproc_csv_results_differences(demo_file_name, rust_files);
-            let metrics_differences =
-                postproc_metrics_results_differences(demo_file_name, rust_files);
-            if differences.is_empty() && metrics_differences.is_empty() {
-                atomic_counter.fetch_add(1, Relaxed);
-            }
-            (differences, metrics_differences, None)
-        })
-        .collect();
+                if let Err(e) = result {
+                    let failed_file_error = format!(
+                        "💥 Error running project for file {}: {}",
+                        demo_file_name.to_string(),
+                        e
+                    );
+                    return (vec![], vec![], Some(failed_file_error));
+                }
+
+                let rust_files = &output_writer.files();
+                let differences = postproc_csv_results_differences(demo_file_name, rust_files);
+                let metrics_differences =
+                    postproc_metrics_results_differences(demo_file_name, rust_files);
+                if differences.is_empty() && metrics_differences.is_empty() {
+                    atomic_counter.fetch_add(1, Relaxed);
+                }
+                (differences, metrics_differences, None)
+            })
+            .collect();
 
     let (differences, metric_differences, failed_files): (
         Vec<Difference>,
@@ -83,13 +84,17 @@ fn test_fhs_postproc_result_files() {
         },
     );
 
-    // TODO - how many were fine?
-    
     let fine_files = atomic_counter.load(Relaxed);
     let with_differences = total_files - fine_files - failed_files.len();
-    
-    println!("\n\nTotal files ran {} - Successful: {}, With Differences: {}, Failed: {}\n\n", total_files, fine_files, with_differences, failed_files.len());
-    
+
+    println!(
+        "\n\nTotal files ran {} - Successful: {}, With Differences: {}, Failed: {}\n\n",
+        total_files,
+        fine_files,
+        with_differences,
+        failed_files.len()
+    );
+
     assert!(
         differences.is_empty() && metric_differences.is_empty() && failed_files.is_empty(),
         "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\nFailed files: {}\n{}\n\nTotal fine files: {}\n",
