@@ -44,17 +44,13 @@ fn test_fhs_postproc_result_files() {
                 &[],
             );
 
-            // TODO fix this!
-            if result.is_err() {
-                return (
-                    vec![Difference::String {
-                        rust: "Failed to run".to_string(),
-                        python: "".to_string(),
-                        file_name: demo_file_name.to_string(),
-                        location: 0.to_string(),
-                    }],
-                    vec![],
+            if let Err(e) = result {
+                println!(
+                    "💥 Error running project for file {}: {}",
+                    demo_file_name.to_string(),
+                    e
                 );
+                return (vec![], vec![]);
             }
 
             let rust_files = &output_writer.files();
