@@ -1,5 +1,5 @@
 unit:
-    cargo test --lib
+    cargo test --lib --release
 
 e2e: e2e-preproc e2e-postproc
 
