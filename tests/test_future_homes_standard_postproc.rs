@@ -22,7 +22,7 @@ fn test_fhs_postproc_result_files() {
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
         .collect::<Vec<PathBuf>>();
 
-    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_filepaths
+    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> = demo_filepaths
         .par_iter()
         .map(|demo_input_file_path| {
             let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
@@ -45,12 +45,12 @@ fn test_fhs_postproc_result_files() {
             );
 
             if let Err(e) = result {
-                println!(
+                let failed_file_error = format!(
                     "💥 Error running project for file {}: {}",
                     demo_file_name.to_string(),
                     e
                 );
-                return (vec![], vec![]);
+                return (vec![], vec![], Some(failed_file_error));
             }
 
             let rust_files = &output_writer.files();
@@ -58,28 +58,37 @@ fn test_fhs_postproc_result_files() {
             let metrics_differences =
                 postproc_metrics_results_differences(demo_file_name, rust_files);
 
-            (differences, metrics_differences)
+            (differences, metrics_differences, None)
         })
         .collect();
 
-    let (differences, metric_differences) = postproc_and_metric_differences.into_iter().fold(
-        (vec![], vec![]),
-        |(mut diffs, mut metric_diffs), (diff, metric_diff)| {
+    let (differences, metric_differences, failed_files): (
+        Vec<Difference>,
+        Vec<Difference>,
+        Vec<String>,
+    ) = postproc_and_metric_differences.into_iter().fold(
+        (vec![], vec![], vec![]),
+        |(mut diffs, mut metric_diffs, mut failed), (diff, metric_diff, failed_file)| {
             diffs.extend(diff);
             metric_diffs.extend(metric_diff);
-            (diffs, metric_diffs)
+            if let Some(failed_file) = failed_file {
+                failed.push(failed_file);
+            }
+            (diffs, metric_diffs, failed)
         },
     );
 
     // TODO - how many were fine?
 
     assert!(
-        differences.is_empty() && metric_differences.is_empty(),
-        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
+        differences.is_empty() && metric_differences.is_empty() && failed_files.is_empty(),
+        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\nFailed files: {}\n{}\n\n",
         differences.len(),
         differences.iter().join("\n"),
         metric_differences.len(),
-        metric_differences.iter().join("\n")
+        metric_differences.iter().join("\n"),
+        failed_files.len(),
+        failed_files.iter().join("\n")
     );
 }
 
