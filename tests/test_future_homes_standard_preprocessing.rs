@@ -688,7 +688,7 @@ mod test_preprocessed_input_matches_expected {
 
     #[test]
     fn test_whole_file() {
-        let file = fs::read_to_string("tests/e2e/expected_provided_results/future_homes_standard/demo_fhs__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
+        let file = fs::read_to_string("tests/e2e/expected_provided_results/future_homes_standard/demo_FHS__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
         let actual: Value = serde_json::from_str(&file).unwrap();
         let expected = serde_json::from_str(&file).unwrap();
         let difference_count =
