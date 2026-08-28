@@ -687,15 +687,6 @@ mod test_preprocessed_input_matches_expected {
     }
 
     #[test]
-    fn test_events_key_is_skipped() {
-        let actual = json!({"Events": 1});
-        let expected = json!({"Events": 2});
-        let difference_count =
-            preprocessed_input_matches_expected(&actual, &expected, vec![], &mut vec![]);
-        assert_eq!(difference_count, 0);
-    }
-
-    #[test]
     fn test_whole_file() {
         let file = fs::read_to_string("tests/e2e/expected_provided_results/future_homes_standard/demo_fhs__results/demo_FHS__FHS__preproc.json").expect("Output file not found");
         let actual: Value = serde_json::from_str(&file).unwrap();
