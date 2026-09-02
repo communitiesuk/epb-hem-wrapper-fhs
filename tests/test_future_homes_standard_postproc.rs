@@ -13,7 +13,7 @@ use std::{fmt, format, fs, println, vec};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const PYTHON_POSTPROC_OUTPUT_DIR: &str = "./tests/e2e/expected_postproc_results";
+const PYTHON_OUTPUT_DIR: &str = "./tests/e2e/expected_generated_results";
 
 #[test]
 fn test_fhs_postproc_result_files() {
@@ -312,7 +312,7 @@ fn postproc_file(
         ),
         None => {
             let path =
-                format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
+                format!("{PYTHON_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
             Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
@@ -489,7 +489,7 @@ fn metrics_file_differences(
     .unwrap();
     let file_path = format!("{demo_input_file_name}__results/{metrics_file_name}");
     let python_output = serde_json::from_str(
-        &fs::read_to_string(format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{file_path}")).unwrap(),
+        &fs::read_to_string(format!("{PYTHON_OUTPUT_DIR}/{file_path}")).unwrap(),
     )
     .unwrap();
 
