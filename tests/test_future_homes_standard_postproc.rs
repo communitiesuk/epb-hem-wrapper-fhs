@@ -51,8 +51,7 @@ fn test_fhs_postproc_result_files() {
                 if let Err(e) = result {
                     let failed_file_error = format!(
                         "💥 Error running project for file {}: {}",
-                        demo_file_name.to_string(),
-                        e
+                        demo_file_name, e
                     );
                     return (vec![], vec![], Some(failed_file_error));
                 }
@@ -311,8 +310,7 @@ fn postproc_file(
                 .as_bytes(),
         ),
         None => {
-            let path =
-                format!("{PYTHON_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
+            let path = format!("{PYTHON_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
             Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
