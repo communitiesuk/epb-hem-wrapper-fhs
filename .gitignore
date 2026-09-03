@@ -6,13 +6,6 @@
 # Ignore calculation results in examples folder
 examples/input/future_homes_standard/*__results/*
 
-# Ignore generated postproc results
-tests/e2e/expected_postproc_results/**/*
-!tests/e2e/expected_postproc_results/DESN-H-End-02-ESH-cMEV__results/**/*
-!tests/e2e/expected_postproc_results/DESN-H-End-02-HP-iMEV-pre-heat__results/**/*
-!tests/e2e/expected_postproc_results/DESN-H-End-02-HP-iMEV-wwhrs-storage-tank__results/**/*
-!tests/e2e/expected_postproc_results/demo_FHS__results/**/*
-
 # Ignore python fhs repo used in generate_python_outputs
 /py_fhs_wrapper
 
