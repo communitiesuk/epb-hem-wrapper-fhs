@@ -28,10 +28,10 @@ Example input files for demonstration purposes can be found at
 
 The default way to run the FHS wrapper is to run the `fhs-compliance` mode i.e. to run all of:
 
-* The actual building
-* The actual building with FEE assumptions
-* The notional building
-* The notional building with FEE assumptions
+- The actual building
+- The actual building with FEE assumptions
+- The notional building
+- The notional building with FEE assumptions
 
 This will return an FHS compliance response.
 
@@ -45,10 +45,10 @@ cargo run --release --features="clap indicatif" -- path/to/input.json
 
 Any of the individual modes listed above may be run using the `--mode` option:
 
-* The actual building: `--mode actual`
-* The actual building with FEE assumptions: `--mode actual-FEE`
-* The notional building: `--mode notional`
-* The notional building with FEE assumptions: `--mode notional-FEE`
+- The actual building: `--mode actual`
+- The actual building with FEE assumptions: `--mode actual-FEE`
+- The notional building: `--mode notional`
+- The notional building with FEE assumptions: `--mode notional-FEE`
 
 The individual modes can be combined, e.g.:
 
@@ -85,7 +85,7 @@ just unit
 
 To run e2e preprocessing tests:
 
-First, generate the Python preprocessing output files. You'll only need to do this once. The process will clone the
+First, generate the Python output files. This can take multiple hours. You'll only need to do this once. The process will clone the
 Python FHS wrapper repo to py_fhs_wrapper at the root of the project if the directory doesn't already exist.
 To generate the files again using a new Python version, you will need to delete your local py_fhs_wrapper repo (if it
 exists) and update the
