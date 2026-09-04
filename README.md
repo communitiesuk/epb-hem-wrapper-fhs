@@ -85,8 +85,8 @@ just unit
 
 To run e2e tests:
 
-There are Python output files used in the e2e tests that we have generated. To generate the files we use the
-`generate_python_outputs` script which may take multiple hours to run. This process will clone the
+The e2e tests use Python files that we have generated. To generate the files we run
+`generate_python_outputs` which can take multiple hours. This process will clone the
 Python FHS wrapper repo to `py_fhs_wrapper` at the root of the project if the directory doesn't already exist.
 To generate the files again using a new Python version, you will need to delete your local `py_fhs_wrapper` repo (if it
 exists) and update the
