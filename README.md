@@ -83,11 +83,12 @@ To run all unit tests:
 just unit
 ```
 
-To run e2e preprocessing tests:
+To run e2e tests:
 
-First, generate the Python output files. This can take multiple hours. You'll only need to do this once. The process will clone the
-Python FHS wrapper repo to py_fhs_wrapper at the root of the project if the directory doesn't already exist.
-To generate the files again using a new Python version, you will need to delete your local py_fhs_wrapper repo (if it
+There are Python output files used in the e2e tests that we have generated. To generate the files we use the
+`generate_python_outputs` script which may take multiple hours to run. This process will clone the
+Python FHS wrapper repo to `py_fhs_wrapper` at the root of the project if the directory doesn't already exist.
+To generate the files again using a new Python version, you will need to delete your local `py_fhs_wrapper` repo (if it
 exists) and update the
 `generate_python_outputs` script to point to the new tag or branch. Currently, it points
 to `1.0.0a7`.
@@ -96,7 +97,7 @@ to `1.0.0a7`.
 just generate-python-outputs
 ```
 
-then:
+To run e2e preprocessing tests:
 
 ```bash
 just e2e-preproc
