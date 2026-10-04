@@ -1126,7 +1126,7 @@ dependencies = [
  "serde-enum-str",
  "serde_json",
  "serde_repr",
- "serde_valid",
+ "serde_valid 2.0.4",
  "serde_with",
  "smartstring",
  "thiserror 2.0.21",
@@ -1155,7 +1155,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "serde_valid",
+ "serde_valid 3.1.2",
  "smartstring",
  "strum",
  "strum_macros",
@@ -2653,8 +2653,26 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "serde_valid_derive",
- "serde_valid_literal",
+ "serde_valid_derive 2.0.4",
+ "serde_valid_literal 2.0.4",
+ "thiserror 1.0.69",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "serde_valid"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83c27ca2c5a9c81bfec81f36f1e525df8d4e50167a47e42f5452e66c70e5ee78"
+dependencies = [
+ "indexmap 2.13.1",
+ "itertools 0.14.0",
+ "num-traits",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_valid_derive 3.2.0",
+ "serde_valid_literal 3.2.0",
  "thiserror 1.0.69",
  "unicode-segmentation",
 ]
@@ -2673,10 +2691,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_valid_derive"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "539cd22aaf48cb9a8932c8b7f5d54f51719b2f826564f9da1a9902ee411d753c"
+dependencies = [
+ "itertools 0.14.0",
+ "proc-macro2 1.0.107",
+ "quote 1.0.47",
+ "strsim",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "serde_valid_literal"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e3e1f009f778cdbecbd83d92c8b5533674e252db47b03821440c8c53d6606ff"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "serde_valid_literal"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "433e602b939d2e8e8b47f30f919b27a984183974079de2262ca876c2162657c8"
 dependencies = [
  "regex",
 ]
