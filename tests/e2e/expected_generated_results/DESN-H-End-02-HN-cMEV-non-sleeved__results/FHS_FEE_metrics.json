@@ -1,0 +1,8 @@
+{
+    "eer": {
+        "description": "Energy efficiency rating (EER) not applicable for custom fuels",
+        "grade": null,
+        "units": "Normalised cost, typically in range 0-100",
+        "value": null
+    }
+}

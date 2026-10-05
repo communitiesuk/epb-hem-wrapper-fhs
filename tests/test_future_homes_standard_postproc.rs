@@ -8,11 +8,12 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering::Relaxed;
 use std::{fmt, format, fs, println, vec};
 
 mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
-const PYTHON_POSTPROC_OUTPUT_DIR: &str = "./tests/e2e/expected_postproc_results";
+const PYTHON_OUTPUT_DIR: &str = "./tests/e2e/expected_generated_results";
 
 #[test]
 fn test_fhs_postproc_result_files() {
@@ -21,74 +22,93 @@ fn test_fhs_postproc_result_files() {
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "json"))
         .collect::<Vec<PathBuf>>();
+    let atomic_counter = std::sync::atomic::AtomicUsize::new(0);
+    let total_files = demo_filepaths.len();
 
-    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>)> = demo_filepaths
-        .par_iter()
-        .map(|demo_input_file_path| {
-            let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
-            let demo_input = demo_input(&demo_file_name);
+    let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> =
+        demo_filepaths
+            .par_iter()
+            .map(|demo_input_file_path| {
+                let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
+                let demo_input = demo_input(&demo_file_name);
 
-            let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
+                let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
 
-            println!("Running {}", demo_file_name);
+                println!("Running {}", demo_file_name);
 
-            let result = run_wrappers(
-                demo_input,
-                &output_writer,
-                None,
-                None,
-                &FhsFlags::FHS_COMPLIANCE,
-                false,
-                false,
-                false,
-                &[],
-            );
-
-            // TODO fix this!
-            if result.is_err() {
-                return (
-                    vec![Difference::String {
-                        rust: "Failed to run".to_string(),
-                        python: "".to_string(),
-                        file_name: demo_file_name.to_string(),
-                        location: 0.to_string(),
-                    }],
-                    vec![],
+                let result = run_wrappers(
+                    demo_input,
+                    &output_writer,
+                    None,
+                    None,
+                    &FhsFlags::FHS_COMPLIANCE,
+                    false,
+                    false,
+                    false,
+                    &[],
                 );
-            }
 
-            let rust_files = &output_writer.files();
-            let differences = postproc_csv_results_differences(demo_file_name, rust_files);
-            let metrics_differences =
-                postproc_metrics_results_differences(demo_file_name, rust_files);
+                if let Err(e) = result {
+                    let failed_file_error = format!(
+                        "💥 Error running project for file {}: {}",
+                        demo_file_name, e
+                    );
+                    return (vec![], vec![], Some(failed_file_error));
+                }
 
-            (differences, metrics_differences)
-        })
-        .collect();
+                let rust_files = &output_writer.files();
+                let differences = postproc_csv_results_differences(demo_file_name, rust_files);
+                let metrics_differences =
+                    postproc_metrics_results_differences(demo_file_name, rust_files);
+                if differences.is_empty() && metrics_differences.is_empty() {
+                    atomic_counter.fetch_add(1, Relaxed);
+                }
+                (differences, metrics_differences, None)
+            })
+            .collect();
 
-    let (differences, metric_differences) = postproc_and_metric_differences.into_iter().fold(
-        (vec![], vec![]),
-        |(mut diffs, mut metric_diffs), (diff, metric_diff)| {
+    let (differences, metric_differences, failed_files): (
+        Vec<Difference>,
+        Vec<Difference>,
+        Vec<String>,
+    ) = postproc_and_metric_differences.into_iter().fold(
+        (vec![], vec![], vec![]),
+        |(mut diffs, mut metric_diffs, mut failed), (diff, metric_diff, failed_file)| {
             diffs.extend(diff);
             metric_diffs.extend(metric_diff);
-            (diffs, metric_diffs)
+            if let Some(failed_file) = failed_file {
+                failed.push(failed_file);
+            }
+            (diffs, metric_diffs, failed)
         },
     );
 
-    // TODO - how many were fine?
+    let fine_files = atomic_counter.load(Relaxed);
+    let with_differences = total_files - fine_files - failed_files.len();
+
+    println!(
+        "\n\nTotal files ran {} - Successful: {}, With Differences: {}, Failed: {}\n\n",
+        total_files,
+        fine_files,
+        with_differences,
+        failed_files.len()
+    );
 
     assert!(
-        differences.is_empty() && metric_differences.is_empty(),
-        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\n",
+        differences.is_empty() && metric_differences.is_empty() && failed_files.is_empty(),
+        "\n\nTotal postproc file differences: {}\n{}\n\nTotal metrics differences: {}\n{}\n\nFailed files: {}\n{}\n\nTotal fine files: {}\n",
         differences.len(),
         differences.iter().join("\n"),
         metric_differences.len(),
-        metric_differences.iter().join("\n")
+        metric_differences.iter().join("\n"),
+        failed_files.len(),
+        failed_files.iter().join("\n"),
+        fine_files
     );
 }
 
-// TODO: Consider deleting below test once python randomness match is confirmed
-// test_fhs_postproc_result_files supersedes test_fhs_postproc_compliance_differences
+// TODO: Consider deleting below test once python test_fhs_postproc_result_files passes
+// as this supersedes test_fhs_postproc_compliance_differences
 #[test]
 fn test_fhs_postproc_compliance_differences() {
     // even if we get different Target and Dwelling values
@@ -290,8 +310,7 @@ fn postproc_file(
                 .as_bytes(),
         ),
         None => {
-            let path =
-                format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
+            let path = format!("{PYTHON_OUTPUT_DIR}/{filename}__results/{filename_with_suffix}");
             Cow::Owned(fs::read(&path).unwrap_or_else(|_| panic!("File not found: {path}")))
         }
     };
@@ -468,7 +487,7 @@ fn metrics_file_differences(
     .unwrap();
     let file_path = format!("{demo_input_file_name}__results/{metrics_file_name}");
     let python_output = serde_json::from_str(
-        &fs::read_to_string(format!("{PYTHON_POSTPROC_OUTPUT_DIR}/{file_path}")).unwrap(),
+        &fs::read_to_string(format!("{PYTHON_OUTPUT_DIR}/{file_path}")).unwrap(),
     )
     .unwrap();
 

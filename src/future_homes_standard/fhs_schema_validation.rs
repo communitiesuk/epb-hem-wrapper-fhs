@@ -1,7 +1,10 @@
-use jsonschema::Validator;
+use jsonschema::{validator, Validator};
 use serde_json::Value;
 use std::sync::LazyLock;
 use thiserror::Error;
+
+#[validator(path = "./schema/input_fhs.schema.json", methods = { validate = false, iter_errors = false })]
+struct FhsSchema;
 
 static FHS_SCHEMA_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     let schema = serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
@@ -15,10 +18,12 @@ pub struct SchemaValidationError {
 }
 
 pub(crate) fn apply_schema_validation(input: &Value) -> Result<(), SchemaValidationError> {
-    let evaluation = FHS_SCHEMA_VALIDATOR.evaluate(input);
-    if evaluation.flag().valid {
+    // use precompiled schema validator to check high-level validity as speed needed here
+    // fall back to static validator on failure (precompiled validator does not support evaluate() at current time (jsonchema 0.58.3))
+    if FhsSchema::is_valid(&input) {
         Ok(())
     } else {
+        let evaluation = FHS_SCHEMA_VALIDATOR.evaluate(input);
         Err(SchemaValidationError {
             errors: evaluation
                 .iter_errors()
