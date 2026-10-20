@@ -1,5 +1,6 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
+use arcstr::ArcStr;
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
@@ -478,12 +479,8 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub fn zone_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
-        Ok(self
-            .zone_node()?
-            .keys()
-            .map(smartstring::alias::String::from)
-            .collect())
+    pub fn zone_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
+        Ok(self.zone_node()?.keys().map(Into::into).collect())
     }
 
     #[cfg(test)]
@@ -511,18 +508,15 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn space_heat_system_for_zone(
-        &self,
-        zone: &str,
-    ) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub fn space_heat_system_for_zone(&self, zone: &str) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(match self.specific_zone(zone)?.get("SpaceHeatSystem") {
-            Some(JsonValue::String(system)) => vec![smartstring::alias::String::from(system)],
+            Some(JsonValue::String(system)) => vec![ArcStr::from(system)],
             Some(JsonValue::Array(systems)) => systems
                 .iter()
                 .map(|system| {
-                    Ok(smartstring::alias::String::from(system.as_str().ok_or(
-                        json_error("Space heat system list contained a non-string"),
-                    )?))
+                    Ok(ArcStr::from(system.as_str().ok_or(json_error(
+                        "Space heat system list contained a non-string",
+                    ))?))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             _ => vec![],
@@ -544,18 +538,15 @@ impl InputForProcessing {
         Ok(self.specific_zone(zone)?.get("SpaceCoolSystem").is_some())
     }
 
-    pub(crate) fn space_cool_system_for_zone(
-        &self,
-        zone: &str,
-    ) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub(crate) fn space_cool_system_for_zone(&self, zone: &str) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(match self.specific_zone(zone)?.get("SpaceCoolSystem") {
-            Some(JsonValue::String(system)) => vec![smartstring::alias::String::from(system)],
+            Some(JsonValue::String(system)) => vec![ArcStr::from(system)],
             Some(JsonValue::Array(systems)) => systems
                 .iter()
                 .map(|s| {
-                    Ok(smartstring::alias::String::from(s.as_str().ok_or(
-                        json_error("SpaceCoolSystem list contained non-strings"),
-                    )?))
+                    Ok(ArcStr::from(s.as_str().ok_or(json_error(
+                        "SpaceCoolSystem list contained non-strings",
+                    ))?))
                 })
                 .collect::<Result<_, _>>()?,
             _ => vec![],
@@ -613,9 +604,7 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub fn light_bulbs_for_each_zone(
-        &self,
-    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, Vec<JsonValue>>> {
+    pub fn light_bulbs_for_each_zone(&self) -> JsonAccessResult<IndexMap<ArcStr, Vec<JsonValue>>> {
         Ok(self
             .zone_node()?
             .iter()
@@ -625,7 +614,7 @@ impl InputForProcessing {
                     .and_then(|lighting| lighting.get("bulbs"))
                     .and_then(|bulbs| bulbs.as_array());
                 (
-                    smartstring::alias::String::from(zone_name),
+                    zone_name.into(),
                     bulbs.map(ToOwned::to_owned).unwrap_or_default(),
                 )
             })
@@ -747,14 +736,9 @@ impl InputForProcessing {
         self.optional_root_object("SpaceCoolSystem")
     }
 
-    pub(crate) fn space_heat_system_keys(
-        &self,
-    ) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub(crate) fn space_heat_system_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(match self.optional_root_object("SpaceHeatSystem")? {
-            Some(space_heat_system) => space_heat_system
-                .keys()
-                .map(smartstring::alias::String::from)
-                .collect(),
+            Some(space_heat_system) => space_heat_system.keys().map(Into::into).collect(),
             None => vec![],
         })
     }
@@ -838,9 +822,7 @@ impl InputForProcessing {
         self.root_object_mut("HotWaterSource")
     }
 
-    pub fn names_of_energy_supplies_with_diverters(
-        &self,
-    ) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub fn names_of_energy_supplies_with_diverters(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(self
             .root_object("EnergySupply")?
             .iter()
@@ -848,7 +830,7 @@ impl InputForProcessing {
                 energy_supply.as_object().and_then(|energy_supply| {
                     energy_supply
                         .get("diverter")
-                        .map(|_| smartstring::alias::String::from(energy_supply_name))
+                        .map(|_| ArcStr::from(energy_supply_name))
                 })
             })
             .collect_vec())
@@ -915,10 +897,7 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub fn fuel_type_for_energy_supply_reference(
-        &self,
-        reference: &str,
-    ) -> anyhow::Result<smartstring::alias::String> {
+    pub fn fuel_type_for_energy_supply_reference(&self, reference: &str) -> anyhow::Result<ArcStr> {
         Ok(self
             .root_object("EnergySupply")?
             .get(reference)
@@ -936,7 +915,7 @@ impl InputForProcessing {
 
     pub(crate) fn shower_flowrates(
         &self,
-    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, MaybeShowerFlowRateFields>> {
+    ) -> JsonAccessResult<IndexMap<ArcStr, MaybeShowerFlowRateFields>> {
         let showers = match self
             .hot_water_demand()?
             .get("Shower")
@@ -951,10 +930,7 @@ impl InputForProcessing {
             .map(|(name, shower)| {
                 let flowrate = shower.get("flowrate").and_then(|f| f.as_f64());
                 let allow_low_flowrate = shower.get("allow_low_flowrate").and_then(|a| a.as_bool());
-                (
-                    smartstring::alias::String::from(name),
-                    (flowrate, allow_low_flowrate),
-                )
+                (name.into(), (flowrate, allow_low_flowrate))
             })
             .collect())
     }
@@ -974,15 +950,12 @@ impl InputForProcessing {
             .transpose()
     }
 
-    pub fn shower_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub fn shower_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(self
             .hot_water_demand()?
             .get("Shower")
             .map_or(vec![], |showers| match showers.as_object() {
-                Some(showers) => showers
-                    .keys()
-                    .map(smartstring::alias::String::from)
-                    .collect(),
+                Some(showers) => showers.keys().map(ArcStr::from).collect(),
                 None => vec![],
             }))
     }
@@ -1040,12 +1013,12 @@ impl InputForProcessing {
             .and_then(|baths| baths.as_object_mut()))
     }
 
-    pub fn bath_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub fn bath_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(self
             .hot_water_demand()?
             .get("Bath")
             .map_or(vec![], |baths| match baths.as_object() {
-                Some(baths) => baths.keys().map(smartstring::alias::String::from).collect(),
+                Some(baths) => baths.keys().map(Into::into).collect(),
                 None => vec![],
             }))
     }
@@ -1103,10 +1076,10 @@ impl InputForProcessing {
             .and_then(|other| other.as_object_mut()))
     }
 
-    pub fn other_water_use_keys(&self) -> JsonAccessResult<Vec<smartstring::alias::String>> {
+    pub fn other_water_use_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(self
             .other_water_uses()?
-            .map(|other| other.keys().map(smartstring::alias::String::from).collect())
+            .map(|other| other.keys().map(ArcStr::from).collect())
             .unwrap_or(vec![]))
     }
 
@@ -1624,14 +1597,12 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub fn all_building_elements(
-        &self,
-    ) -> JsonAccessResult<IndexMap<smartstring::alias::String, &JsonValue>> {
+    pub fn all_building_elements(&self) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>> {
         self.zone_node()?
             .values()
             .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
             .flatten()
-            .map(|(key, el)| Ok((smartstring::alias::String::from(key), el)))
+            .map(|(key, el)| Ok((ArcStr::from(key), el)))
             .collect()
     }
 
@@ -1660,9 +1631,7 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub fn all_energy_supply_fuel_types(
-        &self,
-    ) -> JsonAccessResult<HashSet<smartstring::alias::String>> {
+    pub fn all_energy_supply_fuel_types(&self) -> JsonAccessResult<HashSet<ArcStr>> {
         let mut fuel_types = HashSet::new();
         for fuel in self
             .root_object("EnergySupply")?
@@ -1670,7 +1639,7 @@ impl InputForProcessing {
             .flat_map(|supply| supply.get("fuel").map(|fuel| fuel.as_str()))
             .flatten()
         {
-            fuel_types.insert(smartstring::alias::String::from(fuel));
+            fuel_types.insert(fuel.into());
         }
 
         Ok(fuel_types)
@@ -1975,20 +1944,13 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub(crate) fn heat_source_wet(
-        &self,
-    ) -> anyhow::Result<IndexMap<smartstring::alias::String, JsonValue>> {
+    pub(crate) fn heat_source_wet(&self) -> anyhow::Result<IndexMap<ArcStr, JsonValue>> {
         self.root()?
             .get("HeatSourceWet")
             .and_then(|value| value.as_object())
             .into_iter()
             .flatten()
-            .map(|(name, source)| {
-                Ok((
-                    smartstring::alias::String::from(name),
-                    serde_json::from_value(source.clone())?,
-                ))
-            })
+            .map(|(name, source)| Ok((name.into(), serde_json::from_value(source.clone())?)))
             .collect::<anyhow::Result<_, _>>()
     }
 
@@ -2082,7 +2044,7 @@ impl InputForProcessing {
             .ok_or_else(|| json_error("Building width missing or not a number"))
     }
 
-    pub(crate) fn build_type(&self) -> JsonAccessResult<smartstring::alias::String> {
+    pub(crate) fn build_type(&self) -> JsonAccessResult<ArcStr> {
         Ok(self
             .root_object("General")?
             .get("build_type")
@@ -2469,9 +2431,9 @@ impl InputForCalcHtcHlp for ReducedInputForCalcHtcHlp {
 
 #[derive(Debug, Error)]
 #[error("Error accessing JSON during FHS preprocessing: {0}")]
-pub struct JsonAccessError(smartstring::alias::String);
+pub struct JsonAccessError(ArcStr);
 
-pub fn json_error<T: Into<smartstring::alias::String>>(message: T) -> JsonAccessError {
+pub fn json_error<T: Into<ArcStr>>(message: T) -> JsonAccessError {
     JsonAccessError(message.into())
 }
 

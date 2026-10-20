@@ -7,7 +7,6 @@ use anyhow::anyhow;
 use home_energy_model::CalculationResult;
 use indexmap::IndexMap;
 use serde::Serialize;
-use smartstring::alias::String;
 use std::collections::HashMap;
 use std::sync::Arc;
 

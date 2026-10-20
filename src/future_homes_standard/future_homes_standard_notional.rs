@@ -18,6 +18,7 @@ use crate::future_homes_standard::input::{
     UValueEditableBuildingElementJsonValue,
 };
 use anyhow::{anyhow, bail};
+use arcstr::ArcStr;
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
@@ -46,7 +47,6 @@ use home_energy_model::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
-use smartstring::alias::String;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use tracing::instrument;
@@ -292,9 +292,9 @@ fn edit_transparent_element(input: &mut InputForProcessing) -> anyhow::Result<()
 ///Split windows/rooflights and walls/roofs into dictionaries.
 fn split_glazing_and_walls(
     input: &mut InputForProcessing,
-) -> anyhow::Result<(IndexMap<String, Value>, IndexMap<String, Value>)> {
-    let mut windows_rooflight: IndexMap<String, Value> = Default::default();
-    let mut walls_roofs: IndexMap<String, Value> = Default::default();
+) -> anyhow::Result<(IndexMap<ArcStr, Value>, IndexMap<ArcStr, Value>)> {
+    let mut windows_rooflight: IndexMap<ArcStr, Value> = Default::default();
+    let mut walls_roofs: IndexMap<ArcStr, Value> = Default::default();
 
     let building_elements = input.all_building_elements()?;
 
@@ -305,10 +305,10 @@ fn split_glazing_and_walls(
             .unwrap_or_default()
         {
             "BuildingElementTransparent" => {
-                windows_rooflight.insert(String::from(name), building_element.to_owned());
+                windows_rooflight.insert(name.clone(), building_element.to_owned());
             }
             "BuildingElementOpaque" => {
-                walls_roofs.insert(String::from(name), building_element.to_owned());
+                walls_roofs.insert(name.clone(), building_element.to_owned());
             }
             _ => continue,
         }
@@ -351,9 +351,9 @@ fn calculate_area_diff_and_adjust_glazing_area(
 
 /// Find all walls/roofs with same orientation and pitch as this window/rooflight.
 fn find_walls_roofs_with_same_orientation_and_pitch(
-    wall_roofs: &IndexMap<String, Value>,
+    wall_roofs: &IndexMap<ArcStr, Value>,
     window_rooflight_element: &Value,
-) -> anyhow::Result<IndexMap<String, Value>> {
+) -> anyhow::Result<IndexMap<ArcStr, Value>> {
     let window_rooflight_orientation = window_rooflight_element
         .get("orientation360")
         .and_then(Value::as_f64)
@@ -363,7 +363,7 @@ fn find_walls_roofs_with_same_orientation_and_pitch(
         .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("Pitch field not found or not a float"))?;
 
-    let same_orientation: IndexMap<String, Value> = wall_roofs
+    let same_orientation: IndexMap<ArcStr, Value> = wall_roofs
         .iter()
         .filter(|(_, v)| {
             let orientation = v.get("orientation360").and_then(Value::as_f64);
@@ -531,7 +531,7 @@ fn edit_glazing_for_glazing_limit(
                     )?;
 
                     if let Some(area) = walls_roofs
-                        .get_mut(&wall_roof_ref)
+                        .get_mut(wall_roof_ref.as_str())
                         .and_then(|el| el.get_mut("area"))
                     {
                         *area = Value::from(new_area);
@@ -891,7 +891,7 @@ fn edit_add_heatpump_heating(
 
 fn replace_space_heating_system(
     input: &mut InputForProcessing,
-    design_capacity: &IndexMap<String, f64>,
+    design_capacity: &IndexMap<ArcStr, f64>,
     design_flow_temp: f64,
     design_flow_rate: f64,
     temp_diff_emit_dsgn: f64,
@@ -1199,7 +1199,7 @@ fn calc_daily_hw_demand(
             .iter()
             .map(|(key, value)| (key.into(), value.clone()))
             .collect(),
-        &IndexMap::from([(String::from("_unmet_demand"), energy_supply)]),
+        &IndexMap::from([("_unmet_demand".into(), energy_supply)]),
         event_schedules,
         mock_hw_source,
         Default::default(),
@@ -1431,7 +1431,7 @@ fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> 
 #[instrument(skip(input))]
 fn calc_design_capacity(
     input: &InputForProcessing,
-) -> anyhow::Result<(IndexMap<String, f64>, f64)> {
+) -> anyhow::Result<(IndexMap<ArcStr, f64>, f64)> {
     // Create a deep copy as init_resistance_or_uvalue() will add u_value & r_c
     // which will raise warning when called second time
     let mut input = input.clone();
@@ -1458,12 +1458,12 @@ fn calc_design_capacity(
     let min_air_temp = *input.external_conditions()?.air_temperatures().as_ref().ok_or_else(|| anyhow!("FHS Notional wrapper expected to have air temperatures merged onto the input structure."))?.iter().min_by(|a, b| a.total_cmp(b)).ok_or_else(|| anyhow!("FHS Notional wrapper expects air temperature list set on input structure not to be empty."))?;
     let set_point = LIVING_ROOM_SETPOINT_FHS.max(REST_OF_DWELLING_SETPOINT_FHS);
     let temperature_difference = set_point - min_air_temp;
-    let design_capacity_map: IndexMap<String, f64> = input
+    let design_capacity_map: IndexMap<ArcStr, f64> = input
         .zone_keys()?
         .into_iter()
         .map(|key| {
-            (key.to_owned(), {
-                let design_heat_loss = htc_dict[&key] * temperature_difference;
+            (key.clone(), {
+                let design_heat_loss = htc_dict[key.as_str()] * temperature_difference;
                 let design_capacity = 2. * design_heat_loss;
                 design_capacity / WATTS_PER_KILOWATT as f64
             })

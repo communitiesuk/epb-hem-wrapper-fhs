@@ -20,7 +20,7 @@ pub struct SchemaValidationError {
 pub(crate) fn apply_schema_validation(input: &Value) -> Result<(), SchemaValidationError> {
     // use precompiled schema validator to check high-level validity as speed needed here
     // fall back to static validator on failure (precompiled validator does not support evaluate() at current time (jsonchema 0.58.3))
-    if FhsSchema::is_valid(&input) {
+    if FhsSchema::is_valid(input) {
         Ok(())
     } else {
         let evaluation = FHS_SCHEMA_VALIDATOR.evaluate(input);

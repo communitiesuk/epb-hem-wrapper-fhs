@@ -2,6 +2,7 @@ use crate::future_homes_standard::future_homes_standard::HourlyHotWaterEvent;
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::random::Pcg64;
 use anyhow::{anyhow, bail};
+use arcstr::ArcStr;
 use csv::Reader;
 use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
 use home_energy_model::input::WaterHeatingEventType;
@@ -10,7 +11,6 @@ use parking_lot::Mutex;
 use partial_application::partial;
 use rand_mt::Mt;
 use serde::Deserialize;
-use smartstring::alias::String;
 use std::fmt::{Debug, Formatter};
 use std::io::{BufReader, Cursor};
 use std::iter::Iterator;
@@ -269,8 +269,8 @@ type DurationFn = Rc<Mutex<Box<dyn FnMut(DrawoffEvent) -> f64>>>;
 
 #[derive(Clone)]
 pub struct Drawoff {
-    pub event_type: String,
-    pub name: String,
+    pub event_type: ArcStr,
+    pub name: ArcStr,
     pub duration_fn: DurationFn,
 }
 

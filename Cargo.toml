@@ -10,6 +10,7 @@ default-run = "future-homes-standard"
 [dependencies]
 anyhow = "1.0.100"
 approx = "0.5.1"
+arcstr = { version = "1.2.0", features = ["serde"] }
 bitflags = "2.12.1"
 clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
@@ -27,7 +28,6 @@ rstest = "0.26.1"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 serde_valid = "2.0.0"
-smartstring = "1.0.1"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 thiserror = "2.0.17"

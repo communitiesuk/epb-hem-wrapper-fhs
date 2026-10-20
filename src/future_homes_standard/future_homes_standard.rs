@@ -10,6 +10,7 @@ use crate::future_homes_standard::input::{
 };
 use crate::CustomEnergySourceFactors;
 use anyhow::{anyhow, bail};
+use arcstr::ArcStr;
 use csv::{Reader, WriterBuilder};
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
@@ -27,7 +28,6 @@ use indexmap::IndexMap;
 use itertools::{izip, Itertools};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
-use smartstring::alias::String;
 use std::convert::Into;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
@@ -463,7 +463,6 @@ pub(super) fn calc_final_rates(
             &EnergySupplyDetails::with_fuel(FuelType::UnmetDemand),
         )])
     {
-        let energy_supply_key = String::from(energy_supply_key);
         let supply_emis_result = emis_results.entry(energy_supply_key.clone()).or_default();
         let supply_emis_oos_result = emis_oos_results
             .entry(energy_supply_key.clone())
@@ -509,7 +508,7 @@ pub(super) fn calc_final_rates(
                 }
                 _ => {
                     let factor = EMIS_PE_FACTORS
-                        .get(&String::from(fuel_code))
+                        .get(fuel_code.to_string().as_str())
                         .ok_or_else(|| {
                             anyhow!("Expected factor values in the table for the fuel code {fuel_code} were not present.")
                         })?;
@@ -848,11 +847,11 @@ impl FhsCalculationResult {
     fn printable_values_for_index(&self, index: usize) -> [String; 5] {
         // what's going on here can almost certainly be optimised
         [
-            self.import[index].to_string().into(),
-            self.export[index].to_string().into(),
-            self.generated[index].to_string().into(),
-            self.unregulated[index].to_string().into(),
-            self.total[index].to_string().into(),
+            self.import[index].to_string(),
+            self.export[index].to_string(),
+            self.generated[index].to_string(),
+            self.unregulated[index].to_string(),
+            self.total[index].to_string(),
         ]
     }
 }
@@ -873,7 +872,7 @@ fn write_postproc_file(
     for (energy_supply, energy_supply_results) in &results {
         for result_name in energy_supply_results.labels() {
             // Create header row
-            row_headers.push(String::from([energy_supply, " ", result_name].concat()));
+            row_headers.push([energy_supply, " ", result_name].concat());
         }
     }
 
@@ -1469,7 +1468,7 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
             })
             .collect();
         for (hw_source_name, hw_source_type) in hw_sources {
-            match hw_source_type.as_ref().map(|s| s.as_str()) {
+            match hw_source_type.as_deref() {
                 Some("StorageTank") => {
                     let control_name =
                         format!("{hw_pv_diverter_max_temp_base_name}_{hw_source_name}");
@@ -2458,7 +2457,7 @@ fn create_appliance_gains(
                 "Standby": app.standby_w,
             }))?;
 
-            appliance_kwhcycle.insert(appliance_key.into(), kwhcycle);
+            appliance_kwhcycle.insert(appliance_key, kwhcycle);
         } else {
             // model as yearlong time series schedule of demand in W
             let annual_kwh = match appliance.get("kWh_per_annum").and_then(|v| v.as_f64()) {
@@ -2594,7 +2593,7 @@ struct ApplianceCookingDemand {
     mean_annual_demand: f64,
     _mean_annual_events: f64,
     mean_event_demand: f64,
-    fuel: Option<String>,
+    fuel: Option<ArcStr>,
     event_count: f64,
 }
 
@@ -2629,7 +2628,7 @@ fn cooking_demand(
     };
 
     let microwave_fuel = match input.appliances_contain_key("Microwave") {
-        true => Some(FuelType::Electricity.into()),
+        true => Some(FuelType::Electricity.to_string().into()),
         false => None,
     };
     let microwave = ApplianceCookingDemand {
@@ -2641,7 +2640,7 @@ fn cooking_demand(
     };
 
     let kettle_fuel = match input.appliances_contain_key("Kettle") {
-        true => Some(FuelType::Electricity.into()),
+        true => Some(FuelType::Electricity.to_string().into()),
         false => None,
     };
     let kettle = ApplianceCookingDemand {
@@ -4082,7 +4081,7 @@ fn create_custom_energy_supply_factors(
         .heat_source_wet()?
         .keys()
         .cloned()
-        .collect::<Vec<String>>();
+        .collect::<Vec<ArcStr>>();
 
     for heat_source_wet_key in heat_source_wet_keys {
         let is_heat_network = {
