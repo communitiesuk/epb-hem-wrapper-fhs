@@ -51,6 +51,84 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
     Ok(())
 }
 
+/// Compares two floating-point numbers for approximate equality within an absolute tolerance.
+/// To use inplace of python's math.isclose function.
+///
+/// Arguments
+/// * `a` - First floating-point number.
+/// * `b` - Second floating-point number.
+/// * `abs_tol` - Absolute tolerance within which the two numbers are considered close.
+///
+/// Returns
+/// * `true` if the numbers are approximately equal within the given tolerance, `false` otherwise.
+///
+/// Note:
+/// - To be relocated if used elsewhere.
+/// - only considers absolute tolerance, not relative tolerance.
+fn math_is_close(a: f64, b: f64, abs_tol: f64) -> bool {
+    (a - b).abs() <= abs_tol
+}
+#[allow(unused)]
+/// Validate each window part's mid-height lies within its glazed element.
+///
+/// A part's ``mid_height`` is measured relative to the base of the ventilation
+/// zone, whereas a window's ``base_height`` is ground-relative; the element is
+/// converted into the zone-relative frame before comparison. The mid-height must
+/// lie between the sill and the head of the window — the schema cannot express
+/// this cross-field constraint, so it is checked here. Without it an out-of-range
+/// mid-height would be silently rescaled by the notional glazing resize rather
+/// than rejected.
+pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProcessing) -> anyhow::Result<()> {
+    let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
+    for (zone_name, zone) in input.zone_node()? {
+        let elements = zone
+            .get("BuildingElement")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| json_error("BuildingElement node not present"))?;
+
+        for (element_name, element) in elements {
+            if element.get("type").and_then(|el_type| el_type.as_str())
+                == Some("BuildingElementTransparent")
+            {
+                let base_height = element
+                    .get("base_height")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| json_error("Window base_height missing or not a number"))?;
+                let sill_height = base_height - ventilation_zone_base_height;
+                let height = element
+                    .get("height")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| json_error("Window height missing or not a number"))?;
+                let head_height = sill_height + height;
+                for window_part in element
+                    .get("window_part_list")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| json_error("Window part list missing or not an array"))?
+                {
+                    let mid_height = window_part
+                        .get("mid_height")
+                        .and_then(|v| v.as_f64())
+                        .ok_or_else(|| {
+                            json_error("Window part mid_height missing or not a number")
+                        })?;
+                    let below_sill =
+                        mid_height < sill_height && !math_is_close(mid_height, sill_height, 1e-10);
+                    let above_head =
+                        mid_height > head_height && !math_is_close(mid_height, head_height, 1e-10);
+
+                    if below_sill || above_head {
+                        bail!(
+                        "Window '{}' in Zone '{}' has a window part mid_height ({:.2} m) outside the glazed element, which spans [{:.2}, {:.2}] m relative to the ventilation zone base",
+                        element_name, zone_name, mid_height, sill_height, head_height
+                    );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +243,63 @@ mod tests {
 
         // Then an error is raised that windows must be within the ventilation zone
         assert_eq!(result.unwrap_err().to_string(), "Window 'window 0' in Zone 'whole dwelling' has base_height (0.5 m) below ventilation_zone_base_height (1 m)");
+    }
+
+    #[rstest]
+    fn test_ok_when_mid_height_within_window(mut dwelling_zone: InputForProcessing) {
+        // Given a part whose mid-height sits inside the glazed element
+        dwelling_zone.input["Zone"]["whole dwelling"]["BuildingElement"]["window 0"]
+            ["window_part_list"][0]["mid_height"] = json!(0.5);
+
+        // When the validation function is run
+        let result = validate_window_part_mid_height_within_window(&dwelling_zone);
+
+        // Then no error is raised
+        assert!(result.is_ok());
+    }
+
+    #[rstest]
+    fn test_ok_when_mid_height_at_head(mut dwelling_zone: InputForProcessing) {
+        // Given a part whose mid-height sits exactly at the window head
+        dwelling_zone.input["Zone"]["whole dwelling"]["BuildingElement"]["window 0"]
+            ["window_part_list"][0]["mid_height"] = json!(1.25);
+
+        // When the validation function is run
+        let result = validate_window_part_mid_height_within_window(&dwelling_zone);
+
+        // Then no error is raised because the head is an inclusive bound
+        assert!(result.is_ok());
+    }
+
+    #[rstest]
+    fn test_raises_when_mid_height_above_head(mut dwelling_zone: InputForProcessing) {
+        // Given a part whose mid-height is above the window head
+        dwelling_zone.input["Zone"]["whole dwelling"]["BuildingElement"]["window 0"]
+            ["window_part_list"][0]["mid_height"] = json!(2.0);
+
+        // When the validation function is run
+        let result = validate_window_part_mid_height_within_window(&dwelling_zone);
+
+        // Then an error is raised that the part is outside the glazed element
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Window 'window 0' in Zone 'whole dwelling' has a window part mid_height (2.00 m) outside the glazed element, which spans [0.00, 1.25] m relative to the ventilation zone base"
+        );
+    }
+
+    #[rstest]
+    fn test_raises_when_mid_height_below_sill(mut dwelling_zone: InputForProcessing) {
+        // Given a part whose mid-height is below the window sill
+        dwelling_zone.input["Zone"]["whole dwelling"]["BuildingElement"]["window 0"]
+            ["window_part_list"][0]["mid_height"] = json!(-0.5);
+
+        // When the validation function is run
+        let result = validate_window_part_mid_height_within_window(&dwelling_zone);
+
+        // Then an error is raised that the part is outside the glazed element
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Window 'window 0' in Zone 'whole dwelling' has a window part mid_height (-0.50 m) outside the glazed element, which spans [0.00, 1.25] m relative to the ventilation zone base"
+        );
     }
 }
