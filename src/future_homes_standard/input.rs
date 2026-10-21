@@ -1616,6 +1616,20 @@ impl InputForProcessing {
             .collect())
     }
 
+    pub (crate) fn all_smart_air_brick_building_elements(&self) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>>{  
+        self.zone_node()?
+            .values()
+            .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
+            .flatten()
+            .filter(|(_key, el)| {
+                el.get("smart_air_bricks")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|(key, el)| Ok((ArcStr::from(key), el)))
+            .collect()
+    }
+
     pub(crate) fn all_building_element_values_mut(
         &mut self,
     ) -> JsonAccessResult<Vec<&mut JsonValue>> {
