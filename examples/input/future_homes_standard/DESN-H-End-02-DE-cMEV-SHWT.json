@@ -105,7 +105,6 @@
                 }
             },
             "daily_losses": 1.3,
-            "init_temp": 50,
             "max_flow_rate_pump_l_per_min": 19,
             "power_pump_kW": 0.005,
             "temp_usable": 40,
@@ -197,7 +196,6 @@
     "NumberOfBathrooms": 1,
     "NumberOfBedrooms": 3,
     "NumberOfHabitableRooms": 4,
-    "NumberOfSanitaryAccommodations": 0,
     "NumberOfHotTappedRooms": 2,
     "NumberOfUtilityRooms": 0,
     "NumberOfWetRooms": 1,
@@ -378,45 +376,46 @@
                     "width": 7.2
                 },
                 "ind_01": {
-                    "area": 12.72,
-                    "areal_heat_capacity": "Very light",
+                    "area": 6.36,
+                    "areal_heat_capacity": 100000,
                     "mass_distribution_class": "D: Mass equally distributed",
                     "pitch": 90,
                     "type": "BuildingElementAdjacentConditionedSpace",
-                    "u_value": 0.3
+                    "u_value": 0.15,
+                    "is_adjacent_space_within_dwelling": true
                 },
                 "inr_01": {
-                    "area": 37.45,
-                    "areal_heat_capacity": "Very light",
+                    "area": 18.725,
+                    "areal_heat_capacity": 100000,
                     "mass_distribution_class": "IE: Mass divided over internal and external side",
                     "pitch": 0,
                     "type": "BuildingElementAdjacentConditionedSpace",
-                    "u_value": 0.3
+                    "u_value": 0.15,
+                    "is_adjacent_space_within_dwelling": true
                 },
                 "inw_01": {
-                    "area": 50.055,
-                    "areal_heat_capacity": "Very light",
+                    "area": 25.0275,
+                    "areal_heat_capacity": 100000,
                     "mass_distribution_class": "IE: Mass divided over internal and external side",
                     "pitch": 90,
                     "type": "BuildingElementAdjacentConditionedSpace",
-                    "u_value": 0.3
+                    "u_value": 0.15,
+                    "is_adjacent_space_within_dwelling": true
                 },
                 "prw_01": {
-                    "area": 37.296,
-                    "areal_heat_capacity": "Very light",
+                    "area": 18.648,
+                    "areal_heat_capacity": 100000,
                     "mass_distribution_class": "IE: Mass divided over internal and external side",
                     "pitch": 90,
                     "type": "BuildingElementAdjacentConditionedSpace",
-                    "u_value": 0.3
+                    "u_value": 0.15,
+                    "is_adjacent_space_within_dwelling": true
                 },
                 "win_NN_00_01": {
                     "base_height": 1.2,
                     "frame_area_fraction": 0.342222222,
-                    "free_area_height": 1.65,
                     "g_value": 0.7,
                     "height": 0.9,
-                    "max_window_open_area": 0.036,
-                    "mid_height": 1.65,
                     "orientation360": 0,
                     "pitch": 90,
                     "security_risk": true,
@@ -442,18 +441,17 @@
                     "width": 0.8,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 1.65
+                            "free_area_height": 0.045,
+                            "mid_height": 1.65,
+                            "max_window_open_area": 0.036
                         }
                     ]
                 },
                 "win_NN_00_02": {
                     "base_height": 0,
                     "frame_area_fraction": 0.18989011,
-                    "free_area_height": 1.05,
                     "g_value": 0.7,
                     "height": 2.1,
-                    "max_window_open_area": 0.1365,
-                    "mid_height": 1.05,
                     "orientation360": 0,
                     "pitch": 90,
                     "security_risk": true,
@@ -479,18 +477,17 @@
                     "width": 1.3,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 1.05
+                            "free_area_height": 0.105,
+                            "mid_height": 1.05,
+                            "max_window_open_area": 0.1365
                         }
                     ]
                 },
                 "win_NN_00_03": {
                     "base_height": 0,
                     "frame_area_fraction": 0.296296296,
-                    "free_area_height": 1.05,
                     "g_value": 0.7,
                     "height": 2.1,
-                    "max_window_open_area": 0.0945,
-                    "mid_height": 1.05,
                     "orientation360": 0,
                     "pitch": 90,
                     "security_risk": true,
@@ -516,18 +513,17 @@
                     "width": 0.9,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 1.05
+                            "free_area_height": 0.105,
+                            "mid_height": 1.05,
+                            "max_window_open_area": 0.0945
                         }
                     ]
                 },
                 "win_NN_01_01": {
                     "base_height": 3.32,
                     "frame_area_fraction": 0.342222222,
-                    "free_area_height": 3.77,
                     "g_value": 0.7,
                     "height": 0.9,
-                    "max_window_open_area": 0.216,
-                    "mid_height": 3.77,
                     "orientation360": 0,
                     "pitch": 90,
                     "security_risk": true,
@@ -553,18 +549,17 @@
                     "width": 0.8,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 3.77
+                            "free_area_height": 0.27,
+                            "mid_height": 3.77,
+                            "max_window_open_area": 0.216
                         }
                     ]
                 },
                 "win_NN_01_02": {
                     "base_height": 3.12,
                     "frame_area_fraction": 0.250629371,
-                    "free_area_height": 3.67,
                     "g_value": 0.7,
                     "height": 1.1,
-                    "max_window_open_area": 0.429,
-                    "mid_height": 3.67,
                     "orientation360": 0,
                     "pitch": 90,
                     "security_risk": true,
@@ -590,18 +585,17 @@
                     "width": 1.3,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 3.67
+                            "free_area_height": 0.33,
+                            "mid_height": 3.67,
+                            "max_window_open_area": 0.429
                         }
                     ]
                 },
                 "win_SS_00_01": {
                     "base_height": 0.5,
                     "frame_area_fraction": 0.196,
-                    "free_area_height": 1.3,
                     "g_value": 0.7,
                     "height": 1.6,
-                    "max_window_open_area": 0.12,
-                    "mid_height": 1.3,
                     "orientation360": 180,
                     "pitch": 90,
                     "security_risk": true,
@@ -627,18 +621,17 @@
                     "width": 1.5,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 1.3
+                            "free_area_height": 0.08,
+                            "mid_height": 1.3,
+                            "max_window_open_area": 0.12
                         }
                     ]
                 },
                 "win_SS_01_01": {
                     "base_height": 3.12,
                     "frame_area_fraction": 0.208761905,
-                    "free_area_height": 3.82,
                     "g_value": 0.7,
                     "height": 1.4,
-                    "max_window_open_area": 0.63,
-                    "mid_height": 3.82,
                     "orientation360": 180,
                     "pitch": 90,
                     "security_risk": true,
@@ -664,18 +657,17 @@
                     "width": 1.5,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 3.82
+                            "free_area_height": 0.42,
+                            "mid_height": 3.82,
+                            "max_window_open_area": 0.63
                         }
                     ]
                 },
                 "win_SS_01_02": {
                     "base_height": 3.42,
                     "frame_area_fraction": 0.287407407,
-                    "free_area_height": 4.02,
                     "g_value": 0.7,
                     "height": 1.2,
-                    "max_window_open_area": 0.324,
-                    "mid_height": 4.02,
                     "orientation360": 180,
                     "pitch": 90,
                     "security_risk": true,
@@ -701,18 +693,17 @@
                     "width": 0.9,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 4.02
+                            "free_area_height": 0.36,
+                            "mid_height": 4.02,
+                            "max_window_open_area": 0.324
                         }
                     ]
                 },
                 "win_WW_01_01": {
                     "base_height": 2.4,
                     "frame_area_fraction": 0.212913386,
-                    "free_area_height": 3.67,
                     "g_value": 0.7,
                     "height": 2.54,
-                    "max_window_open_area": 0.762,
-                    "mid_height": 3.67,
                     "orientation360": 270,
                     "pitch": 90,
                     "security_risk": true,
@@ -738,7 +729,9 @@
                     "width": 1,
                     "window_part_list": [
                         {
-                            "mid_height_air_flow_path": 3.67
+                            "free_area_height": 0.762,
+                            "mid_height": 3.67,
+                            "max_window_open_area": 0.762
                         }
                     ]
                 }

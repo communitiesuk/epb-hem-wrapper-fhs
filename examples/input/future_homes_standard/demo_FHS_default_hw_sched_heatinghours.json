@@ -10,7 +10,6 @@
     "NumberOfHotTappedRooms": 3,
     "NumberOfUtilityRooms": 0,
     "NumberOfBathrooms": 2,
-    "NumberOfSanitaryAccommodations": 0,
     "HeatingControlType": "SeparateTempControl",
     "KitchenExtractorHoodExternal": true,
     "ExternalConditions": {
@@ -284,13 +283,12 @@
                     "base_height": 1,
                     "height": 1.25,
                     "width": 4,
-                    "free_area_height": 1.6,
-                    "mid_height": 1.5,
-                    "max_window_open_area": 3,
                     "security_risk" : true,
                     "window_part_list": [
                         {
-                        "mid_height_air_flow_path":1.5
+                            "free_area_height": 0.75,
+                            "mid_height": 1.5,
+                            "max_window_open_area": 3
                         }
                     ],
                     "shading": [
@@ -314,11 +312,12 @@
                 },
                 "wall 4":{
                     "type": "BuildingElementAdjacentConditionedSpace",
-                    "area": 20.0,
+                    "area": 10.0,
                     "pitch": 0.0,
-                    "thermal_resistance_construction": 0.74,
-                    "areal_heat_capacity": "Very light",
-                    "mass_distribution_class": "I: Mass concentrated at internal side"
+                    "thermal_resistance_construction": 1.48,
+                    "areal_heat_capacity": 100000,
+                    "mass_distribution_class": "I: Mass concentrated at internal side",
+                    "is_adjacent_space_within_dwelling": true
                 },
                 "wall 5": {
                     "type": "BuildingElementOpaque",
