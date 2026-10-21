@@ -68,7 +68,7 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
 fn math_is_close(a: f64, b: f64, abs_tol: f64) -> bool {
     (a - b).abs() <= abs_tol
 }
-#[allow(unused)]
+#[allow(dead_code)]
 /// Validate each window part's mid-height lies within its glazed element.
 ///
 /// A part's ``mid_height`` is measured relative to the base of the ventilation
@@ -80,11 +80,8 @@ fn math_is_close(a: f64, b: f64, abs_tol: f64) -> bool {
 /// than rejected.
 pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProcessing) -> anyhow::Result<()> {
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
-    for (zone_name, zone) in input.zone_node()? {
-        let elements = zone
-            .get("BuildingElement")
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| json_error("BuildingElement node not present"))?;
+    for (zone_name, _) in input.zone_node()? {
+        let elements = input.all_building_elements()?;
 
         for (element_name, element) in elements {
             if element.get("type").and_then(|el_type| el_type.as_str())
