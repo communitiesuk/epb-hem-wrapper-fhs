@@ -51,7 +51,7 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
 
     Ok(())
 }
-
+#[allow(dead_code)]
 pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProcessing) -> anyhow::Result<()> {
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
     for (zone_name, _) in input.zone_node()? {
