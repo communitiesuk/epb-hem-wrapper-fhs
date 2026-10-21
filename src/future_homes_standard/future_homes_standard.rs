@@ -1,8 +1,8 @@
-use crate::future_homes_standard::fhs_appliance::FhsAppliance;
-use crate::future_homes_standard::fhs_hw_events::{
+use crate::future_homes_standard::appliance::FhsAppliance;
+use crate::future_homes_standard::hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
-use crate::future_homes_standard::fhs_imev_scheduler::create_imev_pattern;
+use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
     json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
@@ -291,7 +291,7 @@ static EMIS_PE_FACTORS: LazyLock<IndexMap<String, FactorData>> = LazyLock::new(|
     let mut factors: IndexMap<String, FactorData> = Default::default();
 
     let mut factors_reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
-        "./FHS_emisPEfactors_05-08-2024.csv"
+        "./emisPEfactors_05-08-2024.csv"
     ))));
     for factor_data in factors_reader.deserialize() {
         let factor_data: FactorData = factor_data.expect("Reading the PE factors file failed.");
@@ -309,7 +309,7 @@ static EMIS_PE_FACTORS_ELEC: LazyLock<IndexMap<usize, ElectricityFactorData>> =
         let mut emis_pe_factors_elec: IndexMap<usize, ElectricityFactorData> = Default::default();
 
         let mut factors_reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
-            "./FHS_emisPEfactors_elec.csv"
+            "./emisPEfactors_elec.csv"
         ))));
 
         for factor_data in factors_reader.deserialize() {

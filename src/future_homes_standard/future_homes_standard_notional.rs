@@ -4,13 +4,13 @@ use super::future_homes_standard::{
     ENERGY_SUPPLY_NAME_ELECTRICITY, HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS,
     REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END, SIMTIME_START, SIMTIME_STEP,
 };
-use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
+use crate::future_homes_standard::hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::fhs_part_f_validation::part_f::{
     minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
     minimum_whole_dwelling_ventilation_rate_continuous,
 };
-use crate::future_homes_standard::fhs_sleeved_dhn_validation::HeatNetworkType;
-use crate::future_homes_standard::fhs_ventilation::{
+use crate::future_homes_standard::sleeved_dhn_validation::HeatNetworkType;
+use crate::future_homes_standard::ventilation::{
     create_background_vents, create_mechanical_ventilation,
 };
 use crate::future_homes_standard::input::{

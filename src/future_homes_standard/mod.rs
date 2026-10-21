@@ -25,15 +25,15 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use tracing::error;
 
-mod fhs_appliance;
+mod appliance;
 mod fhs_compliance_response;
-mod fhs_hw_events;
-mod fhs_imev_scheduler;
+mod hw_events;
+mod imev_scheduler;
 mod fhs_part_f_validation;
 pub mod fhs_schema_validation;
-pub(crate) mod fhs_sleeved_dhn_validation;
-pub(crate) mod fhs_storeys_validation;
-pub(crate) mod fhs_ventilation;
+pub(crate) mod sleeved_dhn_validation;
+pub(crate) mod storeys_validation;
+pub(crate) mod ventilation;
 pub(crate) mod window_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;

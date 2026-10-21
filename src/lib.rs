@@ -1,5 +1,5 @@
-use crate::future_homes_standard::fhs_sleeved_dhn_validation::validate_sleeved_dhn;
-use crate::future_homes_standard::fhs_storeys_validation::validate_storeys_in_building_and_dwelling;
+use crate::future_homes_standard::sleeved_dhn_validation::validate_sleeved_dhn;
+use crate::future_homes_standard::storeys_validation::validate_storeys_in_building_and_dwelling;
 use crate::future_homes_standard::window_validation::{
     validate_existence_of_window, validate_window_base_height_within_ventilation_zone,
 };

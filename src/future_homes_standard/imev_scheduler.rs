@@ -439,7 +439,7 @@ fn appliance_gains_from_input(input: &Value) -> anyhow::Result<&Map<String, Valu
 #[cfg(test)]
 mod test {
     mod test_event {
-        use crate::future_homes_standard::fhs_imev_scheduler::{Event, Time};
+        use crate::future_homes_standard::imev_scheduler::{Event, Time};
 
         #[test]
         fn test_event_chunkifies_start_time_less_than_start_time() {
@@ -575,7 +575,7 @@ mod test {
     }
 
     mod test_imev_schedulise {
-        use crate::future_homes_standard::fhs_imev_scheduler::{IMev, Time};
+        use crate::future_homes_standard::imev_scheduler::{IMev, Time};
         use approx::assert_relative_eq;
 
         #[test]
@@ -645,7 +645,7 @@ mod test {
     }
 
     mod test_create_imev_pattern {
-        use crate::future_homes_standard::fhs_imev_scheduler::create_imev_pattern;
+        use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
         use crate::future_homes_standard::input::InputForProcessing;
         use approx::assert_relative_eq;
         use rstest::{fixture, rstest};
