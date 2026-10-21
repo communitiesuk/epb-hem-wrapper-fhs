@@ -1,5 +1,6 @@
 use crate::future_homes_standard::input::{json_error, InputForProcessing};
 use anyhow::bail;
+use approx::relative_eq;
 
 /// Validate that the dwelling contains at least one BuildingElementTransparent which represents a window
 pub(crate) fn validate_existence_of_window(input: &InputForProcessing) -> anyhow::Result<()> {
@@ -51,33 +52,6 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
     Ok(())
 }
 
-/// Compares two floating-point numbers for approximate equality within an absolute tolerance.
-/// To use inplace of python's math.isclose function.
-///
-/// Arguments
-/// * `a` - First floating-point number.
-/// * `b` - Second floating-point number.
-/// * `abs_tol` - Absolute tolerance within which the two numbers are considered close.
-///
-/// Returns
-/// * `true` if the numbers are approximately equal within the given tolerance, `false` otherwise.
-///
-/// Note:
-/// - To be relocated if used elsewhere.
-/// - only considers absolute tolerance, not relative tolerance.
-fn math_is_close(a: f64, b: f64, abs_tol: f64) -> bool {
-    (a - b).abs() <= abs_tol
-}
-#[allow(dead_code)]
-/// Validate each window part's mid-height lies within its glazed element.
-///
-/// A part's ``mid_height`` is measured relative to the base of the ventilation
-/// zone, whereas a window's ``base_height`` is ground-relative; the element is
-/// converted into the zone-relative frame before comparison. The mid-height must
-/// lie between the sill and the head of the window — the schema cannot express
-/// this cross-field constraint, so it is checked here. Without it an out-of-range
-/// mid-height would be silently rescaled by the notional glazing resize rather
-/// than rejected.
 pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProcessing) -> anyhow::Result<()> {
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
     for (zone_name, _) in input.zone_node()? {
@@ -109,9 +83,9 @@ pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProc
                             json_error("Window part mid_height missing or not a number")
                         })?;
                     let below_sill =
-                        mid_height < sill_height && !math_is_close(mid_height, sill_height, 1e-10);
+                        mid_height < sill_height && !relative_eq!(mid_height, sill_height, epsilon=1e-10);
                     let above_head =
-                        mid_height > head_height && !math_is_close(mid_height, head_height, 1e-10);
+                        mid_height > head_height && !relative_eq!(mid_height, head_height, epsilon=1e-10);
 
                     if below_sill || above_head {
                         bail!(
