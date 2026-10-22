@@ -47,7 +47,7 @@ fn validate_smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<
                 declared_on.join(", ")
             }
         );
-    } 
+    }
     Ok(())
 }
 
@@ -62,7 +62,10 @@ mod tests {
         for (index, floor) in ground_floors.into_iter().enumerate() {
             elements.insert(format!("ground {}", index + 1), floor);
         }
-        elements.insert("wall 0".to_string(), json!({"type": "BuildingElementOpaque"}));
+        elements.insert(
+            "wall 0".to_string(),
+            json!({"type": "BuildingElementOpaque"}),
+        );
 
         InputForProcessing {
             input: json!({

@@ -52,7 +52,9 @@ pub(crate) fn validate_window_base_height_within_ventilation_zone(
     Ok(())
 }
 #[allow(dead_code)]
-pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProcessing) -> anyhow::Result<()> {
+pub(crate) fn validate_window_part_mid_height_within_window(
+    input: &InputForProcessing,
+) -> anyhow::Result<()> {
     let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
     for (zone_name, _) in input.zone_node()? {
         let elements = input.all_building_elements()?;
@@ -82,10 +84,10 @@ pub (crate)fn validate_window_part_mid_height_within_window(input: &InputForProc
                         .ok_or_else(|| {
                             json_error("Window part mid_height missing or not a number")
                         })?;
-                    let below_sill =
-                        mid_height < sill_height && !relative_eq!(mid_height, sill_height, epsilon=1e-10);
-                    let above_head =
-                        mid_height > head_height && !relative_eq!(mid_height, head_height, epsilon=1e-10);
+                    let below_sill = mid_height < sill_height
+                        && !relative_eq!(mid_height, sill_height, epsilon = 1e-10);
+                    let above_head = mid_height > head_height
+                        && !relative_eq!(mid_height, head_height, epsilon = 1e-10);
 
                     if below_sill || above_head {
                         bail!(

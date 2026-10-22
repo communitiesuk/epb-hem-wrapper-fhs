@@ -90,8 +90,7 @@ fn validate_hydronic_source(
         );
     }
 
-    let phase_change_temp =
-        input.heat_battery_phase_transition_temperature_upper(battery)?;
+    let phase_change_temp = input.heat_battery_phase_transition_temperature_upper(battery)?;
     let temp_flow_limit_upper = source
         .get("temp_flow_limit_upper")
         .and_then(Value::as_f64)
