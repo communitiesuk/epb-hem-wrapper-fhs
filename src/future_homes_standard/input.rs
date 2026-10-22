@@ -1616,7 +1616,9 @@ impl InputForProcessing {
             .collect())
     }
 
-    pub (crate) fn all_smart_air_brick_building_elements(&self) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>>{  
+    pub(crate) fn all_smart_air_brick_building_elements(
+        &self,
+    ) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>> {
         self.zone_node()?
             .values()
             .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
@@ -1992,6 +1994,48 @@ impl InputForProcessing {
             .and_then(|value| value.get_mut(key))
             .and_then(|value| value.as_object_mut())
             .ok_or_else(|| anyhow!("No HeatSourceWet object with key {key}"))
+    }
+
+    pub(crate) fn heat_batteries_with_charging_sources(
+        &self,
+    ) -> anyhow::Result<IndexMap<ArcStr, JsonValue>> {
+        Ok(self
+            .heat_source_wet()?
+            .into_iter()
+            .filter(|(_, hsw)| hsw.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"))
+            .filter(|(_, hsw)| hsw.get("HeatSource").is_some())
+            .collect())
+    }
+
+    pub(crate) fn heat_battery_charging_sources(
+        &self,
+        battery_name: ArcStr,
+    ) -> anyhow::Result<IndexMap<ArcStr, JsonValue>> {
+        let batteries = self.heat_batteries_with_charging_sources()?;
+        let battery = batteries.get(&battery_name).ok_or_else(|| {
+            anyhow!("Heat battery '{battery_name}' was not found or has no charging sources")
+        })?;
+        let charging_sources = battery
+            .get("HeatSource")
+            .and_then(JsonValue::as_object)
+            .ok_or_else(|| {
+                anyhow!("Heat battery '{battery_name}' has a HeatSource that is not an object")
+            })?;
+
+        Ok(charging_sources
+            .iter()
+            .map(|(name, source)| (ArcStr::from(name.as_str()), source.clone()))
+            .collect())
+    }
+
+    /// Return a PCM heat battery's upper phase transition temperature, or None if it has none.
+    pub(crate) fn heat_battery_phase_transition_temperature_upper(
+        &self,
+        battery: &JsonValue,
+    ) -> anyhow::Result<Option<f64>> {
+        Ok(battery
+            .get("phase_transition_temperature_upper")
+            .and_then(JsonValue::as_f64))
     }
 
     pub fn remove_heat_source_wet(&mut self) -> JsonAccessResult<&mut Self> {
