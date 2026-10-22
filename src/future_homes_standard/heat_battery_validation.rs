@@ -171,9 +171,10 @@ mod tests {
         // Then no error is raised
     }
 
-    // test renamed from Python's test_does_not_error_for_one_hydronic_source as that's a duplicate name
+    // test renamed from Python's test_does_not_error_for_one_hydronic_source as that's a duplicate
+    // test name and not accurate
     #[test]
-    fn test_does_not_error_for_one_hydronic_source_2() {
+    fn test_does_not_error_for_no_hydronic_source() {
         // Given a battery charged by a direct electric element at a rated power
         let input = input(
             json!( {"rated_charge_power": 15.0} )
