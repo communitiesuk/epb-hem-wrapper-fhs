@@ -3,11 +3,11 @@ use serde_json::Value;
 use std::sync::LazyLock;
 use thiserror::Error;
 
-#[validator(path = "./schema/input_fhs.schema.json", methods = { validate = false, iter_errors = false })]
+#[validator(path = "./src/future_homes_standard/schema.json", methods = { validate = false, iter_errors = false })]
 struct FhsSchema;
 
 static FHS_SCHEMA_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
-    let schema = serde_json::from_str(include_str!("../../schema/input_fhs.schema.json")).unwrap();
+    let schema = serde_json::from_str(include_str!("schema.json")).unwrap();
     jsonschema::validator_for(&schema).unwrap()
 });
 
