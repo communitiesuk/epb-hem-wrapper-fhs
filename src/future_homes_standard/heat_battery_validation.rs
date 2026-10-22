@@ -103,12 +103,11 @@ fn validate_hydronic_source(
 
     if let Some(phase_change_temp) = phase_change_temp {
         if temp_flow_limit_upper < phase_change_temp {
-            todo!(
-                "Warn user that: Heat battery '{battery_name}' charging source '{source_name}' is limited to \
-                 {temp_flow_limit_upper}°C, below the battery's phase change temperature of \
-                 {phase_change_temp}°C, so it can store only sensible heat. This compares the \
-                 stated circuit limit, not what the heat source can achieve in operation."
-            );
+            // TODO: Implement structured way to return warnings & warn user that:
+            // Heat battery '{battery_name}' charging source '{source_name}' is limited to \
+            // {temp_flow_limit_upper}°C, below the battery's phase change temperature of \
+            // {phase_change_temp}°C, so it can store only sensible heat. This compares the \
+            // stated circuit limit, not what the heat source can achieve in operation.
         }
     }
 
@@ -254,5 +253,74 @@ mod tests {
         let result = validate_heat_battery_charging(input);
         let error = result.unwrap_err().to_string();
         assert!(error.contains("which is itself a heat battery"));
+    }
+
+    #[ignore = "Ignore until we have implemented a structured way to return warnings"]
+    #[test]
+    fn test_warns_when_the_circuit_cannot_reach_the_phase_change() {
+        // Given a charging circuit limited below the battery's 59 C phase change temperature
+        let input = input(
+            json!({
+            "temp_min_useful": 40.0,
+            "HeatSource": {
+                "hp": hydronic(json!({"temp_flow_limit_upper": 50.})),
+            }})
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        // When validation is called
+        let _result = validate_heat_battery_charging(input);
+        // Then it warns rather than rejecting: below the phase change the battery still stores
+        // sensible heat, so the configuration is degraded rather than impossible
+    }
+
+    #[test]
+    fn test_no_warning_when_the_circuit_exceeds_the_phase_change() {
+        // Given a charging circuit above the phase change temperature
+        let input = input(
+            json!({
+            "temp_min_useful": 40.0,
+            "HeatSource": {
+                "hp": hydronic(json!({})),
+            }})
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        // When validation is called
+        let result = validate_heat_battery_charging(input);
+        // Then nothing is warned about
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ignores_a_heat_battery_that_is_not_pcm() {
+        // Given a dry core battery, which has no phase change temperature
+        let mut input = input(
+            json!({
+            "temp_min_useful": 40.0,
+            "HeatSource": {
+                "hp": hydronic(json!({})),
+            }})
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+
+        input
+            .heat_source_wet_by_key_mut("hb1")
+            .unwrap()
+            .insert("battery_type".into(), json!("dry_core"));
+        input
+            .heat_source_wet_by_key_mut("hb1")
+            .unwrap()
+            .remove("phase_transition_temperature_upper");
+
+        // When validation is called
+        let result = validate_heat_battery_charging(input);
+        // Then no error is raised and nothing is warned about, there being no phase change to
+        // compare the circuit against
+        assert!(result.is_ok());
     }
 }
