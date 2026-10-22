@@ -138,6 +138,10 @@ mod tests {
                     "hb1": battery,
                     "HeatPump1": {
                         "type": "HeatPump"
+                    },
+                    "hb2": {
+                        "type": "HeatBattery",
+                        "battery_type": "pcm",
                     }
                 }
             }),
@@ -231,5 +235,24 @@ mod tests {
         let result = validate_heat_battery_charging(input);
         let error = result.unwrap_err().to_string();
         assert!(error.contains("names heat source 'NoSuchPump', which is not in HeatSourceWet"));
+    }
+
+    #[test]
+    fn test_error_when_the_named_heat_source_is_another_battery() {
+        // Given a charging source naming another heat battery rather than a wet heat source
+        let input = input(
+            json!({
+            "temp_min_useful": 40.0,
+            "HeatSource": {
+                "hp": hydronic(json!({"name": "hb2"})),
+            }})
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        // When validation is called, then it is rejected: a battery cannot charge from a battery
+        let result = validate_heat_battery_charging(input);
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("which is itself a heat battery"));
     }
 }
