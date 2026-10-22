@@ -986,8 +986,10 @@ mod tests {
         // Given a PreHeatedWaterSource, with a ColdWaterSource of itself
         project["PreHeatedWaterSource"] = json!({
             "preheated tank": {
+                "type": "StorageTank",
                 "volume": 80.0,
                 "daily_losses": 1.68,
+                "init_temp": 35.0,
                 "ColdWaterSource": "mains water",
                 "HeatSource": {
                     "immersion": {
@@ -1000,6 +1002,9 @@ mod tests {
                 },
             }
         });
+
+        project["HotWaterSource"]["hw cylinder"]["ColdWaterSource"] = json!("preheated tank");
+
         assert!(apply_schema_validation(&project).is_ok());
     }
 
@@ -1032,8 +1037,10 @@ mod tests {
         });
         project["PreHeatedWaterSource"] = json!({
             "preheated tank": {
+                "type": "StorageTank",
                 "volume": 80.0,
                 "daily_losses": 1.68,
+                "init_temp": 35.0,
                 "ColdWaterSource": "wwhrs system",
                 "HeatSource": {
                     "immersion": {

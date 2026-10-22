@@ -10,7 +10,6 @@
   "NumberOfHotTappedRooms": 3,
   "NumberOfUtilityRooms": 0,
   "NumberOfBathrooms": 2,
-  "NumberOfSanitaryAccommodations": 0,
   "HeatingControlType": "SeparateTempControl",
   "KitchenExtractorHoodExternal": true,
   "ExternalConditions": {
@@ -228,7 +227,8 @@
           "pitch": 90,
           "area": 20.0,
           "party_wall_cavity_type": "unfilled_sealed",
-          "party_wall_lining_type": "dry_lined"
+          "party_wall_lining_type": "dry_lined",
+          "u_value_whole_wall": 0.2
         },
         "floor 0": {
           "type": "BuildingElementOpaque",
@@ -253,13 +253,12 @@
           "base_height": 1,
           "height": 1.25,
           "width": 4,
-          "free_area_height": 1.6,
-          "mid_height": 1.5,
-          "max_window_open_area": 3,
           "security_risk": true,
           "window_part_list": [
             {
-              "mid_height_air_flow_path": 1.5
+              "free_area_height": 1.6,
+              "mid_height": 1.5,
+              "max_window_open_area": 3
             }
           ],
           "shading": [
