@@ -20,11 +20,11 @@ fn validate_heat_battery_charging(input: InputForProcessing) -> anyhow::Result<(
     let heat_batteries = input.heat_batteries_with_charging_sources()?;
     for (battery_name, battery) in &heat_batteries {
         let charging_sources = input.heat_battery_charging_sources(battery_name.clone())?;
-        validate_one_charging_source(&battery_name, &charging_sources)?;
+        validate_one_charging_source(battery_name, &charging_sources)?;
 
         for (source_name, source) in charging_sources {
             if source.get("type").and_then(Value::as_str) == Some("HeatSourceWet") {
-                validate_hydronic_source(&input, battery_name, &battery, &source_name, &source)?;
+                validate_hydronic_source(&input, battery_name, battery, &source_name, &source)?;
             }
         }
     }

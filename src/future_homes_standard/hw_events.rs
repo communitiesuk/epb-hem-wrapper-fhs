@@ -150,6 +150,7 @@ pub fn reset_events_and_provide_drawoff_generator(
             ))?;
         baths.push(Drawoff {
             event_type: "Bath".into(),
+            #[allow(semicolon_in_expressions_from_non_local_macros)]
             duration_fn: Rc::new(Mutex::new(Box::new(partial!(move bath_duration_func =>
                 bath_size,
                 bath_flowrate,
@@ -168,6 +169,7 @@ pub fn reset_events_and_provide_drawoff_generator(
         let other_duration_func = other_duration_func_gen();
         other.push(Drawoff {
             event_type: "Other".into(),
+            #[allow(semicolon_in_expressions_from_non_local_macros)]
             duration_fn: Rc::new(Mutex::new(Box::new(partial!(move other_duration_func =>
                 other_flow_rate,
                 _
@@ -199,6 +201,7 @@ pub fn reset_events_and_provide_drawoff_generator(
         other.push(Drawoff {
             event_type: "Other".into(),
             name: "other".into(),
+            #[allow(semicolon_in_expressions_from_non_local_macros)]
             duration_fn: Rc::new(Mutex::new(Box::new(partial!(move other_duration_func =>
                 other_flow_rate,
                 _
@@ -223,6 +226,7 @@ pub fn reset_events_and_provide_drawoff_generator(
             baths.push(Drawoff {
                 event_type: "Other".into(),
                 name: "other".into(),
+                #[allow(semicolon_in_expressions_from_non_local_macros)]
                 duration_fn: Rc::new(Mutex::new(Box::new(
                     partial!(move bath_duration_func => bath_size, 8.0, _),
                 ))),
@@ -230,6 +234,7 @@ pub fn reset_events_and_provide_drawoff_generator(
             showers.push(Drawoff {
                 event_type: "Other".into(),
                 name: "other".into(),
+                #[allow(semicolon_in_expressions_from_non_local_macros)]
                 duration_fn: Rc::new(Mutex::new(Box::new(
                     partial!(move bath_duration_func => bath_size, 8.0, _),
                 ))),
