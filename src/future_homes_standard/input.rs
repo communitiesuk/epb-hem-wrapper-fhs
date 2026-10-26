@@ -350,16 +350,6 @@ impl InputForProcessing {
             as usize)
     }
 
-    pub(crate) fn number_of_sanitary_accommodations(&self) -> JsonAccessResult<usize> {
-        Ok(self
-            .input
-            .get("NumberOfSanitaryAccommodations")
-            .and_then(|n| n.as_u64())
-            .ok_or_else(|| {
-                json_error("NumberOfSanitaryAccommodations not available as positive integer")
-            })? as usize)
-    }
-
     pub(super) fn number_of_hot_tapped_rooms(&self) -> JsonAccessResult<usize> {
         match self.input.get("NumberOfHotTappedRooms") {
             Some(JsonValue::Number(n)) => Ok(n

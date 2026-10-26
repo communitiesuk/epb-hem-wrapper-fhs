@@ -42,16 +42,16 @@ pub(crate) mod part_f {
     pub fn minimum_whole_dwelling_ventilation_rate_intermittent(
         bathrooms: usize,
         utility_rooms: usize,
-        sanitary_accommodations: usize,
         is_kitchen_vent_external: bool,
     ) -> f64 {
+        // Sanitary accommodations are excluded from the minimum extract rate: the
+        // Part F table 1.1 footnote permits purge ventilation (section 1.26) for
+        // them in place of a minimum extract rate.
         let minimum_rate_per_kitchen = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l/s
         let minimum_rate_per_bathroom = 15f64; // l/s
         let minimum_rate_per_utility_room = 30f64; // l/s
-        let minimum_rate_per_sanitary_accommodation = 6f64; // l/s
         let minimum_rate = bathrooms as f64 * minimum_rate_per_bathroom
             + utility_rooms as f64 * minimum_rate_per_utility_room
-            + sanitary_accommodations as f64 * minimum_rate_per_sanitary_accommodation
             + minimum_rate_per_kitchen; // Assume all dwellings have one kitchen
         litres_per_second_to_cubic_metres_per_hour(minimum_rate) // m3/hr
     }
@@ -113,14 +113,12 @@ pub(crate) mod part_f {
         vents: &[&JsonValue],
         bathrooms: usize,
         utility_rooms: usize,
-        sanitary_accommodations: usize,
         is_kitchen_vent_external: bool,
     ) -> anyhow::Result<bool> {
         let total_design_flow = total_design_flow_from_vents(vents)?;
         let min_ventilation = minimum_whole_dwelling_ventilation_rate_intermittent(
             bathrooms,
             utility_rooms,
-            sanitary_accommodations,
             is_kitchen_vent_external,
         );
         Ok(total_design_flow >= min_ventilation)
@@ -198,7 +196,6 @@ pub(crate) mod part_f {
         wet_rooms: usize,
         bathrooms: usize,
         utility_rooms: usize,
-        sanitary_accommodations: usize,
         storeys: usize,
         is_kitchen_vent_external: bool,
         bedrooms: usize,
@@ -213,7 +210,6 @@ pub(crate) mod part_f {
             &intermittent_mev_vents,
             bathrooms,
             utility_rooms,
-            sanitary_accommodations,
             is_kitchen_vent_external,
         )?;
         let mev_count_compliant = sufficient_mev_count(&intermittent_mev_vents, wet_rooms);
@@ -380,7 +376,6 @@ pub(crate) mod part_f {
         wet_rooms: usize,
         bathrooms: usize,
         utility_rooms: usize,
-        sanitary_accommodations: usize,
         storeys: usize,
         is_kitchen_vent_external: bool,
     ) -> anyhow::Result<()> {
@@ -438,7 +433,6 @@ pub(crate) mod part_f {
                 wet_rooms,
                 bathrooms,
                 utility_rooms,
-                sanitary_accommodations,
                 storeys,
                 is_kitchen_vent_external,
                 bedrooms,
@@ -501,6 +495,17 @@ mod tests {
         // Bedroom criteria = 13 + 4 * 6 = 37 l/s
         let mwdvr = part_f::minimum_whole_dwelling_ventilation_rate_continuous(150.0, 4);
         assert_eq!(mwdvr, 162.0) // 45 * 3.6 m3/hr
+    }
+
+    #[test]
+    fn test_minimum_excludes_sanitary_accommodations() {
+        // Sanitary accommodations no longer contribute to the intermittent
+        // minimum: the Part F table 1.1 footnote permits purge ventilation for
+        // them in place of a minimum extract rate.
+        // 2 bathrooms * 15 + 1 utility * 30 + 30 (external kitchen) = 90 l/s
+        let mwdvr = part_f::minimum_whole_dwelling_ventilation_rate_intermittent(2, 1, true);
+
+        assert_eq!(mwdvr, 324.); // 90 * 3.6 m3/hr, with no sanitary-accommodation term
     }
 
     #[test]
@@ -569,7 +574,7 @@ mod tests {
         let ventilation = serde_json::from_str(json).unwrap();
 
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 2, true);
         assert!(result.is_ok());
     }
 
@@ -591,7 +596,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -627,7 +632,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -657,7 +662,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -715,7 +720,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_ok());
     }
@@ -761,7 +766,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -835,7 +840,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_ok());
     }
@@ -868,7 +873,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -923,7 +928,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1017,7 +1022,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, false);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1088,7 +1093,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, false);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1131,7 +1136,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1203,7 +1208,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1286,7 +1291,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_ok());
     }
@@ -1353,7 +1358,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_ok());
     }
@@ -1433,7 +1438,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_ok());
     }
@@ -1477,7 +1482,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, false);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1533,7 +1538,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 1, 2, 0, 0, 2, false);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 1, 2, 0, 2, false);
 
         assert!(result.is_ok());
     }
@@ -1577,7 +1582,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1626,7 +1631,7 @@ mod tests {
 
         let ventilation = serde_json::from_str(json).unwrap();
         let result =
-            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 0, 2, true);
+            part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
@@ -1716,7 +1721,7 @@ mod tests {
                 },
             },
         });
-        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 0, 2, true);
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
             assert!(e.to_string().contains(
@@ -1799,7 +1804,7 @@ mod tests {
             },
         });
         assert!(
-            part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 0, 2, true).is_ok()
+            part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 2, true).is_ok()
         );
     }
 }

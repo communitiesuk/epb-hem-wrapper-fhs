@@ -221,7 +221,6 @@ fn do_fhs_preprocessing(
                 .ok_or_else(|| anyhow!("Expected NumberOfWetRooms to be provided"))?,
             input.number_of_bathrooms()?,
             input.number_of_utility_rooms()?,
-            input.number_of_sanitary_accommodations()?,
             input.storeys_in_dwelling()?,
             input.kitchen_extractor_hood_external()?,
         )?;
