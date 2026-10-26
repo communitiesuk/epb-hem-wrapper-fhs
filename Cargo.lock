@@ -1143,6 +1143,7 @@ dependencies = [
  "bitflags 2.13.2",
  "clap",
  "csv",
+ "fsum",
  "home-energy-model",
  "indexmap 2.13.1",
  "itertools 0.15.0",

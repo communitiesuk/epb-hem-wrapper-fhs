@@ -5,7 +5,7 @@ use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelli
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
 use crate::future_homes_standard::input::InputForProcessing;
-use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
+use crate::future_homes_standard::metrics::Metrics;
 use crate::future_homes_standard::project_lookups::by_fuel;
 use crate::{CalculationKey, FhsFlags};
 use crate::{CustomEnergySourceFactors, HemWrapper};
@@ -242,11 +242,13 @@ fn do_fhs_preprocessing(
 }
 
 fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metrics> {
-    let energy_by_fuel = by_fuel(input, &core_response.summary)?;
+    let _energy_by_fuel = by_fuel(input, &core_response.summary)?;
 
-    Ok(Metrics {
-        eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
-    })
+    todo!("can be re-enabled once energy_by_fuel is of updated type");
+
+    // Ok(Metrics {
+    //     eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
+    // })
 }
 
 fn do_fhs_postprocessing(
