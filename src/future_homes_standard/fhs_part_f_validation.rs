@@ -779,6 +779,7 @@ mod tests {
     #[test]
     fn test_does_not_raise_if_sufficient_imev_and_background_vents() {
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
