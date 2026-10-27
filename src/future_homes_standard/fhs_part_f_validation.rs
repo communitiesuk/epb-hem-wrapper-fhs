@@ -847,8 +847,64 @@ mod tests {
     }
 
     #[test]
+    fn test_does_not_raise_when_i_mev_meets_only_non_sanitary_minimum() {
+        // Given a dwelling whose intermittent extract rate meets exactly the
+        // bathroom + utility + kitchen minimum (1 * 15 + 0 + 30 = 45 l/s =
+        // 162 m3/hr) but would have failed the old minimum that added 6 l/s
+        // per sanitary accommodation (e.g. 3 sanitary accommodations would have
+        // required 15 + 18 + 30 = 63 l/s = 226.8 m3/hr).
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 162,
+                }
+            },
+        });
+
+        // When the ventilation is validated (no sanitary-accommodation input) then it passes: sanitary accommodations no longer raise the minimum
+        assert!(
+            part_f::validate_dwelling_ventilation(&vents, 100., 1, 1, 1, 1, 0, 2, true).is_ok()
+        );
+    }
+
+    #[test]
     fn test_raises_if_sufficient_imev_but_insufficient_background_vents() {
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -888,6 +944,7 @@ mod tests {
     #[test]
     fn test_raises_if_sufficient_background_vents_but_insufficient_imev() {
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -950,6 +1007,7 @@ mod tests {
         // outside (216+ m3/hr)
 
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1040,6 +1098,7 @@ mod tests {
         // outside (108+ m3/hr)
 
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1111,6 +1170,7 @@ mod tests {
         // intermittent mechanical vents
 
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -1154,6 +1214,7 @@ mod tests {
     fn test_raises_if_insufficient_number_of_imev() {
         // Given a dwelling with sufficient background vents but insufficient number of iMEV
         let json = r#"{
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1550,7 +1611,8 @@ mod tests {
         // Given a dwelling with sufficient iMEV vents and background ventilator area, but
         // insufficient background ventilator count
         let json = r#"{
-            "Vents": {
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+                "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
                     "area_cm2": 1000,
