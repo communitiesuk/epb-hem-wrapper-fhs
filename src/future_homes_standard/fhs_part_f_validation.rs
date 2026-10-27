@@ -1,5 +1,6 @@
 pub(crate) mod part_f {
     use anyhow::{anyhow, bail};
+    use approx::relative_eq;
     use home_energy_model::{
         compare_floats::max_of_2,
         core::units::{LITRES_PER_CUBIC_METRE, SECONDS_PER_HOUR},
@@ -367,6 +368,32 @@ pub(crate) mod part_f {
             .collect())
     }
 
+    fn min_air_permeability_by_test_pressure(pressure: &str) -> anyhow::Result<f64> {
+        match pressure {
+            "Standard" => Ok(3.),           // AP50, m3/(h.m2)
+            "Pulse test only" => Ok(0.545), // AP4, m3/(h.m2)
+            _ => bail!("Unknown test pressure: {pressure}"),
+        }
+    }
+
+    fn sufficient_air_permeability(leaks: &JsonValue) -> anyhow::Result<bool> {
+        let min_air_permeability = min_air_permeability_by_test_pressure(
+            leaks
+                .get("test_pressure")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| {
+                    anyhow!("test_pressure provided as a string is expected for Leaks")
+                })?,
+        )?;
+        let test_result = leaks
+            .get("test_result")
+            .and_then(JsonValue::as_f64)
+            .ok_or_else(|| anyhow!("test_result provided as a number is expected for Leaks"))?;
+
+        Ok(test_result >= min_air_permeability
+            || relative_eq!(test_result, min_air_permeability, max_relative = 1e-9))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_dwelling_ventilation(
         ventilation: &JsonValue,
@@ -453,9 +480,35 @@ pub(crate) mod part_f {
             )?;
         }
 
+        // The SAP 10.3 minimum air permeability applies only to dwellings without a
+        // continuous mechanical system. Because it never applies when continuous
+        // vents are present, it cannot be masked by the intermittent-or-continuous
+        // either/or check below (which only short-circuits when continuous vents
+        // exist).
+        let mut air_permeability_errors: Vec<String> = Default::default();
+        if !has_continuous_vents {
+            let leaks = ventilation
+                .get("Leaks")
+                .ok_or_else(|| anyhow!("Leaks object is required for InfiltrationVentilation"))?;
+
+            if !sufficient_air_permeability(leaks)? {
+                let min_air_permeability = min_air_permeability_by_test_pressure(
+                    leaks
+                        .get("test_pressure")
+                        .and_then(JsonValue::as_str)
+                        .ok_or_else(|| {
+                            anyhow!("test_pressure provided as a string is expected for Leaks")
+                        })?,
+                )?;
+
+                air_permeability_errors.push(format!("Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of {min_air_permeability} m3/(h.m2)."));
+            }
+        }
+
         // note - important to clone() here so that `append` doesn't modify intermittent_errors or continuous_errors
         let mut all_collected_errors = intermittent_errors.clone();
         all_collected_errors.append(&mut continuous_errors.clone());
+        all_collected_errors.append(&mut air_permeability_errors.clone());
 
         if all_collected_errors.is_empty() {
             return Ok(());
@@ -478,7 +531,7 @@ pub(crate) mod part_f {
 #[cfg(test)]
 mod tests {
     use crate::future_homes_standard::fhs_part_f_validation::part_f;
-    use serde_json::json;
+    use serde_json::{json, Map, Value};
 
     #[test]
     fn test_mwdvr_when_bedroom_based_value_is_greater() {
@@ -840,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn test_does_not_raise_when_i_mev_meets_only_non_sanitary_minimum() {
+    fn test_does_not_raise_when_imev_meets_only_non_sanitary_minimum() {
         // Given a dwelling whose intermittent extract rate meets exactly the
         // bathroom + utility + kitchen minimum (1 * 15 + 0 + 30 = 45 l/s =
         // 162 m3/hr) but would have failed the old minimum that added 6 l/s
@@ -1847,5 +1900,76 @@ mod tests {
         assert!(
             part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 2, true).is_ok()
         );
+    }
+
+    /// Build an iMEV-only dwelling that satisfies every Part F intermittent
+    /// check, so the supplied Leaks air permeability is the only variable under
+    /// test. Used by the SAP 10.3 air permeability tests.
+    fn passing_imev_only_vents(leaks: Value) -> Value {
+        let background_vent = json!({
+            "mid_height_air_flow_path": 1.5,
+            "area_cm2": 300,
+            "pressure_difference_ref": 20,
+            "orientation360": 0,
+            "pitch": 60,
+        });
+        let vents_map: Map<String, Value> = (0..5)
+            .map(|i| (format!("vent{i}"), background_vent.clone()))
+            .collect();
+
+        json!({
+            "Leaks": leaks,
+            "Vents": vents_map,
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600,
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+            }
+        })
+    }
+
+    #[test]
+    fn test_does_not_raise_if_imev_only_and_ap50_at_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 50 Pa equals the SAP 10.3 minimum of 3 m3/(h.m2)
+        let vents =
+            passing_imev_only_vents(json!({"test_pressure": "Standard", "test_result": 3.0}));
+
+        // When the ventilation is validated then it passes: equalling the minimum is acceptable
+        assert!(
+            part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn test_raises_if_imev_only_and_ap50_below_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 50 Pa is below the SAP 10.3 minimum of 3 m3/(h.m2)
+        let vents =
+            passing_imev_only_vents(json!({"test_pressure": "Standard", "test_result": 2.5}));
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of 3 m3/(h.m2)."
+            ));
+        });
     }
 }
