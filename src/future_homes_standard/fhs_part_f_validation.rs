@@ -537,7 +537,7 @@ mod tests {
     // test_does_not_raise_if_sufficient_continuous_MEV_and_background_vents
     #[test]
     fn test_does_not_raise_if_sufficient_cmev_and_background_vents() {
-        let json = r#"{ 
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -570,18 +570,18 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
-        let ventilation = serde_json::from_str(json).unwrap();
+        });
 
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 2, true);
+
         assert!(result.is_ok());
     }
 
     // test_raises_if_sufficient_continuous_MEV_but_insufficient_background_vents
     #[test]
     fn test_raises_if_sufficient_cmev_but_insufficient_background_vents() {
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -592,9 +592,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -611,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_raises_if_no_mechanical_vents() {
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -628,9 +627,8 @@ mod tests {
                     "pitch": 60
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -645,7 +643,7 @@ mod tests {
     // test_raises_if_neither_background_nor_continuous_MEV_ventilation_sufficient
     #[test]
     fn test_raises_if_neither_background_nor_cmev_ventilation_sufficient() {
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -656,11 +654,9 @@ mod tests {
                     "design_outdoor_air_flow_rate": 50
                 }
             }
-        }"#;
+        });
 
         // "design_outdoor_air_flow_rate": 50,  # not enough for 100 floor area/4 beds
-
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -681,7 +677,7 @@ mod tests {
     // test_does_not_raise_if_sufficient_MVHR_and_no_background_vents
     #[test]
     fn test_does_not_raise_if_sufficient_mvhr_and_no_background_vents() {
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -716,9 +712,8 @@ mod tests {
                     ]
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -727,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_raises_if_insufficient_mvhr() {
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {},
             "MechanicalVentilation": {
                 "mechvent1": {
@@ -762,9 +757,8 @@ mod tests {
                     ]
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -778,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_does_not_raise_if_sufficient_imev_and_background_vents() {
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
@@ -837,9 +831,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 200
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -903,7 +896,7 @@ mod tests {
 
     #[test]
     fn test_raises_if_sufficient_imev_but_insufficient_background_vents() {
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {},
             "MechanicalVentilation": {
@@ -926,9 +919,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 200
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -943,7 +935,7 @@ mod tests {
     // test_raises_if_sufficient_background_vents_but_insufficient_iMEV
     #[test]
     fn test_raises_if_sufficient_background_vents_but_insufficient_imev() {
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
@@ -966,7 +958,7 @@ mod tests {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10
+                    "design_outdoor_air_flow_rate": 10 // insufficient flow rate
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
@@ -981,10 +973,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 1
                 }
             }
-        }"#;
-        // mechvent 1 -- insufficient flow rate
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1005,8 +995,7 @@ mod tests {
         // Given a dwelling with sufficient iMEV vents and background vents
         // But no individual fan of sufficient size for a kitchen without ventilation to the
         // outside (216+ m3/hr)
-
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
@@ -1077,9 +1066,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 215
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
@@ -1096,8 +1084,7 @@ mod tests {
         // Given a dwelling with sufficient iMEV vents and background vents
         // But no individual fan of sufficient size for a kitchen with ventilation to the
         // outside (108+ m3/hr)
-
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
@@ -1149,9 +1136,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 107
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
@@ -1168,8 +1154,7 @@ mod tests {
     fn test_raises_if_neither_background_nor_imev_ventilation_sufficient() {
         // Given a dwelling that neither has enough background vents nor
         // intermittent mechanical vents
-
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {},
             "MechanicalVentilation": {
@@ -1177,7 +1162,7 @@ mod tests {
                     "vent_type": "Intermittent MEV",
                     "SFP": 1.5,
                     "EnergySupply": "mains elec",
-                    "design_outdoor_air_flow_rate": 10
+                    "design_outdoor_air_flow_rate": 10 // insufficient flow rate
                 },
                 "mechvent2": {
                     "vent_type": "Intermittent MEV",
@@ -1192,10 +1177,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 10
                 }
             }
-        }"#;
-        // mechvent1 - insufficient flow rate
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1213,7 +1196,7 @@ mod tests {
     #[test]
     fn test_raises_if_insufficient_number_of_imev() {
         // Given a dwelling with sufficient background vents but insufficient number of iMEV
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
             "Vents": {
                 "vent1": {
@@ -1266,9 +1249,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 600
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1284,7 +1266,7 @@ mod tests {
     #[test]
     fn test_does_not_raise_if_sufficient_imev_and_continuous_mev_and_background_vents() {
         // Given a dwelling with sufficient iMEV vents and continuous MEV vents and background vents
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1349,9 +1331,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1365,7 +1346,7 @@ mod tests {
         // Given a dwelling with sufficient continuous MEV ventilation but
         // insufficient background vents for intermittent ventilation.
         // The dwelling passes because only one route needs to pass.
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1416,9 +1397,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 3, 2, 0, 2, true);
 
@@ -1431,7 +1411,7 @@ mod tests {
     {
         // Given a dwelling with sufficient iMEV vents and background vents but insufficient
         // continuous MEV vents. The dwelling passes because only one route needs to pass.
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1496,9 +1476,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 10
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1509,7 +1488,7 @@ mod tests {
     #[test]
     fn test_raises_if_insufficient_imev_and_continuous_mev_and_background_vents() {
         // Given a dwelling with insufficient iMEV vents and continuousMEV vents and background vents
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1540,9 +1519,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 10
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, false);
 
@@ -1563,7 +1541,7 @@ mod tests {
     #[test]
     fn test_does_not_raise_if_sufficient_decentralised_continuous_mev_and_background_vents() {
         // Given a dwelling with sufficient decentralised continuous MEV vents and background vents
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1596,9 +1574,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 1, 5, 1, 2, 0, 2, false);
 
@@ -1610,7 +1587,7 @@ mod tests {
     fn test_raises_if_sufficient_imev_but_insufficient_background_vent_count() {
         // Given a dwelling with sufficient iMEV vents and background ventilator area, but
         // insufficient background ventilator count
-        let json = r#"{
+        let ventilation = json!({
             "Leaks": {"test_pressure": "Standard", "test_result": 5},
                 "Vents": {
                 "vent1": {
@@ -1641,9 +1618,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 200
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1657,7 +1633,7 @@ mod tests {
     #[test]
     fn test_raises_if_insufficient_decentralised_continuous_mev_count() {
         // Given a dwelling with insufficient decentralised continuous MEV vents
-        let json = r#"{
+        let ventilation = json!({
             "Vents": {
                 "vent1": {
                     "mid_height_air_flow_path": 1.5,
@@ -1690,9 +1666,8 @@ mod tests {
                     "design_outdoor_air_flow_rate": 133.2
                 }
             }
-        }"#;
+        });
 
-        let ventilation = serde_json::from_str(json).unwrap();
         let result =
             part_f::validate_dwelling_ventilation(&ventilation, 100., 4, 5, 3, 2, 0, 2, true);
 
@@ -1784,7 +1759,9 @@ mod tests {
                 },
             },
         });
+
         let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
         assert!(result.is_err());
         let _ = result.inspect_err(|e| {
             assert!(e.to_string().contains(
@@ -1866,6 +1843,7 @@ mod tests {
                 },
             },
         });
+
         assert!(
             part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 2, true).is_ok()
         );
