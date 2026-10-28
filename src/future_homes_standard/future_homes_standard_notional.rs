@@ -256,8 +256,12 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
 fn edit_party_walls(input: &mut InputForProcessing) -> anyhow::Result<()> {
     for building_element in input.all_party_wall_building_elements_mut()? {
         building_element.insert("party_wall_cavity_type".into(), "filled_sealed".into());
+        // party_wall_lining_type not allowed for filled_sealed
         building_element.shift_remove("party_wall_lining_type");
-        building_element.shift_remove("thermal_resistance_cavity");
+        // The notional party wall loses no heat, so the whole-element U-value it
+        // carries for the compliance report is 0. Without this the element would
+        // keep the actual dwelling's figure, which describes a different wall.
+        building_element.insert("u_value_whole_wall".into(), 0.into());
     }
 
     Ok(())
@@ -1762,7 +1766,7 @@ mod tests {
         // Given an actual building with an unfilled_sealed party wall
         test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({
             "type": "BuildingElementPartyWall",
-            "u_value": 0.3,
+            "thermal_resistance_construction": 3.3,
             "areal_heat_capacity": "Very light",
             "mass_distribution_class": "I: Mass concentrated at internal side",
             "pitch": 90,
@@ -1789,31 +1793,30 @@ mod tests {
     }
 
     #[rstest]
-    fn test_edit_party_walls_removes_thermal_resistance_cavity(mut test_input: InputForProcessing) {
-        // Given an actual building with a defined_resistance party wall
-        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({"type": "BuildingElementPartyWall",
-            "u_value": 0.3,
+    fn test_edit_party_walls_zeroes_whole_wall_uvalue(mut test_input: InputForProcessing) {
+        // Given an actual building whose party wall loses heat and so declares a
+        // non-zero whole-wall U-value for the compliance report
+        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({
+            "type": "BuildingElementPartyWall",
+            "thermal_resistance_construction": 3.3,
             "areal_heat_capacity": "Very light",
             "mass_distribution_class": "I: Mass concentrated at internal side",
             "pitch": 90,
             "area": 15.0,
-            "party_wall_cavity_type": "defined_resistance",
-            "thermal_resistance_cavity": "1.0",});
+            "party_wall_cavity_type": "unfilled_sealed",
+            "party_wall_lining_type": "dry_lined",
+            "u_value_whole_wall": 0.2,
+        });
 
         // When notional building is created
         edit_party_walls(&mut test_input).unwrap();
 
-        // Then the party wall's party_wall_cavity_type is changed to filled_sealed
+        // Then the whole-wall U-value is zeroed to match the filled_sealed cavity type
+        // the notional forces, which loses no heat
         assert_eq!(
             test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
-                ["party_wall_cavity_type"],
-            "filled_sealed"
-        );
-        // And any properties contingent on party_wall_cavity_type are removed
-        assert!(
-            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
-                .get("thermal_resistance_cavity")
-                .is_none()
+                ["u_value_whole_wall"],
+            0
         );
     }
 
