@@ -51,6 +51,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use tracing::instrument;
 
+// Notional external wall U-value (W/m².K), applied to every above-ground opaque wall.
+// Below-ground basement walls reuse this via their fabric-equivalent construction resistance.
+const NOTIONAL_WALL_U_VALUE: f64 = 0.18;
+
 const NOTIONAL_WWHRS: &str = "Notional_Inst_WWHRS";
 const NOTIONAL_HIU: &str = "notionalHIU";
 const NOTIONAL_HP: &str = "notional_HP";
@@ -229,7 +233,7 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
                 building_element.set_u_value(0.11);
             }
             HeatFlowDirection::Horizontal => {
-                building_element.set_u_value(0.18);
+                building_element.set_u_value(NOTIONAL_WALL_U_VALUE);
 
                 if building_element.is_opaque() {
                     if let Some(true) = building_element.is_external_door() {
@@ -1746,7 +1750,7 @@ mod tests {
             "wall 0".into() => (Some(0.7), None),  // a party wall - thermal resistance left as is
             "wall 1".into() => (None, Some(1.0)),  // non party - door = notional 1
             "wall 2".into() => (None, Some(0.18)),  // non party - horizontal = notional 0.18
-            "wall 3".into() => (None, Some(0.3)),  // a party wall- u_value left as is,
+            "wall 3".into() => (Some(3.3), None),  // a party wall - thermal resistance left as is
             "wall 4".into() => (None, Some(0.11)),  // non party - upwards (ceiling) = notional 0.11
         };
 
