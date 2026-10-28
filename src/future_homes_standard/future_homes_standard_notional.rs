@@ -25,7 +25,7 @@ use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
 use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
 use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
 use home_energy_model::core::space_heat_demand::building_element::{
-    pitch_class, HeatFlowDirection,
+    convert_uvalue_to_resistance, pitch_class, HeatFlowDirection,
 };
 use home_energy_model::core::space_heat_demand::building_element::{R_SE, R_SI_UPWARDS};
 use home_energy_model::core::units::{
@@ -40,8 +40,7 @@ use home_energy_model::corpus::{HotWaterSource, HotWaterSourceBehaviour};
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EcoDesignController, GroundBuildingElement,
-    GroundBuildingElementJsonValue, WaterDistribution, WaterPipework,
+    CustomEnergySourceFactor, EcoDesignController, WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
 use indexmap::IndexMap;
@@ -552,21 +551,59 @@ fn edit_glazing_for_glazing_limit(
 }
 
 /// Apply notional building ground specifications
+/// u-value = 0.13 W/m2.K
+/// thermal resistance of the floor construction,excluding the ground = 6.12 m2.K/W
+/// linear thermal transmittance, psi_wall_floor_junc = 0.16 W/m.K
 ///
-///     u-value = 0.13 W/m2.K
-///     thermal resistance of the floor construction,excluding the ground, r_f = 6.12 m2.K/W
-///     linear thermal transmittance, psi_wall_floor_junc = 0.16 W/m.K
+/// For basement floor types, the basement walls are held to the same construction
+/// standard as every other notional external wall. Following BS EN ISO 13370 section
+/// 7.3.3, a below-ground wall is specified by its construction resistance and the
+/// surrounding-soil resistance is added by the engine from the basement depth, so the
+/// wall's construction resistance is set to the fabric equivalent of the notional
+/// external wall rather than to a U-value. The above-ground portion of an
+/// unheated-basement wall is an ordinary external wall and takes the notional wall
+/// U-value directly. Basement geometry (depth, wall height) is left at the actual
+/// dwelling's values so the soil benefit applies equally to actual and notional.
 pub(crate) fn edit_ground_floors(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    // TODO (from Python) waiting from MHCLG/DESNZ for clarification if basement floors and basement walls are treated the same
+    // Construction resistance (excluding surface resistances) of the notional external
+    // wall, i.e. the fabric equivalent of a notional_wall_u_value wall above ground.
+    // Vertical walls have a pitch of 90 degrees.
+    let thermal_resist_walls_base_notional =
+        convert_uvalue_to_resistance(NOTIONAL_WALL_U_VALUE, 90.);
 
-    for mut building_element in input
-        .all_ground_building_elements_mut()?
-        .into_iter()
-        .map(GroundBuildingElementJsonValue)
-    {
-        building_element.set_u_value(0.13);
-        building_element.set_thermal_resistance_floor_construction(6.12);
-        building_element.set_psi_wall_floor_junc(0.16);
+    for building_element in input.all_ground_building_elements_mut()? {
+        building_element.insert("u_value".into(), 0.13.into());
+        building_element.insert("thermal_resistance_floor_construction".into(), 6.12.into());
+        building_element.insert("psi_wall_floor_junc".into(), 0.16.into());
+
+        let floor_type = building_element
+            .get("floor_type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("missing floor_type on ground building element"))?;
+
+        let is_basement = matches!(floor_type, "Heated_basement" | "Unheated_basement");
+        let is_unheated_basement = matches!(floor_type, "Unheated_basement");
+        if is_basement {
+            building_element.insert(
+                "thermal_resist_walls_base".into(),
+                thermal_resist_walls_base_notional.into(),
+            );
+        }
+        if is_unheated_basement {
+            building_element.insert("thermal_transm_walls".into(), NOTIONAL_WALL_U_VALUE.into());
+        }
+
+        // The notional building has fixed air bricks, whatever the actual dwelling
+        // has. This edits the actual dwelling's elements in place, so the smart air
+        // brick inputs have to be removed rather than simply not set: the flag, and
+        // the airtightness-test state, which the core requires to be absent without a
+        // control. The control itself cannot be present at this point, since the
+        // schema rejects it as an input and the wrapper attaches it later, in
+        // final_preprocessing; it is removed anyway so that reordering the two cannot
+        // leave the notional referencing a smart air brick schedule.
+        building_element.remove("smart_air_bricks");
+        building_element.remove("Control_smart_air_brick");
+        building_element.remove("vents_open_during_airtightness_test");
     }
 
     Ok(())
@@ -1838,6 +1875,105 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[rstest]
+    fn test_edit_ground_floors_removes_smart_air_bricks(mut test_input: InputForProcessing) {
+        // Given a suspended floor with smart air bricks, the control the wrapper attaches to
+        // them, and the airtightness-test vent state
+        test_input.input["Zone"]["zone 1"]["BuildingElement"]["ground"] = json!({
+            "type": "BuildingElementGround",
+            "floor_type": "Suspended_floor",
+            "area_per_perimeter_vent": 0.003,
+            "smart_air_bricks": true,
+            "Control_smart_air_brick": "SmartAirBrick_Control",
+            "vents_open_during_airtightness_test": true,
+        });
+
+        // When the notional ground floor specification is applied
+        edit_ground_floors(&mut test_input).unwrap();
+
+        // Then all three are removed: the notional has fixed air bricks whatever the actual
+        // dwelling has, and the core forbids the airtightness-test state without a control.
+        // This edits the actual dwelling's elements in place, so they must be removed rather
+        // than merely not set.
+        let element = &test_input.input["Zone"]["zone 1"]["BuildingElement"]["ground"];
+
+        assert!(element.get("smart_air_bricks").is_none());
+        assert!(element.get("Control_smart_air_brick").is_none());
+        assert!(element.get("vents_open_during_airtightness_test").is_none());
+        // And the vent opening area is untouched, being ordinary suspended-floor geometry
+        assert_eq!(element["area_per_perimeter_vent"], 0.003);
+    }
+
+    #[rstest]
+    fn test_edit_ground_floors_sets_notional_basement_walls(mut test_input: InputForProcessing) {
+        // Given ground elements carrying the actual dwelling's basement wall fabric:
+        // a heated basement, an unheated basement, and a non-basement slab
+        test_input.input["Zone"]["z"]["BuildingElement"] = json!({
+            "heated_basement": {
+                "type": "BuildingElementGround",
+                "floor_type": "Heated_basement",
+                "thermal_resist_walls_base": 0.5,
+            },
+            "unheated_basement": {
+                "type": "BuildingElementGround",
+                "floor_type": "Unheated_basement",
+                "thermal_resist_walls_base": 0.5,
+                "thermal_transm_walls": 1.5,
+            },
+            "slab": {
+                "type": "BuildingElementGround",
+                "floor_type": "Slab_no_edge_insulation",
+            },
+        });
+
+        // When the notional ground specification is applied
+        edit_ground_floors(&mut test_input).unwrap();
+
+        let elements = &test_input.input["Zone"]["z"]["BuildingElement"];
+
+        // Then every ground element takes the notional floor specification
+        for element in elements.as_object().unwrap().values() {
+            assert_eq!(element["u_value"], 0.13);
+            assert_eq!(element["thermal_resistance_floor_construction"], 6.12);
+            assert_eq!(element["psi_wall_floor_junc"], 0.16);
+        }
+
+        // And both basement types take the notional wall construction resistance: the
+        // fabric equivalent of a 0.18 W/m2.K external wall. Rather than pin the exact
+        // figure (which would track hem-core's internal surface-resistance coefficients
+        // in lockstep and so never detect a change to them), assert the physical round
+        // trip: the returned construction resistance, combined with the BS EN ISO 6946
+        // vertical-wall surface resistances (R_si = 0.13, R_se = 0.04 m2.K/W),
+        // reconstructs the 0.18 W/m2.K target. The tolerance absorbs the small
+        // difference between those nominal surface resistances and the engine's.
+        let (r_si, r_se) = (0.13, 0.04);
+
+        for basement in ["heated_basement", "unheated_basement"] {
+            let r_construction = &elements[basement]["thermal_resist_walls_base"]
+                .as_f64()
+                .unwrap();
+            let reconstructed_u = 1.0 / (r_si + r_construction + r_se);
+
+            assert_relative_eq!(reconstructed_u, 0.18, max_relative = 1e-3);
+        }
+
+        // And the unheated basement's above-ground wall portion takes the notional wall U-value
+        assert_eq!(
+            elements["unheated_basement"]["thermal_transm_walls"]
+                .as_f64()
+                .unwrap(),
+            0.18
+        );
+
+        // And basement wall properties are not added to the non-basement slab, nor is the
+        // above-ground wall transmittance added to the heated basement
+        assert!(elements["slab"].get("thermal_resist_walls_base").is_none());
+        assert!(elements["slab"].get("thermal_transm_walls").is_none());
+        assert!(elements["heated_basement"]
+            .get("thermal_transm_walls")
+            .is_none());
     }
 
     #[rstest]
