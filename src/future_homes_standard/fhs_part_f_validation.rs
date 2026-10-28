@@ -368,6 +368,12 @@ pub(crate) mod part_f {
             .collect())
     }
 
+    // SAP 10.3 imposes a minimum air permeability on dwellings without a continuous
+    // mechanical ventilation system (natural or intermittent-extract only), so that
+    // Part L cannot be met through airtightness that would breach Part F. The
+    // applicable value depends on the test pressure recorded in the Leaks input:
+    // "Standard" reports air permeability at 50 Pa (AP50), "Pulse test only" at 4 Pa
+    // (AP4).
     fn min_air_permeability_by_test_pressure(pressure: &str) -> anyhow::Result<f64> {
         match pressure {
             "Standard" => Ok(3.),           // AP50, m3/(h.m2)
