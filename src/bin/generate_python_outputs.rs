@@ -6,7 +6,7 @@ use std::time::Instant;
 
 const DEMO_FILES_DIR: &str = "examples/input/future_homes_standard";
 const PY_FHS_REPO: &str = "https://dev.azure.com/Sustenic/Home%20Energy%20Model%20Reference/_git/Future%20Homes%20Standard%20wrapper";
-const PY_FHS_TAG: &str = "1.0.0a7";
+const PY_FHS_TAG: &str = "1.0.0a9";
 const PY_FHS_TARGET_DIR: &str = "py_fhs_wrapper";
 const PY_FHS_ENTRYPOINT: &str = "src/bin/fhs.py";
 const PY_OUTPUT_DIR: &str = "tests/e2e/expected_generated_results";
