@@ -1,5 +1,7 @@
+use jsonschema::error::ValidationErrorKind;
 use jsonschema::{validator, Validator};
 use serde_json::Value;
+use std::fmt;
 use std::sync::LazyLock;
 use thiserror::Error;
 
@@ -21,17 +23,99 @@ pub(crate) fn apply_schema_validation(input: &Value) -> Result<(), SchemaValidat
     // use precompiled schema validator to check high-level validity as speed needed here
     // fall back to static validator on failure (precompiled validator does not support evaluate() at current time (jsonchema 0.58.3))
     if FhsSchema::is_valid(input) {
-        Ok(())
-    } else {
-        let evaluation = FHS_SCHEMA_VALIDATOR.evaluate(input);
-        Err(SchemaValidationError {
-            errors: evaluation
-                .iter_errors()
-                .map(|e| format!("{}: {}", e.instance_location, e.error))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        })
+        return Ok(());
     }
+
+    let validation_errors = collect_errors(input);
+
+    // Drop parent's unevaluated properties errors explained by child's unevaluated properties error
+    let reportable_errors: Vec<&ValidationError> = validation_errors
+        .iter()
+        .filter(|error| !error.is_unreliable_unevaluated_properties(&*validation_errors))
+        .collect();
+
+    // Suppression only ever removes errors explained by another, so it cannot empty a
+    // non-empty set. Fall back to the full set regardless: an input must never pass
+    // validation because its errors were filtered out.
+    let reportable_errors = if reportable_errors.is_empty() {
+        validation_errors.iter().collect()
+    } else {
+        reportable_errors
+    };
+
+    Err(SchemaValidationError {
+        errors: reportable_errors
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    })
+}
+
+/// A single validation error: where it occurred (JSON pointer) and what went wrong.
+struct ValidationError {
+    path: String,
+    message: String,
+    is_unevaluated_properties_error: bool,
+}
+
+impl ValidationError {
+    fn is_below(&self, ancestor_path: &str) -> bool {
+        self.path
+            .strip_prefix(ancestor_path)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+
+    /// Report whether an unevaluated-properties error is collateral from a deeper failure.
+    ///
+    /// An object's unevaluatedProperties check relies on annotations produced by the
+    /// subschemas that matched it - here the type-specific branches selected by if/then.
+    /// A subschema that fails produces no annotations, so every property it would have
+    /// accounted for is reported as unexpected. The resulting message lists the object's
+    /// whole contents and buries the error that actually caused it.
+    ///
+    /// A failure strictly below the object explains the cascade, so the object's own
+    /// listing is dropped in favour of the deeper error. Where the object also carries a
+    /// genuinely unrecognised property, dropping the listing defers the report of it
+    /// rather than losing it: the input cannot pass while the deeper failure stands, and
+    /// the property is named once that failure is fixed.
+
+    /// A failure reported against the object itself is ambiguous. It may equally have
+    /// caused the cascade, but the same error set also arises when a property really is
+    /// unrecognised alongside an unrelated one - a shower that changes type and keeps its
+    /// now-invalid flowrate, say. Those errors are therefore kept, at the cost of leaving
+    /// some noisy messages, rather than risk discarding the only report of a bad property.
+    ///
+    /// Args:
+    ///    error(self in Rust): The candidate validation error.
+    ///    errors: All validation errors raised for the input.
+    ///
+    /// Returns:
+    ///    True if the error is collateral damage and should not be reported.
+    fn is_unreliable_unevaluated_properties(&self, errors: &[ValidationError]) -> bool {
+        self.is_unevaluated_properties_error
+            && errors.iter().any(|other| other.is_below(&self.path))
+    }
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path, self.message.replace('"', "'"))
+    }
+}
+
+fn collect_errors(input: &Value) -> Vec<ValidationError> {
+    FHS_SCHEMA_VALIDATOR
+        .iter_errors(input)
+        .map(|e| ValidationError {
+            path: e.instance_path().to_string(),
+            message: e.to_string(),
+            is_unevaluated_properties_error: matches!(
+                e.kind(),
+                ValidationErrorKind::UnevaluatedProperties { .. }
+            ),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -39,6 +123,49 @@ mod tests {
     use super::*;
     use rstest::*;
     use serde_json::json;
+    fn validation_error(
+        path: &str,
+        message: &str,
+        is_unevaluated_properties_error: bool,
+    ) -> ValidationError {
+        ValidationError {
+            path: path.into(),
+            message: message.into(),
+            is_unevaluated_properties_error,
+        }
+    }
+
+    #[test]
+    // unit test for the Rust only
+    fn test_is_unreliable_unevaluated_properties_for_multiple_child_errors() {
+        let errors = vec![
+            validation_error("/Appliances", "", true),
+            validation_error("/Appliances/Fridge-Freezer", "", false),
+            validation_error("/Appliances/Fridge", "", false),
+        ];
+        assert_eq!(
+            errors[0].is_unreliable_unevaluated_properties(&errors),
+            true
+        );
+        assert_eq!(
+            errors[1].is_unreliable_unevaluated_properties(&errors),
+            false
+        );
+        assert_eq!(
+            errors[2].is_unreliable_unevaluated_properties(&errors),
+            false
+        );
+    }
+
+    #[test]
+    // unit test for the Rust only
+    fn test_is_unreliable_unevaluated_properties_returns_false_given_no_child_errors() {
+        let errors = vec![validation_error("/Appliances", "", true)];
+        assert_eq!(
+            errors[0].is_unreliable_unevaluated_properties(&errors),
+            false
+        );
+    }
 
     #[fixture]
     fn project() -> Value {
