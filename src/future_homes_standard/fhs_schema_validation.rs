@@ -181,6 +181,54 @@ mod tests {
     }
 
     #[rstest]
+    fn test_microwave_and_kettle_accepted_in_appliances(mut project: Value) {
+        // Microwave and Kettle are supported by the runtime and may be
+        // declared explicitly in the input alongside the other appliances.
+        project["Appliances"]["Microwave"] = json!("Default");
+        project["Appliances"]["Kettle"] = json!("Not Installed");
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_otherdevices_rejected_in_appliances(mut project: Value) {
+        // Otherdevices is injected as a default during preprocessing but must
+        // not be nameable in the input: it is an unavoidable background load
+        // that an assessment cannot be allowed to pin or opt out of.
+        project["Appliances"]["Otherdevices"] = json!("Default");
+
+        let result = apply_schema_validation(&project);
+        if let Err(SchemaValidationError { errors }) = result {
+            let error_message = errors.to_string();
+            assert_eq!(
+                error_message,
+                "/Appliances: Unevaluated properties are not allowed ('Otherdevices' was unexpected)"
+            );
+        } else {
+            panic!("Expected validation error, got {:?}", result);
+        }
+    }
+
+    #[rstest]
+    fn test_appliance_name_containing_an_appliance_is_rejected(mut project: Value) {
+        // The appliance pattern is anchored, so a name that merely contains a
+        // recognised appliance name is not accepted and cannot reach
+        // preprocessing as an unrecognised appliance.
+        project["Appliances"]["Ovenette"] = json!("Default");
+
+        let result = apply_schema_validation(&project);
+        if let Err(SchemaValidationError { errors }) = result {
+            let error_message = errors.to_string();
+            assert_eq!(
+                error_message,
+                "/Appliances: Unevaluated properties are not allowed ('Ovenette' was unexpected)"
+            );
+        } else {
+            panic!("Expected validation error, got {:?}", result);
+        }
+    }
+
+    #[rstest]
+    // test name in Python is test_string_instead_of_number_raises
     fn test_string_instead_of_number_errors(mut project: Value) {
         project["NumberOfBedrooms"] = json!("2");
         assert!(apply_schema_validation(&project).is_err());
