@@ -1587,6 +1587,29 @@ impl InputForProcessing {
         Ok(())
     }
 
+    pub(crate) fn window_part_list_for_building_element_mut(
+        &mut self,
+        building_element_reference: &str,
+    ) -> JsonAccessResult<&mut Vec<JsonValue>> {
+        self.zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|el| el.as_object_mut())
+            })
+            .flatten()
+            .find(|(name, _value)| *name == building_element_reference)
+            .ok_or_else(|| {
+                json_error(format!(
+                    "Could not find building element with reference '{building_element_reference}'",
+                ))
+            })?
+            .1
+            .get_mut("window_part_list")
+            .and_then(|list| list.as_array_mut())
+            .ok_or_else(|| json_error("Could not find window_part_list"))
+    }
+
     pub fn all_building_elements(&self) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>> {
         self.zone_node()?
             .values()
@@ -2353,6 +2376,28 @@ pub(super) fn set_control_max_name_for_heat_source(
         .as_object_mut()
         .ok_or(json_error("Heat source is not an object"))?
         .insert("Controlmax".into(), json!(control_name));
+    Ok(())
+}
+
+pub(crate) fn window_part_field(
+    window_part: &Map<String, JsonValue>,
+    field: &str,
+) -> JsonAccessResult<f64> {
+    window_part
+        .get(field)
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| json_error(format!("{field} field not found or not a float")))
+}
+
+pub(crate) fn set_window_part_field(
+    window_part: &mut Map<String, JsonValue>,
+    field: &str,
+    new_value: f64,
+) -> JsonAccessResult<()> {
+    *window_part
+        .get_mut(field)
+        .ok_or_else(|| json_error(format!("{field} field not found")))? = json!(new_value);
+
     Ok(())
 }
 

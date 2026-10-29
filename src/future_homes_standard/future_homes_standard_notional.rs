@@ -10,8 +10,8 @@ use crate::future_homes_standard::fhs_part_f_validation::part_f::{
 };
 use crate::future_homes_standard::hw_events::STANDARD_BATH_SIZE;
 use crate::future_homes_standard::input::{
-    json_error, InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
-    UValueEditableBuildingElementJsonValue,
+    json_error, set_window_part_field, window_part_field, InputForProcessing, JsonAccessResult,
+    UValueEditableBuildingElement, UValueEditableBuildingElementJsonValue,
 };
 use crate::future_homes_standard::sleeved_dhn_validation::HeatNetworkType;
 use crate::future_homes_standard::ventilation::{
@@ -324,22 +324,38 @@ fn split_glazing_and_walls(
     Ok((windows_rooflight, walls_roofs))
 }
 
-///Calculate difference between old  and new glazing area and adjust the glazing areas
+/// Resize a window/rooflight by a linear factor and scale its openable geometry
+/// to match, returning the reduction in glazed area.
+///
+/// The openable sections shrink with the glazed element: each part's openable area
+/// scales with the area (the square of the linear factor), its free area height
+/// scales with the linear factor, and its mid-height is repositioned about the
+/// (unchanged) sill so the opening stays proportionally placed within the smaller
+/// window. This keeps the summed openable area within the resized glazed area.
+///
+/// The FHS notional methodology does not prescribe how openable geometry is
+/// resized; this proportional scaling is a modelling choice made for internal
+/// consistency, so the opening stays in proportion to its (resized) window.
+///
+/// A part's ``mid_height`` is measured relative to the base of the ventilation
+/// zone, whereas ``base_height`` is ground-relative; the sill is converted into
+/// the zone-relative frame so the opening is repositioned about the correct datum.
 fn calculate_area_diff_and_adjust_glazing_area(
     input: &mut InputForProcessing,
     linear_reduction_factor: f64,
     window_rooflight_element: &Value,
     building_element_reference: &str,
+    ventilation_zone_base_height: f64,
 ) -> anyhow::Result<f64> {
     // expected to be passed a transparent building element value
     let height = window_rooflight_element
         .get("height")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Height field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("height field not found or not a float"))?;
     let width = window_rooflight_element
         .get("width")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Width field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("width field not found or not a float"))?;
     let old_area = height * width;
     let new_height = height * linear_reduction_factor;
     let new_width = width * linear_reduction_factor;
@@ -350,6 +366,41 @@ fn calculate_area_diff_and_adjust_glazing_area(
         new_height,
     )?;
     input.set_numeric_field_for_building_element(building_element_reference, "width", new_width)?;
+
+    let sill_height = window_rooflight_element
+        .get("base_height")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow!("base_height field not found or not a float"))?
+        - ventilation_zone_base_height;
+
+    for window_part in
+        input.window_part_list_for_building_element_mut(building_element_reference)?
+    {
+        let window_part = window_part
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("window_part_list item not an object"))?;
+
+        let max_window_open_area = window_part_field(window_part, "max_window_open_area")?;
+        set_window_part_field(
+            window_part,
+            "max_window_open_area",
+            max_window_open_area * linear_reduction_factor.powi(2),
+        )?;
+
+        let free_area_height = window_part_field(window_part, "free_area_height")?;
+        set_window_part_field(
+            window_part,
+            "free_area_height",
+            free_area_height * linear_reduction_factor,
+        )?;
+
+        let mid_height = window_part_field(window_part, "mid_height")?;
+        set_window_part_field(
+            window_part,
+            "mid_height",
+            sill_height + (mid_height - sill_height) * linear_reduction_factor,
+        )?;
+    }
 
     let new_area = new_height * new_width;
 
@@ -500,6 +551,7 @@ fn edit_glazing_for_glazing_limit(
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
 
     let (windows_rooflight, mut walls_roofs) = split_glazing_and_walls(input)?;
+    let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
 
     if total_glazing_area > max_glazing_area {
         let linear_reduction_factor = (max_glazing_area / total_glazing_area).sqrt();
@@ -514,6 +566,7 @@ fn edit_glazing_for_glazing_limit(
                 linear_reduction_factor,
                 &window_rooflight_element,
                 &building_element_reference,
+                ventilation_zone_base_height,
             )?;
 
             let same_orientation = find_walls_roofs_with_same_orientation_and_pitch(
@@ -2019,6 +2072,49 @@ mod tests {
                 panic!("Unknown thermal bridging type '{bridging_type}' encountered");
             }
         }
+    }
+
+    #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_scales_openable_geometry(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a window over-glazed enough to be halved (linear reduction factor 0.5)
+        // with a single openable section, in a zone whose base is at ground level
+        let window = json!({
+            "base_height": 1.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [
+                {"free_area_height": 1.6, "mid_height": 2.0, "max_window_open_area": 1.2}
+            ],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is reduced
+        let area_diff = calculate_area_diff_and_adjust_glazing_area(
+            &mut test_input,
+            0.5,
+            &window,
+            "window",
+            0.,
+        )
+        .unwrap();
+
+        // Then the glazed dimensions and the freed area are reduced
+        let window = &test_input.input["Zone"]["z"]["BuildingElement"]["window"];
+
+        assert_eq!(window["height"], 1.);
+        assert_eq!(window["width"], 1.5);
+        assert_eq!(area_diff, 4.5); // 2.0 * 3.0 - 1.0 * 1.5
+
+        // And the openable geometry scales with the resized window: area by the
+        // square of the factor, free area height by the factor, and the mid-height
+        // repositioned about the unchanged sill
+        let part = &window["window_part_list"][0];
+
+        assert_eq!(part["max_window_open_area"], 0.3); // 1.2 * 0.5**2
+        assert_eq!(part["free_area_height"], 0.8); // 1.6 * 0.5
+        assert_eq!(part["mid_height"], 1.5); // sill 1.0 + (2.0 - 1.0) * 0.5
     }
 
     #[rstest]
