@@ -115,7 +115,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
 
     // add WWHRS if needed (and remove any existing systems)
     remove_wwhrs_if_present(input)?;
-    add_wwhrs(input, &cold_water_source, is_fee)?;
+    add_wwhrs(input, &cold_water_source, is_fee, heat_network_type)?;
 
     // remove pv diverter or electric battery if present
     remove_pv_diverter_if_present(input)?;
@@ -1112,11 +1112,18 @@ fn add_wwhrs(
     input: &mut InputForProcessing,
     cold_water_source_type: &str,
     is_fee: bool,
+    heat_network_type: Option<HeatNetworkType>,
 ) -> anyhow::Result<()> {
     let storeys_in_dwelling = input.storeys_in_dwelling()?;
 
-    // add WWHRS if more than 1 storeys in dwelling and not FEE
-    if storeys_in_dwelling > 1 && !is_fee {
+    // add WWHRS if more than 1 storey in dwelling, not FEE, and not a heat network type that
+    // uses a HIU in the notional building (sleeved DHN and communal). Unsleeved DHN uses a heat
+    // pump in the notional building, so WWHRS still applies.
+    let sleeved_dhn_or_communal = matches!(
+        heat_network_type,
+        Some(HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)
+    );
+    if storeys_in_dwelling > 1 && !is_fee && !sleeved_dhn_or_communal {
         input.register_wwhrs_name_on_showers(NOTIONAL_WWHRS, "B")?;
 
         input.set_wwhrs(json!({
@@ -2616,7 +2623,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured
-        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false, None).unwrap();
 
         // Then a WWHRS is added and the showers are updated to use it
         let expected_wwhrs: WasteWaterHeatRecovery = serde_json::from_value(json!({
@@ -2663,7 +2670,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured
-        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false, None).unwrap();
 
         // Then a WWHRS is not added and the showers are not updated to use it
         let showers = &test_input.input["HotWaterDemand"]["Shower"];
@@ -2694,7 +2701,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured with is_FEE True
-        add_wwhrs(&mut test_input, cold_water_source_type, true).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, true, None).unwrap();
 
         // Then a WWHRS is not added and the showers are not updated to use it
         let showers = &test_input.input["HotWaterDemand"]["Shower"];
@@ -2702,6 +2709,103 @@ mod tests {
         assert_eq!(showers["main"]["WWHRS_configuration"], "A");
         assert!(showers["ensuite"].get("WWHRS").is_none());
         assert!(showers["ensuite"].get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_does_not_add_wwhrs_config_when_heat_network_present(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a multi-storey dwelling on a sleeved DHN (notional uses HIU)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::SleevedDhn.into(),
+        )
+        .unwrap();
+
+        // Then no WWHRS is added because the notional building uses a HIU
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_none());
+        assert!(shower_main.get("WWHRS").is_none());
+        assert!(shower_main.get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_does_not_add_wwhrs_config_when_communal_heat_network_present(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a multi-storey dwelling on a communal heat network (notional uses HIU)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::Communal.into(),
+        )
+        .unwrap();
+
+        // Then no WWHRS is added because the notional building uses a HIU
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_none());
+        assert!(shower_main.get("WWHRS").is_none());
+        assert!(shower_main.get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_adds_wwhrs_config_for_unsleeved_dhn(mut test_input: InputForProcessing) {
+        // Given a multi-storey dwelling on an unsleeved DHN (notional uses heat pump)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::UnsleevedDhn.into(),
+        )
+        .unwrap();
+
+        // Then WWHRS is added because the notional building uses a heat pump
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_some());
+        assert_eq!(shower_main["WWHRS"], "Notional_Inst_WWHRS");
+        assert_eq!(shower_main["WWHRS_configuration"], "B");
     }
 
     #[rstest]
