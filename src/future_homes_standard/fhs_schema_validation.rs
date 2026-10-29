@@ -175,6 +175,20 @@ mod tests {
         .unwrap()
     }
 
+    fn contains_expected_schema_validation_errors(
+        result: Result<(), SchemaValidationError>,
+        expected_messages: &[&str],
+    ) {
+        if let Err(SchemaValidationError { errors }) = result {
+            let actual_messages = errors.split("\n").collect::<Vec<_>>();
+            for (actual, expected) in actual_messages.iter().zip(expected_messages) {
+                assert_eq!(actual, expected);
+            }
+        } else {
+            panic!("Expected validation error, got {:?}", result);
+        }
+    }
+
     #[rstest]
     fn test_microwave_and_kettle_accepted_in_appliances(mut project: Value) {
         // Microwave and Kettle are supported by the runtime and may be
@@ -192,15 +206,9 @@ mod tests {
         project["Appliances"]["Otherdevices"] = json!("Default");
 
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            let error_message = errors.to_string();
-            assert_eq!(
-                error_message,
-                "/Appliances: Unevaluated properties are not allowed ('Otherdevices' was unexpected)"
-            );
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_message =
+            "/Appliances: Unevaluated properties are not allowed ('Otherdevices' was unexpected)";
+        contains_expected_schema_validation_errors(result, &[expected_message]);
     }
 
     #[rstest]
@@ -211,15 +219,9 @@ mod tests {
         project["Appliances"]["Ovenette"] = json!("Default");
 
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            let error_message = errors.to_string();
-            assert_eq!(
-                error_message,
-                "/Appliances: Unevaluated properties are not allowed ('Ovenette' was unexpected)"
-            );
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_message =
+            "/Appliances: Unevaluated properties are not allowed ('Ovenette' was unexpected)";
+        contains_expected_schema_validation_errors(result, &[expected_message]);
     }
 
     #[rstest]
@@ -228,11 +230,8 @@ mod tests {
         project["NumberOfBedrooms"] = json!("2");
 
         let result = apply_schema_validation(&project);
-        let error_message = result.unwrap_err().to_string();
-        assert_eq!(
-            error_message,
-            "FHS input validation failed: /NumberOfBedrooms: '2' is not of type 'integer'"
-        );
+        let expected_message = "/NumberOfBedrooms: '2' is not of type 'integer'";
+        contains_expected_schema_validation_errors(result, &[expected_message]);
     }
 
     #[rstest]
@@ -240,19 +239,19 @@ mod tests {
     fn test_value_instead_of_array_errors(mut project: Value) {
         project["ExternalConditions"]["shading_segments"] = json!({"start360": 0, "end360": 45});
         let result = apply_schema_validation(&project);
-        let error_message = result.unwrap_err().to_string();
-        assert_eq!(
-            error_message,
-            "FHS input validation failed: /ExternalConditions/shading_segments: {'start360':0,'end360':45} is not of type 'array'"
-        );
+        let expected_message = "/ExternalConditions/shading_segments: {'start360':0,'end360':45} is not of type 'array'";
+        contains_expected_schema_validation_errors(result, &[expected_message]);
     }
 
     #[rstest]
+    // test name in Python is test_insufficient_array_length_raises
     fn test_insufficient_array_length_errors(mut project: Value) {
         project["ExternalConditions"]["shading_segments"] = json!([
             {"start360": 0, "end360": 45}
         ]);
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let expected_message = "/ExternalConditions/shading_segments: [{'start360':0,'end360':45}] has less than 8 items";
+        contains_expected_schema_validation_errors(result, &[expected_message]);
     }
 
     #[rstest]
@@ -262,13 +261,10 @@ mod tests {
             {"number": 1, "start360": 0, "end360": 45}
         );
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            let error_message = errors.to_string();
-            assert!(error_message.contains("NumberOfBedrooms"));
-            assert!(error_message.contains("shading_segments"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_messages = &[
+            "/NumberOfBedrooms: '2' is not of type 'integer'",
+            "/ExternalConditions/shading_segments: {'number':1,'start360':0,'end360':45} is not of type 'array'"];
+        contains_expected_schema_validation_errors(result, expected_messages);
     }
 
     #[rstest]
