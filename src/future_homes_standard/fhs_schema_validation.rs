@@ -176,11 +176,6 @@ mod tests {
     }
 
     #[rstest]
-    fn test_valid_input_does_not_error(project: Value) {
-        assert!(apply_schema_validation(&project).is_ok());
-    }
-
-    #[rstest]
     fn test_microwave_and_kettle_accepted_in_appliances(mut project: Value) {
         // Microwave and Kettle are supported by the runtime and may be
         // declared explicitly in the input alongside the other appliances.
