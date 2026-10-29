@@ -2180,6 +2180,32 @@ mod tests {
         assert_eq!(area_diff, 4.5); // 2.0 * 3.0 - 1.0 * 1.5
     }
 
+    fn zone_input_for_max_glazing_area_test(u_value: f64, pitch_override: Option<f64>) -> Value {
+        json!({"test_zone": {
+            "BuildingElement": {
+                "test_rooflight": {
+                    "type": "BuildingElementTransparent",
+                    "pitch": pitch_override.unwrap_or(0.0),
+                    "height": 2.0,
+                    "width": 1.0,
+                    "u_value": u_value,
+                    "orientation360": 0.0,
+                    "g_value": 0.0,
+                    "frame_area_fraction": 0.0,
+                    "free_area_height": 0.0,
+                    "base_height": 0.0,
+                    "max_window_open_area": 3,
+                    "mid_height": 1.5,
+                    "shading": [],
+                    "window_part_list": []
+                }
+            },
+            "ThermalBridging": 1.0,
+            "area": 10.0,
+            "volume": 20.0
+        }})
+    }
+
     #[rstest]
     fn test_calc_max_glazing_area_fraction(mut test_input: InputForProcessing) {
         test_input
@@ -2230,30 +2256,60 @@ mod tests {
         );
     }
 
-    fn zone_input_for_max_glazing_area_test(u_value: f64, pitch_override: Option<f64>) -> Value {
-        json!({"test_zone": {
-            "BuildingElement": {
-                "test_rooflight": {
-                    "type": "BuildingElementTransparent",
-                    "pitch": pitch_override.unwrap_or(0.0),
-                    "height": 2.0,
-                    "width": 1.0,
-                    "u_value": u_value,
-                    "orientation360": 0.0,
-                    "g_value": 0.0,
-                    "frame_area_fraction": 0.0,
-                    "free_area_height": 0.0,
-                    "base_height": 0.0,
-                    "max_window_open_area": 3,
-                    "mid_height": 1.5,
-                    "shading": [],
-                    "window_part_list": []
+    #[rstest]
+    fn test_calc_max_glazing_area_fraction_when_u_value_is_specified(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a rooflight with a specified u_value instead of a thermal_resistance_construction
+        test_input.input["Zone"] = json!({
+            "test_zone": {
+                "BuildingElement": {
+                    "test_rooflight": {
+                        "type": "BuildingElementTransparent",
+                        "pitch": 0.0,
+                        "height": 2.0,
+                        "width": 1.0,
+                        "u_value": 1.5,
+                    }
                 }
-            },
-            "ThermalBridging": 1.0,
-            "area": 10.0,
-            "volume": 20.0
-        }})
+            }
+        });
+        let total_floor_area = 100.;
+
+        // When the max glazing area fraction is calculated
+        let max_glazing_area_fraction =
+            calc_max_glazing_area_fraction(&test_input, total_floor_area).unwrap();
+
+        // Then its value is based on test_rooflight u-value
+        assert_relative_eq!(max_glazing_area_fraction, 0.245);
+    }
+
+    #[rstest]
+    fn test_calc_max_glazing_area_fraction_when_thermal_resistance_is_specified(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a rooflight with a specified thermal_resistance_construction instead of a u_value
+        test_input.input["Zone"] = json!({
+            "test_zone": {
+                "BuildingElement": {
+                    "test_rooflight": {
+                        "type": "BuildingElementTransparent",
+                        "pitch": 0.0,
+                        "height": 2.0,
+                        "width": 1.0,
+                        "thermal_resistance_construction": 0.5,
+                    }
+                }
+            }
+        });
+        let total_floor_area = 100.;
+
+        // When the max glazing area fraction is calculated
+        let max_glazing_area_fraction =
+            calc_max_glazing_area_fraction(&test_input, total_floor_area).unwrap();
+
+        // Then its value is based on test_rooflight thermal_resistance_construction
+        assert_relative_eq!(max_glazing_area_fraction, 0.2439640980006486);
     }
 
     // this test does not exist in Python HEM
