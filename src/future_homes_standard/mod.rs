@@ -241,7 +241,14 @@ fn do_fhs_preprocessing(
 }
 
 fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metrics> {
-    let _energy_by_fuel = by_fuel(input, &core_response.summary)?;
+    // TODO: derive from the project once has_offpeak_electricity_devices is ported
+    let offpeak_electricity = false;
+    let _energy_by_fuel = by_fuel(
+        input,
+        &core_response.summary,
+        &core_response.core,
+        offpeak_electricity,
+    )?;
 
     todo!("can be re-enabled once energy_by_fuel is of updated type");
 

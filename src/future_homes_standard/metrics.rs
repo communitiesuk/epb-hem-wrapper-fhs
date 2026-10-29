@@ -1,7 +1,7 @@
 #![allow(unused)]
+use crate::future_homes_standard::project_lookups::{FuelOutput, Tariff};
 use arcstr::ArcStr;
 use fsum::FSum;
-use home_energy_model::input::FuelType;
 use serde::Serialize;
 use std::sync::Arc;
 use strum_macros::Display;
@@ -42,29 +42,13 @@ pub(crate) struct Metrics {
     pub(crate) eer: Metric,
 }
 
-// following to be removed and replaced after project_lookups module completed
-
-struct ReplaceMeAlpha9Tariff {
-    eer_energy: f64,
-    unit_price: Option<f64>,
-    standing_charge: Option<u32>,
-}
-
-struct ReplaceMeAlpha9FuelOutput {
-    fuel: ArcStr,
-    tariffs: Vec<ReplaceMeAlpha9Tariff>,
-}
-
-fn energy_efficiency_rating(
-    total_floor_area: f64,
-    by_fuel: &[ReplaceMeAlpha9FuelOutput],
-) -> Metric {
+pub(crate) fn energy_efficiency_rating(total_floor_area: f64, by_fuel: &[FuelOutput]) -> Metric {
     // Do not provide EER if any tariff tier does not have unit or standing charge implemented
     if by_fuel
         .iter()
-        .flat_map(|ReplaceMeAlpha9FuelOutput { tariffs, .. }| tariffs.iter())
+        .flat_map(|FuelOutput { tariffs, .. }| tariffs.iter())
         .any(
-            |ReplaceMeAlpha9Tariff {
+            |Tariff {
                  standing_charge,
                  unit_price,
                  ..
@@ -84,14 +68,14 @@ fn energy_efficiency_rating(
             .iter()
             .flat_map(|fuel_output| fuel_output.tariffs.iter())
             .flat_map(
-                |ReplaceMeAlpha9Tariff {
+                |Tariff {
                      standing_charge,
                      unit_price,
                      eer_energy,
                  }| {
                     if let (Some(standing_charge), Some(unit_price)) = (standing_charge, unit_price)
                     {
-                        Some(*standing_charge as f64 + *unit_price / PENCE_PER_POUND * *eer_energy)
+                        Some(*standing_charge + *unit_price / PENCE_PER_POUND * *eer_energy)
                     } else {
                         None
                     }
@@ -126,26 +110,25 @@ fn energy_efficiency_grade(eer: f64) -> Grade {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use home_energy_model::input::FuelType;
 
     #[test]
     /// Given EER applicable energy, disaggregated by fuel
     fn test_energy_efficiency_rating() {
         let by_fuel = [
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "electricity".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 1000.,
                     unit_price: Some(16.49),
-                    standing_charge: Some(0),
+                    standing_charge: Some(0.0),
                 }],
             },
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "the power of love".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 100.,
                     unit_price: Some(1.),
-                    standing_charge: Some(100),
+                    standing_charge: Some(100.0),
                 }],
             },
         ];
@@ -170,20 +153,20 @@ mod tests {
     /// Given EER applicable energy, disaggregated by fuel
     fn test_test_energy_efficiency_rating_below_one() {
         let by_fuel = [
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "electricity".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 100_000.,
                     unit_price: Some(16.49),
-                    standing_charge: Some(0),
+                    standing_charge: Some(0.0),
                 }],
             },
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "the power of love".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 100.,
                     unit_price: Some(1.),
-                    standing_charge: Some(100),
+                    standing_charge: Some(100.0),
                 }],
             },
         ];
@@ -203,17 +186,17 @@ mod tests {
     /// Given EER applicable energy, disaggregated by fuel, one of which is "custom"
     fn test_energy_efficiency_rating_with_custom_fuel() {
         let by_fuel = [
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "electricity".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 1000.,
                     unit_price: Some(16.49),
-                    standing_charge: Some(0),
+                    standing_charge: Some(0.0),
                 }],
             },
-            ReplaceMeAlpha9FuelOutput {
+            FuelOutput {
                 fuel: "custom".into(),
-                tariffs: vec![ReplaceMeAlpha9Tariff {
+                tariffs: vec![Tariff {
                     eer_energy: 100.,
                     unit_price: None,
                     standing_charge: None,
@@ -237,18 +220,18 @@ mod tests {
     #[test]
     /// Given EER applicable energy on Economy 7, with off-peak and on-peak tiers
     fn test_energy_efficiency_rating_economy7() {
-        let by_fuel = [ReplaceMeAlpha9FuelOutput {
+        let by_fuel = [FuelOutput {
             fuel: "electricity_economy7".into(),
             tariffs: vec![
-                ReplaceMeAlpha9Tariff {
+                Tariff {
                     eer_energy: 1000.,
                     unit_price: Some(9.40),
-                    standing_charge: Some(7),
+                    standing_charge: Some(7.0),
                 },
-                ReplaceMeAlpha9Tariff {
+                Tariff {
                     eer_energy: 500.,
                     unit_price: Some(19.60),
-                    standing_charge: Some(0),
+                    standing_charge: Some(0.0),
                 },
             ],
         }];
