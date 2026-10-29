@@ -231,13 +231,25 @@ mod tests {
     // test name in Python is test_string_instead_of_number_raises
     fn test_string_instead_of_number_errors(mut project: Value) {
         project["NumberOfBedrooms"] = json!("2");
-        assert!(apply_schema_validation(&project).is_err());
+
+        let result = apply_schema_validation(&project);
+        let error_message = result.unwrap_err().to_string();
+        assert_eq!(
+            error_message,
+            "FHS input validation failed: /NumberOfBedrooms: '2' is not of type 'integer'"
+        );
     }
 
     #[rstest]
+    // test name in Python is test_value_instead_of_array_raises
     fn test_value_instead_of_array_errors(mut project: Value) {
         project["ExternalConditions"]["shading_segments"] = json!({"start360": 0, "end360": 45});
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_message = result.unwrap_err().to_string();
+        assert_eq!(
+            error_message,
+            "FHS input validation failed: /ExternalConditions/shading_segments: {'start360':0,'end360':45} is not of type 'array'"
+        );
     }
 
     #[rstest]
@@ -559,6 +571,7 @@ mod tests {
     }
 
     #[rstest]
+    // Python name test_additional_property_lower_level_raises
     fn test_additional_property_lower_level_errors(mut project: Value) {
         project["ExternalConditions"]["SomeNewThing"] = json!("val");
         let result = apply_schema_validation(&project);
@@ -861,15 +874,13 @@ mod tests {
                 ],
             }
         });
+        // When validation is run
         // Then it errors that test data must not have eahp_mixed_ext_air_ratio
         // And the heat pump itself must not have eahp_mixed_max_temp and eahp_mixed_min_temp
         // And because the subschema is invalid, none of the other properties are evaluated either
         let result = apply_schema_validation(&project);
         if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("eahp_mixed_ext_air_ratio"));
-            assert!(errors.contains("eahp_mixed_max_temp"));
-            assert!(errors.contains("eahp_mixed_min_temp"));
-            assert!(errors.contains("Unevaluated"));
+            assert_eq!(errors, "/HeatSourceWet/heat pump/test_data_EN14825/0: Unevaluated properties are not allowed ('eahp_mixed_ext_air_ratio' was unexpected)");
         } else {
             panic!("Expected validation error, got {:?}", result);
         }
