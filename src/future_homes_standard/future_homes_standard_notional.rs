@@ -2118,6 +2118,69 @@ mod tests {
     }
 
     #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_repositions_about_zone_relative_sill(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a window in a zone whose base is above ground (base height 1.5):
+        // the part mid_height is zone-relative, base_height is ground-relative, so
+        // the sill in the zone-relative frame is base_height - ventilation_zone_base
+        // = 2.0 - 1.5 = 0.5
+        let window = json!({
+            "base_height": 2.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [
+                {"free_area_height": 1.6, "mid_height": 1.5, "max_window_open_area": 1.2}
+            ],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is halved
+        calculate_area_diff_and_adjust_glazing_area(&mut test_input, 0.5, &window, "window", 1.5)
+            .unwrap();
+
+        // Then the mid-height is repositioned about the zone-relative sill, not the
+        // ground-relative base height
+        let part =
+            &test_input.input["Zone"]["z"]["BuildingElement"]["window"]["window_part_list"][0];
+
+        assert_eq!(part["mid_height"], 1.); // sill 0.5 + (1.5 - 0.5) * 0.5
+    }
+
+    #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_handles_no_window_parts(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a fixed (non-openable) window with no openable sections
+        // NOTE: the python has another test window that omits the window_part_list field but the
+        // field is required by the fhs schema so expected to be present in the rust
+        let window = json!({
+            "base_height": 2.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is reduced
+        let area_diff = calculate_area_diff_and_adjust_glazing_area(
+            &mut test_input,
+            0.5,
+            &window,
+            "window",
+            0.,
+        )
+        .unwrap();
+
+        // Then the glazed dimensions and freed area are still reduced, without raising
+        let window = &test_input.input["Zone"]["z"]["BuildingElement"]["window"];
+
+        assert_eq!(window["height"], 1.0);
+        assert_eq!(window["width"], 1.5);
+        assert_eq!(area_diff, 4.5); // 2.0 * 3.0 - 1.0 * 1.5
+    }
+
+    #[rstest]
     fn test_calc_max_glazing_area_fraction(mut test_input: InputForProcessing) {
         test_input
             .set_zone(json!({
