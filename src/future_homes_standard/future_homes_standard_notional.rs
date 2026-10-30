@@ -19,6 +19,8 @@ use crate::future_homes_standard::ventilation::{
 };
 use anyhow::{anyhow, bail};
 use arcstr::ArcStr;
+use fsum::FSum;
+use home_energy_model::compare_floats::max_of_2;
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
@@ -1586,92 +1588,156 @@ fn initialise_temperature_setpoints(input: &mut InputForProcessing) -> anyhow::R
     Ok(())
 }
 
+/// Divide the notional dwelling's inverter peak power between its PV arrays.
+///
+/// The notional's total is the actual dwelling's total, or the lower limit where that is larger,
+/// so the limit applies once for the dwelling and not once for each array the actual dwelling
+/// happens to declare.
+///
+/// The total is divided in proportion to the panel capacity behind each array, which is what
+/// makes the notional's generation independent of how those arrays were divided up. The core
+/// takes an inverter's efficiency from its own load ratio, its input over its rated capacity, so
+/// giving every array the same panels-to-inverter ratio gives every array the same load ratio,
+/// and that is the ratio one inverter carrying all the panels would run at. Dividing by the
+/// actual dwelling's own inverter split instead would leave an array with few panels heavily
+/// over-inverted and one with many panels under-inverted, both away from the ratio the dwelling
+/// as a whole implies, and would keep the notional sensitive to a choice the assessor made.
+///
+/// Args:
+///     peak_power_panels: panel peak power in kW, by array name. Only the proportions are used,
+///             so the actual dwelling's figures serve: the notional scales them all by one factor.
+///     inverter_peak_power_actual: the actual dwelling's inverter peak power in kW, by array
+///             name. Only the total is used.
+///     min_peak_power_kW: lower limit on the dwelling's total inverter peak power, in kW.
+///
+/// Returns:
+///     The notional dwelling's inverter peak power in kW, by array name.
+fn notional_inverter_peak_power<'a>(
+    peak_power_panels: &IndexMap<&'a str, f64>,
+    inverter_peak_power_actual: &IndexMap<&str, f64>,
+    min_peak_power_kw: f64,
+) -> IndexMap<&'a str, f64> {
+    let total_notional = max_of_2(
+        min_peak_power_kw,
+        FSum::with_all(inverter_peak_power_actual.values()).value(),
+    );
+    let total_panels = FSum::with_all(peak_power_panels.values()).value();
+
+    // Panel peak power is a required input with a positive minimum, so the total cannot be zero.
+    // Dividing before multiplying keeps a single array on exactly the total.
+    peak_power_panels
+        .iter()
+        .map(|(&name, peak_power)| (name, total_notional * (peak_power / total_panels)))
+        .collect()
+}
+
 fn add_solar_pv(
     input: &mut InputForProcessing,
     is_fee: bool,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let build_type = input.build_type()?;
-
-    let storeys_in_building = if build_type == "flat" {
-        input
-            .storeys_in_building()?
-            .ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?
-    } else {
-        input.storeys_in_dwelling()?
-    };
-
-    // PV is included in the notional if the building contains 15 stories or
-    // less that contain dwellings.
-    if storeys_in_building <= 15 && !is_fee {
+    if !is_fee {
         let ground_floor_area = input
             .ground_floor_area()?
-            .ok_or_else(|| anyhow!("Notional wrapped expected ground floor area to be set"))?;
+            .ok_or_else(|| anyhow!("notional wrapper expected ground floor area to be set"))?;
+
         let peak_kw = match input.build_type()?.as_str() {
             "house" => ground_floor_area * 0.4 / 4.5,
-            "flat" => total_floor_area * 0.4 / (4.5 * storeys_in_building as f64),
-            unknown_type => bail!("Unexpected building type '{unknown_type}' encountered"),
+            "flat" => {
+                let storeys_in_building = input
+                    .storeys_in_building()?
+                    .ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?;
+                total_floor_area * 0.4 / (4.5 * storeys_in_building as f64)
+            }
+            unknown_type => bail!("unexpected building type '{unknown_type}' encountered"),
         };
 
         // If actual has no solar panels then notional will also have nothing
         if let Some(on_site_generation) = input.on_site_generation()? {
-            let total_peak_power: f64 = on_site_generation
-                .values()
-                .filter_map(|panel| panel.get("peak_power").and_then(|power| power.as_f64()))
-                .sum();
+            // Lower limit on the dwelling's total inverter power in kW, matching the 3.68 kW
+            // single-phase threshold in ENA EREC G98, which applies per connection rather than
+            // per inverter. An individual array of the notional may therefore fall below it.
+            let min_inverter_peak_power_kw: f64 = 3.68;
+            let capacity = on_site_generation.len();
+            let mut peak_power_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut inverter_ac_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut inverter_dc_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut total_peak_power = FSum::new();
+
+            for (name, panel) in on_site_generation {
+                let peak_power = panel
+                    .get("peak_power")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| anyhow!("peak_power not found or not a float"))?;
+                peak_power_panels.insert(name, peak_power);
+
+                inverter_ac_panels.insert(
+                    name,
+                    panel
+                        .get("inverter_peak_power_ac")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            anyhow!("inverter_peak_power_ac not found or not a float")
+                        })?,
+                );
+
+                inverter_dc_panels.insert(
+                    name,
+                    panel
+                        .get("inverter_peak_power_dc")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            anyhow!("inverter_peak_power_dc not found or not a float")
+                        })?,
+                );
+
+                total_peak_power += peak_power;
+            }
 
             // If the calculated peak_kW is less than the actual total power,
             // scale the actual values down to match the peak by applying a scaling factor.
             // The scaling factor is capped at a minimum of 1.0 to avoid scaling up.
-            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power);
-            let min_inverter_peak_power_kw: f64 = 3.68; // Fixed lower limit on inverter power in kW
+            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power.value());
 
-            let notional_panels: IndexMap<String, Value> = on_site_generation
-                .iter()
-                .filter_map(|(name, panel)| {
-                    let pv_peak_power = panel
-                        .get("peak_power")
-                        .and_then(|power| power.as_f64())
-                        .unwrap_or(0.0)
-                        * scaling_factor;
-                    let pv_area = 4.5 * pv_peak_power;
-                    // PV width and height based on 2:1 aspect ratio
-                    let pv_height = (pv_area / 2.).powf(0.5);
-                    let pv_width = 2. * pv_height;
-                    let mut updated_panel = panel.clone();
-                    let updated_panel = match updated_panel.as_object_mut() {
-                        Some(panel) => panel,
-                        None => return None,
-                    };
-                    updated_panel.insert("peak_power".to_string(), json!(pv_peak_power));
-                    updated_panel.insert(
-                        "inverter_peak_power_ac".to_string(),
-                        min_inverter_peak_power_kw
-                            .max(
-                                panel
-                                    .get("inverter_peak_power_ac")
-                                    .and_then(|power| power.as_f64())
-                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
-                            )
-                            .into(),
-                    ); // default to smaller value than min so always beaten
-                    updated_panel.insert(
-                        "inverter_peak_power_dc".to_string(),
-                        min_inverter_peak_power_kw
-                            .max(
-                                panel
-                                    .get("inverter_peak_power_dc")
-                                    .and_then(|power| power.as_f64())
-                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
-                            )
-                            .into(),
-                    ); // default to smaller value than min so always beaten
-                    updated_panel.insert("height".to_string(), json!(pv_height));
-                    updated_panel.insert("width".to_string(), json!(pv_width));
+            let inverter_peak_power_ac = notional_inverter_peak_power(
+                &peak_power_panels,
+                &inverter_ac_panels,
+                min_inverter_peak_power_kw,
+            );
+            let inverter_peak_power_dc = notional_inverter_peak_power(
+                &peak_power_panels,
+                &inverter_dc_panels,
+                min_inverter_peak_power_kw,
+            );
 
-                    Some((String::from(name), json!(updated_panel)))
-                })
-                .collect();
+            let mut notional_panels: IndexMap<String, Value> = IndexMap::with_capacity(capacity);
+
+            for (name, panel) in on_site_generation {
+                let pv_peak_power = peak_power_panels[name.as_str()] * scaling_factor;
+                let pv_area = 4.5 * pv_peak_power;
+                // PV width and height based on 2:1 aspect ratio
+                let pv_height = (pv_area / 2.).powf(0.5);
+                let pv_width = 2. * pv_height;
+
+                let mut updated_panel = panel.clone();
+                let updated_panel = updated_panel
+                    .as_object_mut()
+                    .ok_or_else(|| anyhow!("panel not an object"))?;
+
+                updated_panel.insert("peak_power".into(), json!(pv_peak_power));
+                updated_panel.insert(
+                    "inverter_peak_power_ac".into(),
+                    json!(inverter_peak_power_ac[name.as_str()]),
+                );
+                updated_panel.insert(
+                    "inverter_peak_power_dc".into(),
+                    json!(inverter_peak_power_dc[name.as_str()]),
+                );
+                updated_panel.insert("height".into(), json!(pv_height));
+                updated_panel.insert("width".into(), json!(pv_width));
+
+                notional_panels.insert(name.clone(), json!(updated_panel));
+            }
 
             input.set_on_site_generation(json!(notional_panels))?;
         }
@@ -3432,8 +3498,10 @@ mod tests {
                 "EnergySupply": "mains elec",
                 "orientation360": 180,
                 "peak_power": 1.8803418803418803,
-                "inverter_peak_power_ac": 3.68,
-                "inverter_peak_power_dc": 3.68,
+                // The dwelling's 9.0 kW of inverter, which is above the 3.68 kW minimum, divided
+                // by panel capacity: 5.5 of the 13.0 kW of panels sit behind this array
+                "inverter_peak_power_ac": 3.8076923076923075,
+                "inverter_peak_power_dc": 3.8076923076923075,
                 "inverter_type": "optimised_inverter",
                 "inverter_is_inside": false,
                 "pitch": 45,
@@ -3448,8 +3516,9 @@ mod tests {
                 "EnergySupply": "mains elec",
                 "orientation360": 180,
                 "peak_power": 2.5641025641025643,
-                "inverter_peak_power_ac": 5.5,
-                "inverter_peak_power_dc": 5.5,
+                // The other 7.5 kW of the dwelling's panels, so the other 5.19 kW of its inverter
+                "inverter_peak_power_ac": 5.192307692307692,
+                "inverter_peak_power_dc": 5.192307692307692,
                 "inverter_type": "optimised_inverter",
                 "inverter_is_inside": false,
                 "pitch": 45,
@@ -3517,38 +3586,263 @@ mod tests {
         );
     }
 
+    /// One PV array, as used by the inverter invariance test.
+    fn pv_array(peak_power: f64, inverter_peak_power: f64) -> Value {
+        json!({
+            "EnergySupply": "mains elec",
+            "orientation360": 180,
+            "peak_power": peak_power,
+            "inverter_peak_power_ac": inverter_peak_power,
+            "inverter_peak_power_dc": inverter_peak_power,
+            "inverter_type": "optimised_inverter",
+            "inverter_is_inside": false,
+            "pitch": 45,
+            "type": "PhotovoltaicSystem",
+            "ventilation_strategy": "moderately_ventilated",
+            "shading": [],
+            "base_height": 10,
+            "width": 1,
+            "height": 1,
+        })
+    }
+
+    /// Return the notional's total AC and DC inverter capacity for a given actual PV.
+    fn notional_inverter_capacity(
+        arrays: Value,
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) -> (f64, f64) {
+        test_input.input["OnSiteGeneration"] = arrays;
+
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        let notional = &test_input.input["OnSiteGeneration"].as_object().unwrap();
+
+        let mut ac_sum = FSum::new();
+        let mut dc_sum = FSum::new();
+
+        for array in notional.values() {
+            let ac_val = array["inverter_peak_power_ac"].as_f64().unwrap();
+            let dc_val = array["inverter_peak_power_dc"].as_f64().unwrap();
+
+            ac_sum += ac_val;
+            dc_sum += dc_val;
+        }
+
+        (ac_sum.value(), dc_sum.value())
+    }
+
     #[rstest]
-    fn test_add_solar_pv_does_not_modify_flats_in_tall_buildings(
+    fn test_notional_inverter_capacity_does_not_depend_on_how_arrays_are_split(
+        test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given one dwelling's PV described two ways: as a single array, and split across two
+        // arrays that sum to the same peak power and the same total inverter capacity. The arrays
+        // are deliberately oversized on the DC side, at 8 kW of PV behind 6 kW of inverter, which
+        // is an ordinary ratio in practice and is the case where the floor bites.
+        let as_one_array = json!({"PV1": pv_array(8., 6.)});
+        let as_two_arrays = json!({"PV1": pv_array(4., 3.), "PV2": pv_array(4., 3.)});
+
+        // When the notional building's PV is determined for each
+        let (one_array_ac, one_array_dc) =
+            notional_inverter_capacity(as_one_array, test_input.clone(), is_fee, tfa);
+        let (two_array_ac, two_array_dc) =
+            notional_inverter_capacity(as_two_arrays, test_input, is_fee, tfa);
+
+        // Then the notional is the same target either way. It must be neither easier nor harder to
+        // comply because the actual dwelling used two inverters rather than one, so the notional's
+        // inverter capacity has to follow the notional's own PV and not the actual's array count.
+        assert_relative_eq!(two_array_ac, one_array_ac);
+        assert_relative_eq!(two_array_dc, one_array_dc);
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_is_divided_by_panel_capacity(
         mut test_input: InputForProcessing,
         is_fee: bool,
         tfa: f64,
     ) {
-        let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
-        test_input.input["General"] = json!({
-            "build_type": "flat",
-            "storey_of_dwelling": 3,
-            "storeys_in_building": 16,
-            "storeys_in_dwelling": 1,
-        });
+        // Given a dwelling whose two arrays fall short of the 3.68 kW minimum together, and whose
+        // panels are split one quarter to three quarters while its inverters are split evenly.
+        // The two splits differ deliberately: dividing the notional's capacity by the actual's
+        // inverter split would give both arrays 1.84 kW, leaving the 1 kW array heavily
+        // over-inverted and the 3 kW array under-inverted
+        let arrays = json!({"PV1": pv_array(1., 1.), "PV2": pv_array(3., 1.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
         add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
-        assert_eq!(
-            previous_on_site_generation,
-            json!(test_input.on_site_generation().unwrap().unwrap())
+
+        // Then the dwelling is brought up to the minimum once, and that total is divided by the
+        // panel capacity behind each array rather than by the actual dwelling's inverter split
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            FSum::with_all(
+                notional
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap()),
+            )
+            .value(),
+            3.68
         );
     }
 
     #[rstest]
-    fn test_add_solar_pv_does_modify_flats_in_short_buildings(
+    fn test_notional_puts_every_array_on_the_dwelling_ratio_of_panels_to_inverter(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling whose arrays differ widely in size
+        let arrays = json!({"PV1": pv_array(0.5, 2.), "PV2": pv_array(4.5, 2.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then every array carries the same panel capacity per kW of inverter, which is what makes
+        // the notional's generation independent of how the arrays were divided: the core takes an
+        // inverter's efficiency from its own load ratio, so equal ratios mean equal efficiencies,
+        // and they are the ratio one inverter carrying all the panels would run at.
+        // The ratio is of the notional's panels to the notional's inverter, so it takes the panel
+        // scaling into account: this 50 m2 dwelling is allowed 4.4444 kW of panels, so the 5.0 kW
+        // declared is scaled down to that, and 4.4444 over the dwelling's 4.0 kW of inverter is
+        // 1.1111. Uniform scaling cannot disturb the uniformity of the ratio, which is the point
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        for array in notional.as_object().unwrap().values() {
+            assert_relative_eq!(
+                array["peak_power"].as_f64().unwrap()
+                    / array["inverter_peak_power_ac"].as_f64().unwrap(),
+                1.1111111111111112
+            );
+            assert_relative_eq!(
+                array["peak_power"].as_f64().unwrap()
+                    / array["inverter_peak_power_dc"].as_f64().unwrap(),
+                1.1111111111111112
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_is_redivided_above_the_minimum(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling whose arrays are each already above the 3.68 kW minimum, 5.0 kW of
+        // inverter behind 4.0 kW of panels and 4.0 kW behind 6.0 kW, so the minimum binds neither
+        // array nor the dwelling and only the division decides the result
+        let arrays = json!({"PV1": pv_array(4., 5.), "PV2": pv_array(6., 4.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then the dwelling keeps its 9.0 kW total and the division follows panel capacity, which
+        // is what holds every array at the dwelling's own panels-to-inverter ratio
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            3.6
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            5.4
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            3.6
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            5.4
+        );
+        assert_relative_eq!(
+            FSum::with_all(
+                notional
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap()),
+            )
+            .value(),
+            9.
+        );
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_treats_the_ac_and_dc_channels_separately(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling below the minimum on its AC total, at 2.4 kW, and above it on its DC
+        // total, at 4.0 kW, so the two channels cannot come out the same
+        let mut arrays = json!({"PV1": pv_array(1., 1.2), "PV2": pv_array(3., 1.2)});
+        for array in arrays.as_object_mut().unwrap().values_mut() {
+            array["inverter_peak_power_dc"] = json!(2);
+        }
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then AC is brought up to the 3.68 kW minimum and divided by panel capacity, while DC
+        // keeps the dwelling's own 4.0 kW total and is divided the same way
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            1.
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            3.
+        );
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_modifies_flats(
         mut test_input: InputForProcessing,
         is_fee: bool,
         tfa: f64,
     ) {
         let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
 
-        // Given a building with 15 storeys
+        // Given a flat in a 15 storey building
         test_input.input["General"] = json!({
             "build_type": "flat",
-            "storey_of_dwelling": 3,
             "storeys_in_building": 15,
             "storeys_in_dwelling": 1,
         });
