@@ -1189,10 +1189,9 @@ fn calc_daily_hw_demand(
         })
         .collect();
 
-    let wwhrs: IndexMap<std::string::String, Arc<Mutex<WwhrsInstantaneous>>> = if let Some(
+    let wwhrs: IndexMap<String, Arc<Mutex<WwhrsInstantaneous>>> = if let Some(
         waste_water_heat_recovery,
-    ) =
-        input.wwhrs()?
+    ) = input.wwhrs()?
     {
         let notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
         [(
@@ -3874,7 +3873,7 @@ mod tests {
     }
 
     #[fixture]
-    fn cold_water_source(test_input: InputForProcessing) -> std::string::String {
+    fn cold_water_source(test_input: InputForProcessing) -> String {
         test_input.input["ColdWaterSource"]
             .as_object()
             .unwrap()
@@ -3888,7 +3887,7 @@ mod tests {
     #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_non_sleeved_district_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
     ) {
@@ -4110,7 +4109,7 @@ mod tests {
     #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_sleeved_dhn_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
     ) {
@@ -4235,7 +4234,7 @@ mod tests {
     #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_communal_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
     ) {
