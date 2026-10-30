@@ -2867,7 +2867,7 @@ mod tests {
         // would be larger if summed across storeys. The notional primary
         // pipework cap must follow ground-floor area only.
         test_input.input["General"]["build_type"] = json!("flat");
-        test_input.input["General"]["storeys_in_dwelling"] = json!("2");
+        test_input.input["General"]["storeys_in_dwelling"] = json!(2);
         test_input.input["GroundFloorArea"] = json!(50);
         test_input.input["HotWaterSource"]["hw cylinder"]
             .as_object_mut()
