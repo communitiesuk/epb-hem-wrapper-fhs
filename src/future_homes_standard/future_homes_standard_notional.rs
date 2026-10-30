@@ -1346,7 +1346,7 @@ fn edit_storagetank(
     let daily_losses = calculate_daily_losses(cylinder_vol);
 
     // Modify primary pipework characteristics
-    let primary_pipework = edit_primary_pipework(input, total_floor_area)?;
+    let primary_pipework = edit_primary_pipework(input)?;
 
     // Modify cylinder characteristics
     input.set_hot_water_cylinder(json!({
@@ -1373,10 +1373,7 @@ fn edit_storagetank(
     Ok(())
 }
 
-fn edit_primary_pipework(
-    input: &InputForProcessing,
-    total_floor_area: f64,
-) -> anyhow::Result<Vec<WaterPipework>> {
+fn edit_primary_pipework(input: &InputForProcessing) -> anyhow::Result<Vec<WaterPipework>> {
     // Define minimum values
     let internal_diameter_mm_min = 20.;
     let external_diameter_mm_min = 22.;
@@ -1385,15 +1382,13 @@ fn edit_primary_pipework(
     let pipe_contents = "water";
     let insulation_thermal_conductivity = 0.035;
 
-    let length_max = match input.build_type()?.as_str() {
-        "flat" => 0.05 * total_floor_area,
-        "house" => {
-            0.05 * input.ground_floor_area()?.ok_or_else(|| {
-                anyhow!("FHS Notional wrapper expected ground floor area to be set for a house.")
-            })?
-        }
-        unknown_type => bail!("Encountered unexpected building type '{unknown_type}'"),
-    };
+    // Maximum primary-pipework length is 5 % of the ground-floor area for both
+    // houses and flats. Earlier code used TFA for flats, which overstated the
+    // cap by up to a factor of the storey count for multi-storey flats.
+    let length_max = 0.05
+        * input
+            .ground_floor_area()?
+            .ok_or_else(|| anyhow!("FHS Notional wrapper expected ground floor area to be set"))?;
 
     let mut primary_pipework = input.primary_pipework_clone()?;
 
@@ -2864,6 +2859,27 @@ mod tests {
             test_input.hot_water_source().unwrap().clone(),
             expected_hotwater_source
         );
+    }
+
+    #[rstest]
+    fn test_edit_primary_pipework_multistorey_flat_uses_gfa(mut test_input: InputForProcessing) {
+        // A multi-storey flat: GroundFloorArea is 50 m², total floor area
+        // would be larger if summed across storeys. The notional primary
+        // pipework cap must follow ground-floor area only.
+        test_input.input["General"]["build_type"] = json!("flat");
+        test_input.input["General"]["storeys_in_dwelling"] = json!("2");
+        test_input.input["GroundFloorArea"] = json!(50);
+        test_input.input["HotWaterSource"]["hw cylinder"]
+            .as_object_mut()
+            .unwrap()
+            .remove("primary_pipework");
+
+        let primary_pipework = edit_primary_pipework(&test_input).unwrap();
+
+        // 5 % of GroundFloorArea = 0.05 * 50 = 2.5 m. Using TFA would have
+        // produced a larger length (the bug this test guards against).
+        assert_eq!(primary_pipework.len(), 1);
+        assert_eq!(primary_pipework[0].length, 2.5);
     }
 
     #[rstest]
