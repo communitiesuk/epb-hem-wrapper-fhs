@@ -48,32 +48,8 @@ const APPL_OBJ_NAME: &str = "appliances";
 const ELEC_COOK_OBJ_NAME: &str = "Eleccooking";
 const GAS_COOK_OBJ_NAME: &str = "Gascooking";
 
-const FRIDGE_APPLIANCE: &str = "Fridge";
-const FREEZER_APPLIANCE: &str = "Freezer";
-const FRIDGE_FREEZER_APPLIANCE: &str = "Fridge-Freezer";
-const OTHER_DEVICES_APPLIANCE: &str = "Otherdevices";
-const DISHWASHER_APPLIANCE: &str = "Dishwasher";
-const CLOTHES_WASHING_APPLIANCE: &str = "Clothes_washing";
-const CLOTHES_DRYING_APPLIANCE: &str = "Clothes_drying";
-const OVEN_APPLIANCE: &str = "Oven";
-const HOBS_APPLIANCE: &str = "Hobs";
-const MICROWAVE_APPLIANCE: &str = "Microwave";
-const KETTLE_APPLIANCE: &str = "Kettle";
-
-const APPLIANCE_NAMES: [&str; 11] = [
-    FRIDGE_APPLIANCE,
-    FREEZER_APPLIANCE,
-    FRIDGE_FREEZER_APPLIANCE,
-    OTHER_DEVICES_APPLIANCE,
-    DISHWASHER_APPLIANCE,
-    CLOTHES_WASHING_APPLIANCE,
-    CLOTHES_DRYING_APPLIANCE,
-    OVEN_APPLIANCE,
-    HOBS_APPLIANCE,
-    MICROWAVE_APPLIANCE,
-    KETTLE_APPLIANCE,
-];
-const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = [CLOTHES_WASHING_APPLIANCE, CLOTHES_DRYING_APPLIANCE];
+// Todo - Python uses a strEnum for appliances - consider using something similar?
+const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = ["Clothes_washing", "Clothes_drying"];
 
 pub(super) const LIVING_ROOM_SETPOINT_FHS: f64 = 21.0;
 pub(super) const REST_OF_DWELLING_SETPOINT_FHS: f64 = 20.0;
@@ -1540,7 +1516,7 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
 #[serde(rename = "lowercase")]
 struct SmartAirBrickOpeningRow {
     #[serde(alias = "Timestep")]
-    timestep: f64,
+    _timestep: f64,
     vent_open_ratio: f64,
 }
 
@@ -3046,7 +3022,7 @@ fn appliance_kwh_cycle_loading_factor(
 
         (
             loading_factor,
-            if appliance_key == CLOTHES_DRYING_APPLIANCE {
+            if appliance_key == "Clothes_drying" {
                 let residual_moisture_adjustment = get_residual_moisture_adjustment(input)?;
                 kwh_cycle * residual_moisture_adjustment
             } else {
@@ -3094,7 +3070,7 @@ fn get_kwh_per_cycle(appliance: &JsonValue, appliance_name: &str) -> anyhow::Res
 
 fn get_residual_moisture_adjustment(input: &InputForProcessing) -> anyhow::Result<f64> {
     if let Some(spin_eff_class) = input
-        .appliance_with_key(CLOTHES_WASHING_APPLIANCE)?
+        .appliance_with_key("Clothes_washing")?
         .and_then(|appliance| appliance.get("spin_dry_efficiency_class"))
         .and_then(|s| s.as_str())
     {
