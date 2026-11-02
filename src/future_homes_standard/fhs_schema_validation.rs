@@ -731,32 +731,72 @@ mod tests {
         );
 
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("Unevaluated"));
-            assert!(errors.contains("measured_air_flow_rate"));
-            assert!(errors.contains("ductwork"));
-            assert!(errors.contains("required"));
-            assert!(errors.contains("SFP"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_messages = &mut [
+            "/InfiltrationVentilation/MechanicalVentilation/vent1: Unevaluated properties are not allowed ",
+            "/InfiltrationVentilation/MechanicalVentilation/vent1: 'ductwork' is a required property",
+            "/InfiltrationVentilation/MechanicalVentilation/vent1: {'EnergySupply':'mains elec','design_outdoor_air_flow_rate':1,'vent_type':'MVHR','mvhr_eff':1,'mvhr_location':'inside','measured_air_flow_rate':1,'position_intake':{'mid_height_air_flow_path':1.5,'orientation360':90,'pitch':60},'position_exhaust':{'mid_height_air_flow_path':1.5,'orientation360':90,'pitch':60}} is not valid under any of the schemas listed in the 'oneOf' keyword",
+            "/InfiltrationVentilation/MechanicalVentilation/vent2: 'SFP' is a required property"
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages);
     }
 
     #[rstest]
     fn test_value_out_of_range_errors(mut project: Value) {
         project["NumberOfBedrooms"] = json!(-1);
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_message = "/NumberOfBedrooms: -1 is less than the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
-    fn test_additional_top_level_property_raises(mut project: Value) {
+    // test name in Python is test_additional_top_level_property_raises
+    fn test_additional_top_level_property_errors(mut project: Value) {
         project["SomeOtherTopLevelProperty"] = json!("a_value");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("Unevaluated"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message =
+            "Unevaluated properties are not allowed ('SomeOtherTopLevelProperty' was unexpected)";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_number_of_sanitary_accommodations_is_rejected(mut project: Value) {
+        // NumberOfSanitaryAccommodations is no longer an FHS input: sanitary
+        // accommodations may use purge ventilation under Part F table 1.1, so
+        // they are excluded from the intermittent mechanical extract minimum.
+        project["NumberOfSanitaryAccommodations"] = json!(0);
+        let result = apply_schema_validation(&project);
+        let error_message =
+            "Unevaluated properties are not allowed ('NumberOfSanitaryAccommodations' was unexpected)";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_storey_of_dwelling_is_rejected(mut project: Value) {
+        // storey_of_dwelling is no longer an FHS input; it was unused by the
+        // wrapper. A flat input that still carries it is rejected because the
+        // General object allows no unevaluated properties.
+        project["General"] = json!({
+            "build_type": "flat",
+            "storeys_in_dwelling": 1,
+            "storeys_in_building": 1,
+            "storey_of_dwelling": 1,
+        });
+        let result = apply_schema_validation(&project);
+        let error_message =
+            "/General: Unevaluated properties are not allowed ('storey_of_dwelling' was unexpected)";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_flat_without_storey_of_dwelling_validates(mut project: Value) {
+        // A flat needs only storeys_in_building (and the common storeys_in_dwelling
+        // and build_type); storey_of_dwelling is no longer required or accepted.
+        project["General"] = json!({
+            "build_type": "flat",
+            "storeys_in_dwelling": 1,
+            "storeys_in_building": 1,
+        });
+        assert!(apply_schema_validation(&project).is_ok());
     }
 
     #[rstest]
@@ -764,12 +804,9 @@ mod tests {
     fn test_additional_property_lower_level_errors(mut project: Value) {
         project["ExternalConditions"]["SomeNewThing"] = json!("val");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("Unevaluated"));
-            assert!(errors.contains("SomeNewThing"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message =
+            "/ExternalConditions: Unevaluated properties are not allowed ('SomeNewThing' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -786,7 +823,99 @@ mod tests {
                 "battery_location": "inside",
             },
         });
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_message =
+            "/EnergySupply/mains elec/ElectricBattery/charge_discharge_efficiency_round_trip: 0 is less than or equal to the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_export_power_limit_accepted_on_an_export_capable_supply(mut project: Value) {
+        // Given an electricity supply that is export capable and carries a DNO export limit
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "is_export_capable": true,
+            "power_limit_export": 3.68,
+        });
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_export_power_limit_accepted_when_export_capability_is_left_unstated(
+        mut project: Value,
+    ) {
+        // Given an electricity supply with a DNO export limit and no is_export_capable
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "power_limit_export": 3.68,
+        });
+        // When validation is run, then no error: the wrapper defaults an electricity
+        // supply to export capable, so an unstated value does not conflict with the limit
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_export_power_limit_rejected_on_a_supply_that_cannot_export(mut project: Value) {
+        // Given an electricity supply with a DNO export limit and no is_export_capable
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "is_export_capable": false,
+            "power_limit_export": 3.68,
+        });
+        // When validation is run
+        // Then it is rejected, as the core model rejects it: a limit on grid export is
+        // meaningless where nothing can be exported
+        let result = apply_schema_validation(&project);
+        // Note that in Python the error reads "3.68 should not be valid under {}" instead
+        let error_message =
+            "/EnergySupply/mains elec/power_limit_export: {} is not allowed for 3.68";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_export_power_limit_in_watts_is_rejected(mut project: Value) {
+        // Given a limit entered in watts rather than kW, the slip the upper bound exists
+        // to catch: it would otherwise validate and then never bind, leaving the run to
+        // proceed as though the supply were unlimited
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "is_export_capable": true,
+            "power_limit_export": 3680,
+        });
+        // When validation is run
+        // Then it is rejected as above the maximum
+        let result = apply_schema_validation(&project);
+        let error_message =
+            "/EnergySupply/mains elec/power_limit_export: 3680 is greater than the maximum of 100";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_export_power_limit_at_the_upper_bound_is_accepted(mut project: Value) {
+        // Given a limit at the bound, far above any domestic connection but still allowed
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "is_export_capable": true,
+            "power_limit_export": 100,
+        });
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_export_power_limit_must_be_greater_than_zero(mut project: Value) {
+        // Given an electricity supply with a zero DNO export limit
+        project["EnergySupply"]["mains elec"] = json!({
+            "fuel": "electricity",
+            "is_export_capable": true,
+            "power_limit_export": 0,
+        });
+        // When validation is run
+        // Then it is rejected: a supply that cannot export at all is described by
+        // is_export_capable, not by a limit of zero
+        let result = apply_schema_validation(&project);
+        let error_message =
+            "/EnergySupply/mains elec/power_limit_export: 0 is less than or equal to the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -799,12 +928,8 @@ mod tests {
             .unwrap()
             .remove("SpaceCoolSystem");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("SpaceCoolSystem"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = "/Zone/zone 1: 'SpaceCoolSystem' is a required property";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -812,29 +937,47 @@ mod tests {
         // Given a specification with neither Fridge nor Fridge-Freezer installed
         project["Appliances"]["Fridge"] = json!("Not Installed");
         project["Appliances"]["Fridge-Freezer"] = json!("Not Installed");
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_message = "/Appliances: {'required':['Fridge','Fridge-Freezer']";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_omitting_both_cold_appliances_is_valid(mut project: Value) {
+        // Given a specification that declares neither Fridge nor Fridge-Freezer
+        // (both are injected as installed defaults during preprocessing)
+        remove_key(&mut project["Appliances"], "Fridge");
+        remove_key(&mut project["Appliances"], "Fridge-Freezer");
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_fridge_not_installed_without_fridge_freezer_is_valid(mut project: Value) {
+        // Given Fridge explicitly "Not Installed" and Fridge-Freezer omitted
+        // (Fridge-Freezer is injected as an installed default, so a cold appliance remains)
+        project["Appliances"]["Fridge"] = json!("Not Installed");
+        remove_key(&mut project["Appliances"], "Fridge-Freezer");
+        assert!(apply_schema_validation(&project).is_ok());
     }
 
     #[rstest]
     fn test_must_have_mains_elec(mut project: Value) {
         // Given input without a "mains elec" EnergySupply (which will be used for Appliances)
-        project["EnergySupply"]
-            .as_object_mut()
-            .unwrap()
-            .remove("mains elec");
+        remove_key(&mut project["EnergySupply"], "mains elec");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("mains elec"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = "/EnergySupply: 'mains elec' is a required property";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
     }
 
     #[rstest]
     fn test_mains_elec_must_use_electricity(mut project: Value) {
+        // Given a "main elec" EnergySupply that uses a different fuel
         project["EnergySupply"]["mains elec"]["fuel"] = json!("mains gas");
         assert!(apply_schema_validation(&project).is_err());
+
+        let result = apply_schema_validation(&project);
+        let error_message = "/EnergySupply/mains elec/fuel: 'electricity' was expected";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -866,12 +1009,8 @@ mod tests {
             }
         });
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("power_max_backup"));
-            assert!(errors.contains("unexpected"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = "/HeatSourceWet/heatpump: Unevaluated properties are not allowed ('power_max_backup' was unexpected)";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
     }
 
     #[rstest]
