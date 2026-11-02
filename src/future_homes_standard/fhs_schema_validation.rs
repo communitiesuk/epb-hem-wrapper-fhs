@@ -295,7 +295,7 @@ mod tests {
     fn test_incorrect_enum_value_errors(mut project: Value) {
         project["HeatingControlType"] = json!("something invalid");
         let result = apply_schema_validation(&project);
-        let expected_messages = &mut[
+        let expected_messages = &mut [
             "/HeatingControlType: 'something invalid' is not one of 'SeparateTempControl' or 'SeparateTimeAndTempControl'"
         ];
         contains_expected_schema_validation_errors_exactly(result, expected_messages);
@@ -315,7 +315,7 @@ mod tests {
         remove_key(&mut project["ColdWaterSource"], "header tank");
         let result = apply_schema_validation(&project);
         let expected_messages =
-            &mut["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
+            &mut ["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
         contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
@@ -328,7 +328,7 @@ mod tests {
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]
             ["thermal_resistance_construction"] = json!(0.4);
         let result = apply_schema_validation(&project);
-        let expected_messages = &mut[
+        let expected_messages = &mut [
             "/Zone/zone 1/BuildingElement/window 0: {'type':'BuildingElementTransparent','thermal_resistance_construction':0.4,'pitch':90,'orientation360':90,'g_value':0.75,'frame_area_fraction':0.25,'base_height':1,'height':1.25,'width':4,'security_risk':true,'window_part_list':[{'free_area_height':1.6,'mid_height':1.5,'max_window_open_area':3}],'shading':[{'type':'overhang','depth':0.5,'distance':0.5},{'type':'sidefinleft','depth':0.25,'distance':0.1},{'type':'sidefinright','depth':0.25,'distance':0.1}],'treatment':[{'type':'blinds','controls':'manual','delta_r':0.05,'trans_red':0.5}],'u_value':1.2} is valid under more than one of the schemas listed in the 'oneOf' keyword"
         ];
         contains_expected_schema_validation_errors_exactly(result, expected_messages);
@@ -397,7 +397,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         contains_expected_schema_validation_errors_exactly(
             result,
-            &mut["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
+            &mut ["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
         );
     }
 
@@ -472,7 +472,7 @@ mod tests {
             "Zone": "thing",
         });
         let result = apply_schema_validation(&project);
-        let expected_messages = &mut[
+        let expected_messages = &mut [
             "/SpaceHeatSystem/main 1: Unevaluated properties are not allowed ('rated_power', 'convective_type' were unexpected)",
             "/SpaceHeatSystem/main 1: 'EnergySupply' is a required property",
             "/SpaceHeatSystem/main 2: Unevaluated properties are not allowed ('pwr_in', 'rated_power_instant', 'storage_capacity', 'air_flow_type', 'frac_convective', 'fan_pwr', 'n_units', 'EnergySupply', 'Zone' were unexpected)",
