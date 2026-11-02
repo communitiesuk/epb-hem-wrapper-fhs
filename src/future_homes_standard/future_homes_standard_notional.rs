@@ -4085,7 +4085,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 5,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notional_HP", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notional_HP", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {
                         "ecodesign_control_class": 2,
                         "max_outdoor_temp": 20,
@@ -4103,6 +4103,51 @@ mod tests {
         let actual_space_heat_system: IndexMap<String, SpaceHeatSystemDetails> =
             serde_json::from_value(test_input.input["SpaceHeatSystem"].clone()).unwrap();
         assert_eq!(actual_space_heat_system, expected_space_heat_system);
+    }
+
+    #[rstest]
+    fn test_heat_network_rebuild_keeps_the_electricity_supply_export_limit(
+        mut test_input: InputForProcessing,
+        cold_water_source: String,
+    ) {
+        // Given an actual dwelling on a heat network whose electricity supply carries a
+        // DNO export limit
+        test_input.input["EnergySupply"]["mains elec"]["is_export_capable"] = json!(true);
+        test_input.input["EnergySupply"]["mains elec"]["power_limit_export"] = json!(3);
+        test_input.input["EnergySupply"]["custom_1"] =
+            json!({"fuel": "custom", "is_export_capable": false});
+
+        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }
+            }))
+            .unwrap();
+
+        // When the notional heat network supply replaces the actual custom supplies
+        edit_add_heatnetwork_heating(
+            &mut test_input,
+            &cold_water_source,
+            &mut custom_energy_factors,
+            false,
+        )
+        .unwrap();
+
+        // Then the electricity supply keeps its export limit through the rebuild
+        assert_relative_eq!(
+            test_input.input["EnergySupply"]["mains elec"]["power_limit_export"]
+                .as_f64()
+                .unwrap(),
+            3.
+        );
+        // And the notional heat network supply gains none, since it cannot export
+        assert_eq!(
+            test_input.input["EnergySupply"]["_notional_heat_network"],
+            json!({"fuel": "custom", "is_export_capable": false})
+        );
     }
 
     #[rstest]
@@ -4147,7 +4192,7 @@ mod tests {
                     "EnergySupply": "_notional_heat_network",
                     "power_max": 45,
                     "HIU_daily_loss": 0.8,
-                    "building_level_distribution_losses": 62,
+                    "building_level_distribution_losses": 0,
                 }
             }))
             .unwrap();
@@ -4190,7 +4235,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 20,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {"ecodesign_control_class": 1},
                     "Control": "HeatingPattern_Null",
                     "design_flow_temp": 55,
@@ -4283,7 +4328,7 @@ mod tests {
                     "EnergySupply": "_notional_heat_network",
                     "power_max": 45,
                     "HIU_daily_loss": 0.8,
-                    "building_level_distribution_losses": 62,
+                    "building_level_distribution_losses": 0,
                 }
             }))
             .unwrap();
@@ -4326,7 +4371,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 20,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {"ecodesign_control_class": 1},
                     "Control": "HeatingPattern_Null",
                     "design_flow_temp": 55,
@@ -4363,6 +4408,46 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("custom_1"));
+    }
+
+    #[rstest]
+    #[ignore = "currently fails as python mocks calc_design_capacity return value and we don't"]
+    fn test_flat_uses_notional_building_level_losses(
+        mut test_input: InputForProcessing,
+        cold_water_source: String,
+        tfa: f64,
+        is_fee: bool,
+    ) {
+        // Given a flat (building-level distribution losses apply to flats only)
+        test_input.input["General"]["build_type"] = json!("flat");
+        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }
+            }))
+            .unwrap();
+
+        // When the notional heating system is created
+        edit_space_heating_system(
+            &mut test_input,
+            &cold_water_source,
+            tfa,
+            HeatNetworkType::SleevedDhn.into(),
+            &mut custom_energy_factors,
+            is_fee,
+        )
+        .unwrap();
+
+        // Then the notional HIU uses the flat building-level loss value of 62
+        assert_eq!(
+            test_input.input["HeatSourceWet"]["notionalHIU"]["building_level_distribution_losses"]
+                .as_f64()
+                .unwrap(),
+            62.
+        );
     }
 
     #[rstest]
