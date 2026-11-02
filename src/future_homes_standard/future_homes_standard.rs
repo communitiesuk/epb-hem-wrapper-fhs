@@ -44,13 +44,23 @@ const HOURS_TO_END_DEC: f64 = 8760.;
 
 pub(crate) const ENERGY_SUPPLY_NAME_GAS: &str = "mains gas";
 pub(crate) const ENERGY_SUPPLY_NAME_ELECTRICITY: &str = "mains elec";
-const APPL_OBJ_NAME: &str = "appliances";
-const ELEC_COOK_OBJ_NAME: &str = "Eleccooking";
-const GAS_COOK_OBJ_NAME: &str = "Gascooking";
 
 // Todo - Python uses a strEnum for appliances - consider using something similar?
 const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = ["Clothes_washing", "Clothes_drying"];
 
+const APPLIANCE_TYPES: [&str; 11] = [
+    "Fridge",
+    "Freezer",
+    "Fridge-Freezer",
+    "Otherdevices",
+    "Dishwasher",
+    "Clothes_washing",
+    "Clothes_drying",
+    "Oven",
+    "Hobs",
+    "Microwave",
+    "Kettle",
+];
 pub(super) const LIVING_ROOM_SETPOINT_FHS: f64 = 21.0;
 pub(super) const REST_OF_DWELLING_SETPOINT_FHS: f64 = 20.0;
 
@@ -439,6 +449,7 @@ pub fn apply_fhs_postprocessing(
     notional: bool,
     output_mode: &str,
     custom_energy_supply_factors: &CustomEnergySourceFactors,
+    generation_curtailed: &IndexMap<Arc<str>, Vec<f64>>,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
 
@@ -455,6 +466,7 @@ pub fn apply_fhs_postprocessing(
         results_end_user,
         no_of_timesteps,
         custom_energy_supply_factors,
+        generation_curtailed,
     )?;
 
     // Write results to output files
@@ -497,6 +509,7 @@ pub(super) fn calc_final_rates(
     results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
     number_of_timesteps: usize,
     custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    generation_curtailed: &IndexMap<Arc<str>, Vec<f64>>,
 ) -> anyhow::Result<FinalRates> {
     // For each EnergySupply object:
     // look up relevant factors for import/export from csv or custom factors
@@ -631,11 +644,22 @@ pub(super) fn calc_final_rates(
 
         // If there is any export, Calculate energy exported and associated emissions/PE
         // Note that by convention, exported energy is negative
+        // The credit uses the factor for the timestep in which the energy is exported, and
+        // energy_export covers battery discharge to the grid as well as generation exported
+        // directly. That is neutral only because the electricity factors hold a single value for
+        // every timestep of the year: were they to vary by time of day, charging a battery in a
+        // low-factor timestep and exporting in a high-factor one would earn a credit for trading
+        // against the grid rather than for anything about the dwelling.
+        // The energy efficiency rating derives its credit from generation to grid, which is
+        // generation surplus alone, so battery export is credited here but not there. That
+        // difference is inert while the wrapper enables no battery grid export, the two quantities
+        // then being equal, and whether it is right is unsettled rather than decided: the grid
+        // does not distinguish exported energy by its source.
         (
             supply_emis_result.export,
             supply_emis_oos_result.export,
             supply_pe_result.export,
-        ) = if energy_export[&energy_supply_key].iter().sum::<f64>() < 0. {
+        ) = if FSum::with_all(energy_export[&energy_supply_key].iter()).value() < 0. {
             match fuel_code {
                 FuelType::Electricity => (
                     apply_energy_factor_series(
@@ -703,18 +727,26 @@ pub(super) fn calc_final_rates(
         // Calculate energy generated and associated emissions/PE
         let mut energy_generated = vec![0.; number_of_timesteps];
         for end_user_energy in results_end_user[&energy_supply_key].values() {
-            if end_user_energy.iter().sum::<f64>() < 0. {
+            if FSum::with_all(end_user_energy.iter()).value() < 0. {
                 for (t_idx, energy_generated_value) in energy_generated.iter_mut().enumerate() {
                     *energy_generated_value -= end_user_energy[t_idx];
                 }
             }
         }
 
+        // Exclude generation curtailed by an export power limit. The core offers surplus
+        // generation to self-consumption, storage and the diverter before applying the cap, so
+        // curtailed energy reaches no use at all, whereas results_end_user records generation
+        // before the cap. Counting it would charge primary energy for energy never delivered.
+        let curtailed = &generation_curtailed[&energy_supply_key];
+        for t_idx in 0..number_of_timesteps {
+            energy_generated[t_idx] -= curtailed[t_idx];
+        }
         (
             supply_emis_result.generated,
             supply_emis_oos_result.generated,
             supply_pe_result.generated,
-        ) = if energy_generated.iter().sum::<f64>() > 0. {
+        ) = if FSum::with_all(energy_generated.iter()).value() > 0. {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
             let generation_factors = EMIS_PE_FACTORS
                 .get(&String::from("generation"))
@@ -778,9 +810,7 @@ pub(super) fn calc_final_rates(
         // Calculate unregulated energy demand and associated emissions/PE
         let mut energy_unregulated = vec![0.; number_of_timesteps];
         for (end_user_name, end_user_energy) in results_end_user[&energy_supply_key].iter() {
-            if [APPL_OBJ_NAME, ELEC_COOK_OBJ_NAME, GAS_COOK_OBJ_NAME]
-                .contains(&end_user_name.as_ref())
-            {
+            if APPLIANCE_TYPES.contains(&end_user_name.as_ref()) {
                 for (t_idx, energy_unregulated_value) in energy_unregulated.iter_mut().enumerate() {
                     *energy_unregulated_value += end_user_energy[t_idx];
                 }
