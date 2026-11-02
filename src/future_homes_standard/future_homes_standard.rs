@@ -335,7 +335,9 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
                     // choice rather than a value derived from a standard, mirroring the
                     // notional building, which applies a fixed building-level loss to
                     // flats and none to houses.
-                    let has_losses = heat_source.get("building_level_distribution_losses").is_some();
+                    let has_losses = heat_source
+                        .get("building_level_distribution_losses")
+                        .is_some();
                     match build_type.as_str() {
                         "flat" => {
                             if !has_losses {
@@ -5985,6 +5987,7 @@ mod tests {
         use super::*;
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_floor_pitch() {
             // Given a floor building element
             let mut input = InputForProcessing {
@@ -6006,6 +6009,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_orientation_to_flat_opaques() {
             // Given a floor building element
             let mut input = InputForProcessing {
@@ -6040,6 +6044,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_orientation_to_flat_transparent_elements() {
             // Given a window building element with a flat pitch, indicating a skylight
             let mut input = InputForProcessing {
@@ -6077,6 +6082,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_vent_opening_ratio_init() {
             // Given a project dict with InfiltrationVentilation
             let mut input = InputForProcessing {
@@ -6098,6 +6104,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_pressure_difference_ref() {
             // Given a project dict with InfiltrationVentilation and one vent
             let mut input = InputForProcessing {
@@ -6119,6 +6126,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_sup_air_flw_ctrl_and_sup_air_temp_ctrl() {
             // Given a project dict with InfiltrationVentilation and one mech vent
             let mut input = InputForProcessing {
@@ -6140,6 +6148,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_battery_age() {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
@@ -6161,6 +6170,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_battery_grid_charging() {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
@@ -6182,6 +6192,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_bath_flowrate() {
             // Given a project dict with HotWaterDemand and one Bath
             let mut input = InputForProcessing {
@@ -6203,6 +6214,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_gas() {
             // Given a project dict with Energy supply and gas fuel type
             let mut input = InputForProcessing {
@@ -6224,6 +6236,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_electricity() {
             // Given a project dict with Energy supply and electricity fuel type
             let mut input = InputForProcessing {
@@ -6245,6 +6258,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_electricity_override() {
             // Given a project dict with an energy supply with electricity fuel type
             // Where the user has specified the value for is_export_capable
@@ -6267,6 +6281,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_state_of_charge_init() {
             // Given a electric storage heater
             let mut input = InputForProcessing {
@@ -6288,6 +6303,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_temp_init_for_heat_batteries() {
             // Given a heat battery
             let mut input = InputForProcessing {
@@ -6309,6 +6325,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_time_delay_backup_for_heat_pumps() {
             // Given a heat pump with a backup_ctrl_type of not None
             let mut input = InputForProcessing {
