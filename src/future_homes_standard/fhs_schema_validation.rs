@@ -175,12 +175,14 @@ mod tests {
         .unwrap()
     }
 
-    fn contains_expected_schema_validation_errors_exact(
+    fn contains_expected_schema_validation_errors_exactly(
         result: Result<(), SchemaValidationError>,
-        expected_error_messages: &[&str],
+        expected_error_messages: &mut [&str],
     ) {
         if let Err(SchemaValidationError { errors }) = result {
-            let actual_error_messages = errors.split("\n").collect::<Vec<_>>();
+            let mut actual_error_messages = errors.split("\n").collect::<Vec<_>>();
+            expected_error_messages.sort();
+            actual_error_messages.sort();
             for (expected, actual) in expected_error_messages.iter().zip(actual_error_messages) {
                 assert_eq!(actual, *expected);
             }
@@ -189,7 +191,7 @@ mod tests {
         }
     }
 
-    fn contains_expected_schema_validation_errors_partial(
+    fn contains_expected_schema_validation_errors_partially(
         result: Result<(), SchemaValidationError>,
         expected_error_messages: &[&str],
     ) {
@@ -230,7 +232,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/Appliances: Unevaluated properties are not allowed ('Otherdevices' was unexpected)";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -243,7 +245,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/Appliances: Unevaluated properties are not allowed ('Ovenette' was unexpected)";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -253,7 +255,7 @@ mod tests {
 
         let result = apply_schema_validation(&project);
         let expected_message = "/NumberOfBedrooms: '2' is not of type 'integer'";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -262,7 +264,7 @@ mod tests {
         project["ExternalConditions"]["shading_segments"] = json!({"start360": 0, "end360": 45});
         let result = apply_schema_validation(&project);
         let expected_message = "/ExternalConditions/shading_segments: {'start360':0,'end360':45} is not of type 'array'";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -273,7 +275,7 @@ mod tests {
         ]);
         let result = apply_schema_validation(&project);
         let expected_message = "/ExternalConditions/shading_segments: [{'start360':0,'end360':45}] has less than 8 items";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -283,28 +285,29 @@ mod tests {
             {"number": 1, "start360": 0, "end360": 45}
         );
         let result = apply_schema_validation(&project);
-        let expected_messages = &[
+        let expected_messages = &mut [
             "/NumberOfBedrooms: '2' is not of type 'integer'",
             "/ExternalConditions/shading_segments: {'number':1,'start360':0,'end360':45} is not of type 'array'"];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
     fn test_incorrect_enum_value_errors(mut project: Value) {
         project["HeatingControlType"] = json!("something invalid");
         let result = apply_schema_validation(&project);
-        let expected_messages = &[
+        let expected_messages = &mut[
             "/HeatingControlType: 'something invalid' is not one of 'SeparateTempControl' or 'SeparateTimeAndTempControl'"
         ];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
     fn test_missing_required_value_errors(mut project: Value) {
         remove_key(&mut project["ExternalConditions"], "shading_segments");
         let result = apply_schema_validation(&project);
-        let expected_messages = &["/ExternalConditions: 'shading_segments' is a required property"];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        let expected_messages =
+            &mut ["/ExternalConditions: 'shading_segments' is a required property"];
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
@@ -312,8 +315,8 @@ mod tests {
         remove_key(&mut project["ColdWaterSource"], "header tank");
         let result = apply_schema_validation(&project);
         let expected_messages =
-            &["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+            &mut["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
@@ -325,10 +328,10 @@ mod tests {
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]
             ["thermal_resistance_construction"] = json!(0.4);
         let result = apply_schema_validation(&project);
-        let expected_messages = &[
+        let expected_messages = &mut[
             "/Zone/zone 1/BuildingElement/window 0: {'type':'BuildingElementTransparent','thermal_resistance_construction':0.4,'pitch':90,'orientation360':90,'g_value':0.75,'frame_area_fraction':0.25,'base_height':1,'height':1.25,'width':4,'security_risk':true,'window_part_list':[{'free_area_height':1.6,'mid_height':1.5,'max_window_open_area':3}],'shading':[{'type':'overhang','depth':0.5,'distance':0.5},{'type':'sidefinleft','depth':0.25,'distance':0.1},{'type':'sidefinright','depth':0.25,'distance':0.1}],'treatment':[{'type':'blinds','controls':'manual','delta_r':0.05,'trans_red':0.5}],'u_value':1.2} is valid under more than one of the schemas listed in the 'oneOf' keyword"
         ];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
@@ -337,8 +340,8 @@ mod tests {
         // accepted; only the per-junction object form is valid.
         project["Zone"]["zone 1"]["ThermalBridging"] = json!(0.5);
         let result = apply_schema_validation(&project);
-        let expected_messages = &["/Zone/zone 1/ThermalBridging: 0.5 is not of type 'object'"];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        let expected_messages = &mut ["/Zone/zone 1/ThermalBridging: 0.5 is not of type 'object'"];
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     fn smart_hot_water_tank_preheated_source() -> Value {
@@ -392,9 +395,9 @@ mod tests {
         preheated_source["preheated tank"]["not_a_real_field"] = json!(1);
         project["PreHeatedWaterSource"] = preheated_source;
         let result = apply_schema_validation(&project);
-        contains_expected_schema_validation_errors_exact(
+        contains_expected_schema_validation_errors_exactly(
             result,
-            &["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
+            &mut["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
         );
     }
 
@@ -407,7 +410,7 @@ mod tests {
         );
         let result = apply_schema_validation(&project);
         let expected_message = "/HotWaterDemand/Shower/mixer: 'flowrate' is a required property";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
@@ -418,7 +421,7 @@ mod tests {
         remove_key(mixer, "allow_low_flowrate");
         let result = apply_schema_validation(&project);
         let expected_message = "/HotWaterDemand/Shower/mixer: Unevaluated properties are not allowed ('flowrate' was unexpected)";
-        contains_expected_schema_validation_errors_partial(result, &[expected_message]);
+        contains_expected_schema_validation_errors_partially(result, &[expected_message]);
     }
 
     #[rstest]
@@ -430,7 +433,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/HotWaterDemand/Shower/mixer/flowrate: 5.0 is less than the minimum of 8";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message])
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message])
     }
 
     #[rstest]
@@ -443,7 +446,7 @@ mod tests {
         });
         let result = apply_schema_validation(&project);
         let expected_message = "/HotWaterDemand/Shower/other: 'rated_power' is a required property";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message])
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message])
     }
 
     #[rstest]
@@ -469,14 +472,14 @@ mod tests {
             "Zone": "thing",
         });
         let result = apply_schema_validation(&project);
-        let expected_messages = &[
-            "/SpaceHeatSystem/main 1: 'EnergySupply' is a required property",
+        let expected_messages = &mut[
             "/SpaceHeatSystem/main 1: Unevaluated properties are not allowed ('rated_power', 'convective_type' were unexpected)",
+            "/SpaceHeatSystem/main 1: 'EnergySupply' is a required property",
+            "/SpaceHeatSystem/main 2: Unevaluated properties are not allowed ('pwr_in', 'rated_power_instant', 'storage_capacity', 'air_flow_type', 'frac_convective', 'fan_pwr', 'n_units', 'EnergySupply', 'Zone' were unexpected)",
             "/SpaceHeatSystem/main 2: 'dry_core_min_output' is a required property",
             "/SpaceHeatSystem/main 2: 'dry_core_max_output' is a required property",
-            "/SpaceHeatSystem/main 2: Unevaluated properties are not allowed ('pwr_in', 'rated_power_instant', 'storage_capacity', 'air_flow_type', 'frac_convective', 'fan_pwr', 'n_units', 'EnergySupply', 'Zone' were unexpected)",
         ];
-        contains_expected_schema_validation_errors_exact(result, expected_messages);
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     #[rstest]
@@ -489,23 +492,22 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/Zone/zone 1/BuildingElement/roof 0: {'type':'BuildingElementOpaque','is_unheated_pitched_roof':true,'colour':'Intermediate','area':20.0,'areal_heat_capacity':'Very light','mass_distribution_class':'IE: Mass divided over internal and external side','pitch':45,'orientation360':90,'base_height':2.5,'height':2.5,'width':10} is not valid under any of the schemas listed in the 'oneOf' keyword";
-        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [expected_message]);
     }
 
     #[rstest]
     fn test_conditionally_required(mut project: Value) {
         // Given a unfilled_sealed party wall without party_wall_lining_type
-        project["Zone"]["zone 1"]["BuildingElement"]["wall 0"]
-            .as_object_mut()
-            .unwrap()
-            .remove("party_wall_lining_type");
+        remove_key(
+            &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"],
+            "party_wall_lining_type",
+        );
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("party_wall_lining_type"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_message = &mut [
+            "/Zone/zone 1/BuildingElement/wall 0: 'party_wall_lining_type' is a required property",
+            "/Zone/zone 1/BuildingElement/wall 0: Unevaluated properties are not allowed ('areal_heat_capacity', 'mass_distribution_class', 'pitch', 'area', 'party_wall_cavity_type', 'u_value_whole_wall' were unexpected)",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, expected_message);
     }
 
     #[rstest]
@@ -549,13 +551,13 @@ mod tests {
             ],
         });
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("Unevaluated"));
-            assert!(errors.contains("emitter_floor_area"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_messages = &mut [
+            "/SpaceHeatSystem/main 1/emitters/0: Unevaluated properties are not allowed ('c' was unexpected)",
+            "/SpaceHeatSystem/main 1/emitters/0: 'n' is a required property",
+            "/SpaceHeatSystem/main 2/emitters/0: Unevaluated properties are not allowed ('equivalent_specific_thermal_mass', 'system_performance_factor' were unexpected)",
+            "/SpaceHeatSystem/main 2/emitters/0: 'emitter_floor_area' is a required property"
+        ];
+        contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
     fn merge_json_values(a: &mut Value, b: Value) {
