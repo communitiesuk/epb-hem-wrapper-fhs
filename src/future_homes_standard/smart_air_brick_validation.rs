@@ -13,7 +13,9 @@ use std::collections::HashMap;
 /// schema confines the flag to a suspended ground floor already, which makes the type checks
 /// redundant against a valid input and load-bearing against anything else: without them a
 /// dwelling could be refused over elements the core would ignore.
-fn smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<HashMap<ArcStr, Value>> {
+pub fn smart_air_brick_floors(
+    input: &InputForProcessing,
+) -> anyhow::Result<HashMap<ArcStr, &Value>> {
     let mut result = HashMap::new();
     for (name, element) in input.all_smart_air_brick_building_elements()? {
         if element
@@ -21,7 +23,23 @@ fn smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<HashMap<A
             .and_then(|v| v.as_str())
             .is_some_and(|floor_type| floor_type == "Suspended_floor")
         {
-            result.insert(name, element.clone());
+            result.insert(name, element);
+        }
+    }
+    Ok(result)
+}
+
+pub(crate) fn smart_air_brick_floors_mut(
+    input: &mut InputForProcessing,
+) -> anyhow::Result<HashMap<ArcStr, &mut Value>> {
+    let mut result = HashMap::new();
+    for (name, element) in input.all_smart_air_brick_building_elements_mut()? {
+        if element
+            .get("floor_type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|floor_type| floor_type == "Suspended_floor")
+        {
+            result.insert(name, element);
         }
     }
     Ok(result)
@@ -38,7 +56,7 @@ fn smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<HashMap<A
 /// mode-specific step could count it, and a check made later would refuse the input in the
 /// actual modes while accepting it in the notional ones. One input file has to get one verdict.
 fn validate_smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<()> {
-    let mut declared_on: Vec<_> = smart_air_brick_floors(input)?.keys().cloned().collect();
+    let mut declared_on: Vec<_> = smart_air_brick_floors(&input)?.keys().cloned().collect();
     if declared_on.len() > 1 {
         anyhow::bail!(
             "Only one floor of the dwelling may have smart air bricks, but they are declared on {}.",
@@ -154,5 +172,23 @@ mod tests {
         // Then no error is raised: only the suspended floor counts, matching the conditions the
         // core applies when it honours the control, so an input is never refused over elements
         // the core would ignore
+    }
+
+    #[test]
+    fn mutable_smart_air_brick_floors_update_the_original_elements() {
+        let mut project = project(vec![suspended_floor(json!({"smart_air_bricks": true}))]);
+
+        for building_element in smart_air_brick_floors_mut(&mut project)
+            .unwrap()
+            .into_values()
+        {
+            building_element["Control_smart_air_brick"] = json!("SmartAirBrick_Control");
+        }
+
+        assert_eq!(
+            project.input["Zone"]["zone 1"]["BuildingElement"]["ground 1"]
+                ["Control_smart_air_brick"],
+            "SmartAirBrick_Control"
+        );
     }
 }

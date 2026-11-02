@@ -28,6 +28,8 @@ pub(crate) struct InputForProcessing {
     pub(crate) input: JsonValue,
 }
 
+pub(crate) const SMART_AIR_BRICK_CONTROL_NAME: &str = "SmartAirBrick_Control";
+
 impl InputForProcessing {
     pub fn init_with_json(json: impl Read) -> Result<Self, anyhow::Error> {
         let input_for_processing = Self::init_with_json_skip_validation(json)?;
@@ -444,6 +446,21 @@ impl InputForProcessing {
             .insert(control_key.into(), control_json);
 
         Ok(self)
+    }
+
+    pub(crate) fn add_control_smart_air_brick(
+        &mut self,
+        schedule: Vec<f64>,
+    ) -> JsonAccessResult<&Self> {
+        self.add_control(
+            SMART_AIR_BRICK_CONTROL_NAME,
+            json!({
+                "type": "SetpointTimeControl",
+                "start_day": 0,
+                "time_series_step": 0.5,
+                "schedule": {"main": schedule},
+            }),
+        )
     }
 
     pub(crate) fn remove_preheated_water_sources(&mut self) -> JsonAccessResult<&mut Self> {
@@ -1635,6 +1652,25 @@ impl InputForProcessing {
         self.zone_node()?
             .values()
             .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
+            .flatten()
+            .filter(|(_key, el)| {
+                el.get("smart_air_bricks")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|(key, el)| Ok((ArcStr::from(key), el)))
+            .collect()
+    }
+
+    pub(crate) fn all_smart_air_brick_building_elements_mut(
+        &mut self,
+    ) -> JsonAccessResult<IndexMap<ArcStr, &mut JsonValue>> {
+        self.zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|el| el.as_object_mut())
+            })
             .flatten()
             .filter(|(_key, el)| {
                 el.get("smart_air_bricks")

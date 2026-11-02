@@ -1,3 +1,4 @@
+#![allow(clippy::all)]
 use crate::future_homes_standard::appliance::FhsAppliance;
 use crate::future_homes_standard::hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
@@ -6,12 +7,16 @@ use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
     json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
-    JsonAccessResult,
+    JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
+};
+use crate::future_homes_standard::smart_air_brick_validation::{
+    smart_air_brick_floors, smart_air_brick_floors_mut,
 };
 use crate::CustomEnergySourceFactors;
 use anyhow::{anyhow, bail};
 use arcstr::ArcStr;
 use csv::{Reader, WriterBuilder};
+use fsum::FSum;
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
@@ -42,8 +47,31 @@ const APPL_OBJ_NAME: &str = "appliances";
 const ELEC_COOK_OBJ_NAME: &str = "Eleccooking";
 const GAS_COOK_OBJ_NAME: &str = "Gascooking";
 
+const FRIDGE_APPLIANCE: &str = "Fridge";
+const FREEZER_APPLIANCE: &str = "Freezer";
+const FRIDGE_FREEZER_APPLIANCE: &str = "Fridge-Freezer";
+const OTHER_DEVICES_APPLIANCE: &str = "Otherdevices";
+const DISHWASHER_APPLIANCE: &str = "Dishwasher";
 const CLOTHES_WASHING_APPLIANCE: &str = "Clothes_washing";
 const CLOTHES_DRYING_APPLIANCE: &str = "Clothes_drying";
+const OVEN_APPLIANCE: &str = "Oven";
+const HOBS_APPLIANCE: &str = "Hobs";
+const MICROWAVE_APPLIANCE: &str = "Microwave";
+const KETTLE_APPLIANCE: &str = "Kettle";
+
+const APPLIANCE_NAMES: [&str; 11] = [
+    FRIDGE_APPLIANCE,
+    FREEZER_APPLIANCE,
+    FRIDGE_FREEZER_APPLIANCE,
+    OTHER_DEVICES_APPLIANCE,
+    DISHWASHER_APPLIANCE,
+    CLOTHES_WASHING_APPLIANCE,
+    CLOTHES_DRYING_APPLIANCE,
+    OVEN_APPLIANCE,
+    HOBS_APPLIANCE,
+    MICROWAVE_APPLIANCE,
+    KETTLE_APPLIANCE,
+];
 const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = [CLOTHES_WASHING_APPLIANCE, CLOTHES_DRYING_APPLIANCE];
 
 pub(super) const LIVING_ROOM_SETPOINT_FHS: f64 = 21.0;
@@ -63,6 +91,17 @@ const HW_SETPOINT_MAX: f64 = 60.0;
 // Occupant sleep+wake hours as per Part O
 const OCCUPANT_WAKING_HR: usize = 7;
 const OCCUPANT_SLEEPING_HR: usize = 23;
+
+/// Report an input that is accepted but unlikely to be what was intended.
+///
+/// Kept as the single point of emission so the channel can change without touching call
+/// sites. A log record only reaches someone reading stderr, so a consumer driving the wrapper
+/// programmatically cannot act on it; a structured channel alongside the log is expected, and
+/// this is where it belongs when it arrives.
+fn _warn_about_input(message: &str) {
+    // Todo: Decide how we handle warnings
+    eprintln!("Warning: {}", message);
+}
 
 /// Apply initial pre-processing required for all modes
 pub(crate) fn initial_preprocessing(
@@ -100,6 +139,7 @@ pub(crate) fn final_preprocessing(
     create_water_heating_pattern(input)?;
     create_heating_pattern(input)?;
     create_charging_pattern(input)?;
+    create_smart_air_brick_pattern(input)?;
     create_evaporative_losses(input, tfa, n_occupants, &EVAP_PROFILE_DATA)?;
     create_cold_water_losses(input, tfa, n_occupants, &COLD_WATER_LOSS_PROFILE_DATA)?;
     create_lighting_gains(input, tfa, n_occupants)?;
@@ -243,6 +283,7 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
             space_heat_system["state_of_charge_init"] = json!(1.0);
         }
     }
+    let build_type = input.build_type()?;
     if let Some(heat_source_wet) = input.heat_source_wet_mut()? {
         for heat_source in heat_source_wet.values_mut() {
             if let Some((Some(source_type), battery_type, backup_ctrl_type)) =
@@ -264,15 +305,51 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
                 })
             {
                 {
-                    if source_type == "HeatBattery" && battery_type.is_some_and(|bt| bt == "pcm") {
-                        heat_source["temp_init"] = heat_source
-                            .get("max_temperature")
-                            .ok_or_else(|| anyhow!("max_temperature not found in heat source"))?
-                            .clone();
+                    if source_type == "HeatBattery" {
+                        match battery_type.as_deref() {
+                            Some("pcm") => {
+                                heat_source["temp_init"] = heat_source
+                                    .get("max_temperature")
+                                    .ok_or_else(|| {
+                                        anyhow!("max_temperature not found in heat source")
+                                    })?
+                                    .clone();
+                            }
+                            Some("dry_core") => {
+                                heat_source["state_of_charge_init"] = json!(1.0);
+                            }
+                            _ => {}
+                        }
                     }
                 }
+
                 if source_type == "HeatPump" && backup_ctrl_type.is_some_and(|bct| bct != "None") {
                     heat_source["time_delay_backup"] = json!(1.0);
+                }
+                if source_type == "HIU" {
+                    // Building-level distribution losses are the daily pipework heat
+                    // loss within an apartment block up to the dwelling boundary, so
+                    // they apply to flats only: a flat must supply a value, and a house
+                    // may not (a house has no building-level network, so its losses are
+                    // set to zero). The flats-only treatment is an FHS methodology
+                    // choice rather than a value derived from a standard, mirroring the
+                    // notional building, which applies a fixed building-level loss to
+                    // flats and none to houses.
+                    let has_losses = heat_source.get("building_level_distribution_losses").is_some();
+                    match build_type.as_str() {
+                        "flat" => {
+                            if !has_losses {
+                                bail!("building_level_distribution_losses is required for an HIU heat source in a flat");
+                            }
+                        }
+                        "house" => {
+                            if has_losses {
+                                bail!("building_level_distribution_losses is not permitted for an HIU heat source in a house");
+                            }
+                            heat_source["building_level_distribution_losses"] = json!(0);
+                        }
+                        _ => bail!("Unexpected build_type: {}", build_type),
+                    }
                 }
             }
         }
@@ -1438,6 +1515,71 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
     Ok(())
 }
 
+///Return the standardised half-hourly smart air brick opening ratios for the year.
+///
+///    One value per timestep, 0 fully closed to 1 fully open. Derived from manufacturer field
+///    data for a typical dwelling: real observations mapped onto the calendar year by month, day
+///    and half-hour, with the gaps filled from the mean of the same half-hour in the same month.
+///
+///    What the values drive, since it is the closed time rather than the open time that matters:
+///    the core reduces infiltration through the lower facade in proportion to (1 - ratio) at each
+///    timestep, relative to the vents' state during the airtightness test. The annual mean of
+///    this series is 0.294, so its mean closed fraction is 0.71, close to the 0.7 of the
+///    representative case the core's reduction factor was calibrated on, itself scaled up from
+///    the 11.3% airtightness improvement measured in the BRE Airex ECO4 trial (2024).
+///
+///    The effect on any one dwelling is not fixed by this series alone. It also scales with the
+///    share of the ground floor that has smart air bricks and with the lower facade's share of
+///    total leakage, so a dwelling whose closed time matches the representative case will not
+///    necessarily see the same saving.
+#[derive(Deserialize)]
+#[serde(rename = "lowercase")]
+struct SmartAirBrickOpeningRow {
+    #[serde(alias = "Timestep")]
+    timestep: f64,
+    vent_open_ratio: f64,
+}
+
+fn load_smart_air_brick_opening() -> anyhow::Result<Vec<f64>> {
+    let mut reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
+        "./smart_air_brick_opening.csv"
+    ))));
+    let ratios = reader
+        .deserialize::<SmartAirBrickOpeningRow>()
+        .map(|row| row.map(|row| row.vent_open_ratio))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let total_steps = simtime().total_steps();
+    if ratios.len() != total_steps {
+        bail!(
+            "smart_air_brick_opening.csv holds {} opening ratios, but the simulation has {total_steps} timesteps.",
+            ratios.len()
+        );
+    }
+
+    Ok(ratios)
+}
+
+///Attach the standardised opening schedule to the dwelling's smart air brick floor.
+///
+///    A smart air brick modulates on measured underfloor humidity and temperature, so the
+///    opening pattern is not an assessor input: a compliance assessment applies one standardised
+///    schedule.
+///
+///    Which elements qualify is decided by smart_air_brick_floors, so that this and the check that
+///    at most one floor carries them cannot drift apart. That there is at most one is guaranteed by
+///    input validation, which runs before the wrapper branches by mode.
+fn create_smart_air_brick_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    if smart_air_brick_floors(input)?.is_empty() {
+        return Ok(());
+    }
+    input.add_control_smart_air_brick(load_smart_air_brick_opening()?)?;
+    for building_element in smart_air_brick_floors_mut(input)?.into_values() {
+        building_element["Control_smart_air_brick"] = SMART_AIR_BRICK_CONTROL_NAME.into();
+    }
+    Ok(())
+}
+
 /// water heating pattern - if system is not instantaneous, hold at setpoint
 /// 00:00-02:00 every Sunday to allow for sterilisation cycle.
 /// Note: Holding at setpoint for two hours has been chosen because
@@ -1999,7 +2141,7 @@ impl AppliancePropensities<AsDataFile> {
             ]
             .into_iter()
             .map(|probabilities| -> [f64; 24] {
-                let sumcol = probabilities.iter().sum::<f64>();
+                let sumcol = FSum::with_all(&probabilities).value();
                 probabilities.map(|x| x / sumcol)
             })
             .collect::<Vec<_>>()
