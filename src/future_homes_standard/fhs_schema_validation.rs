@@ -314,6 +314,73 @@ mod tests {
     }
 
     #[rstest]
+    fn test_thermal_bridging_number_form_rejected(mut project: Value) {
+        // The absolute-loss (bare number) form of ThermalBridging is no longer
+        // accepted; only the per-junction object form is valid.
+        project["Zone"]["zone 1"]["ThermalBridging"] = json!(0.5);
+        let result = apply_schema_validation(&project);
+        let expected_messages = &["/Zone/zone 1/ThermalBridging: 0.5 is not of type 'object'"];
+        contains_expected_schema_validation_errors(result, expected_messages);
+    }
+
+    fn smart_hot_water_tank_preheated_source() -> Value {
+        // A SmartHotWaterTank pre-heated source fed by the header tank. temp_setpnt_max
+        // is not a user input (the wrapper injects it), so it is absent here.
+        json!({
+            "preheated tank": {
+                "type": "SmartHotWaterTank",
+                "volume": 80.0,
+                "daily_losses": 1.68,
+                "init_temp": 35.0,
+                "ColdWaterSource": "header tank",
+                "EnergySupply_pump": "mains elec",
+                "power_pump_kW": 5.0,
+                "max_flow_rate_pump_l_per_min": 1000.0,
+                "temp_usable": 40.0,
+                "HeatSource": {
+                    "immersion": {
+                        "type": "ImmersionHeater",
+                        "power": 3.0,
+                        "EnergySupply": "mains elec",
+                        "heater_position": 0.1,
+                        }
+                },
+            }
+        })
+    }
+
+    #[rstest]
+    fn test_preheated_smart_hot_water_tank_validates(mut project: Value) {
+        // A SmartHotWaterTank is now accepted as the pre-heated water source.
+        project["PreHeatedWaterSource"] = smart_hot_water_tank_preheated_source();
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_preheated_smart_hot_water_tank_missing_pump_field_rejected(mut project: Value) {
+        // The SmartHotWaterTank constraints are applied via the type discriminator, so a
+        // smart pre-heated tank missing a required pump field fails validation.
+        let mut preheated_source = smart_hot_water_tank_preheated_source();
+        remove_key(&mut preheated_source["preheated tank"], "temp_usable");
+        project["PreHeatedWaterSource"] = preheated_source;
+        assert!(apply_schema_validation(&project).is_err());
+    }
+
+    #[rstest]
+    fn test_preheated_tank_unexpected_property_rejected(mut project: Value) {
+        // The pre-heated tank object rejects unexpected keys (unevaluatedProperties: false),
+        // consistent with the hot water cylinder.
+        let mut preheated_source = smart_hot_water_tank_preheated_source();
+        preheated_source["preheated tank"]["not_a_real_field"] = json!(1);
+        project["PreHeatedWaterSource"] = preheated_source;
+        let result = apply_schema_validation(&project);
+        contains_expected_schema_validation_errors(
+            result,
+            &["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
+        );
+    }
+
+    #[rstest]
     fn test_if_then_conditions(mut project: Value) {
         project["HotWaterDemand"]["Shower"]["mixer"]
             .as_object_mut()
