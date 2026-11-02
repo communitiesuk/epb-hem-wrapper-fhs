@@ -560,6 +560,115 @@ mod tests {
         contains_expected_schema_validation_errors_exactly(result, expected_messages);
     }
 
+    fn wet_distribution(emitters: Value, thermal_mass: Option<f64>) -> Value {
+        let mut wet_distribution = json!({
+            "type": "WetDistribution",
+            "temp_diff_emit_dsgn": 10,
+            "variable_flow": false,
+            "design_flow_rate": 0.5,
+            "HeatSource": {"name": "heat_source"},
+            "ecodesign_controller": {"ecodesign_control_class": 1},
+            "design_flow_temp": 45,
+            "Zone": "zone 1",
+            "emitters": emitters
+        });
+        if let Some(thermal_mass) = thermal_mass {
+            wet_distribution["thermal_mass"] = json!(thermal_mass);
+        }
+        wet_distribution
+    }
+    #[rstest]
+    fn test_wet_distribution_fancoil_thermal_mass_rejected(mut project: Value) {
+        // thermal_mass is not a valid field on a fan coil WetDistribution system
+        let emitters = json!([{
+            "wet_emitter_type": "fancoil",
+            "frac_convective": 1.0,
+            "n_units": 1,
+            "fancoil_test_data": {
+                "fan_power_W": [15],
+                "fan_speed_data": [{"temperature_diff": 50.0, "power_output": [2.0]}],
+            },
+        }]);
+        let thermal_mass = Some(1.0);
+        project["SpaceHeatSystem"]["main 1"] = wet_distribution(emitters, thermal_mass);
+        let result = apply_schema_validation(&project);
+        // Note that the Python assertions are different because the jsonschema library
+        // seems to report the false-schema error against the parent object.
+        // Specifically, it seems to return a false subschema’s error before adding
+        // the property to the path. The Rust crate puts the property in the path,
+        // so the error is strictly below the parent and the parent error is dropped
+        // by the filters.
+        let error_messages =
+            &mut ["/SpaceHeatSystem/main 1/thermal_mass: False schema does not allow 1.0"];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
+    }
+
+    #[rstest]
+    fn test_wet_distribution_requires_system_thermal_mass_when_any_radiator_lacks_own(
+        mut project: Value,
+    ) {
+        // A system with multiple radiators where at least one has no per-emitter thermal_mass
+        // requires system-level thermal_mass, even if other radiators specify their own
+        let emitters = json!([
+            {
+                "wet_emitter_type": "radiator",
+                "frac_convective": 0.5,
+                "n": 1.34,
+                "c": 0.05,
+                "thermal_mass": 0.014,
+            },
+            {"wet_emitter_type": "radiator", "frac_convective": 0.5, "n": 1.34, "c": 0.05},
+        ]);
+        project["SpaceHeatSystem"]["main 1"] = wet_distribution(emitters, None);
+        let result = apply_schema_validation(&project);
+        let error_messages = &mut [
+            "/SpaceHeatSystem/main 1: Unevaluated properties are not allowed",
+            "/SpaceHeatSystem/main 1: 'thermal_mass' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages);
+    }
+
+    #[rstest]
+    fn test_wet_distribution_thermal_mass_not_required_when_emitters_each_specify_own(
+        mut project: Value,
+    ) {
+        // System-level thermal_mass is not required when every radiator emitter
+        // provides its own (c-based: thermal_mass on the emitter)
+        let emitters = json!([
+            {
+                "wet_emitter_type": "radiator",
+                "frac_convective": 0.5,
+                "n": 1.34,
+                "c": 0.05,
+                "thermal_mass": 0.014,
+            },
+        ]);
+        project["SpaceHeatSystem"]["main 1"] = wet_distribution(emitters, None);
+        let result = apply_schema_validation(&project);
+        assert!(result.is_ok());
+    }
+
+    #[rstest]
+    fn test_wet_distribution_thermal_mass_per_m_not_required_when_emitters_each_specify_own(
+        mut project: Value,
+    ) {
+        // System-level thermal_mass is not required when every radiator emitter
+        // provides its own (length-based: thermal_mass_per_m on the emitter)
+        let emitters = json!([
+            {
+                "wet_emitter_type": "radiator",
+                "frac_convective": 0.5,
+                "n": 1.34,
+                "length": 1.0,
+                "c_per_m": 0.05,
+                "thermal_mass_per_m": 51.8,
+            },
+        ]);
+        project["SpaceHeatSystem"]["main 1"] = wet_distribution(emitters, None);
+        let result = apply_schema_validation(&project);
+        assert!(result.is_ok());
+    }
+
     fn merge_json_values(a: &mut Value, b: Value) {
         match (a, b) {
             (a @ &mut Value::Object(_), Value::Object(b)) => {
