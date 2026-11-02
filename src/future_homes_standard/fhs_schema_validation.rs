@@ -175,14 +175,32 @@ mod tests {
         .unwrap()
     }
 
-    fn contains_expected_schema_validation_errors(
+    fn contains_expected_schema_validation_errors_exact(
         result: Result<(), SchemaValidationError>,
-        expected_messages: &[&str],
+        expected_error_messages: &[&str],
     ) {
         if let Err(SchemaValidationError { errors }) = result {
-            let actual_messages = errors.split("\n").collect::<Vec<_>>();
-            for (actual, expected) in actual_messages.iter().zip(expected_messages) {
-                assert_eq!(actual, expected);
+            let actual_error_messages = errors.split("\n").collect::<Vec<_>>();
+            for (expected, actual) in expected_error_messages.iter().zip(actual_error_messages) {
+                assert_eq!(actual, *expected);
+            }
+        } else {
+            panic!("Expected validation error, got {:?}", result);
+        }
+    }
+
+    fn contains_expected_schema_validation_errors_partial(
+        result: Result<(), SchemaValidationError>,
+        expected_error_messages: &[&str],
+    ) {
+        if let Err(SchemaValidationError { errors }) = result {
+            for expected_error_message in expected_error_messages {
+                assert!(
+                    errors.contains(expected_error_message),
+                    "Expected message:\n{}\nto be found within:\n{}",
+                    *expected_error_message,
+                    errors
+                );
             }
         } else {
             panic!("Expected validation error, got {:?}", result);
@@ -212,7 +230,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/Appliances: Unevaluated properties are not allowed ('Otherdevices' was unexpected)";
-        contains_expected_schema_validation_errors(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
@@ -225,7 +243,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_message =
             "/Appliances: Unevaluated properties are not allowed ('Ovenette' was unexpected)";
-        contains_expected_schema_validation_errors(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
@@ -235,7 +253,7 @@ mod tests {
 
         let result = apply_schema_validation(&project);
         let expected_message = "/NumberOfBedrooms: '2' is not of type 'integer'";
-        contains_expected_schema_validation_errors(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
@@ -244,7 +262,7 @@ mod tests {
         project["ExternalConditions"]["shading_segments"] = json!({"start360": 0, "end360": 45});
         let result = apply_schema_validation(&project);
         let expected_message = "/ExternalConditions/shading_segments: {'start360':0,'end360':45} is not of type 'array'";
-        contains_expected_schema_validation_errors(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
@@ -255,7 +273,7 @@ mod tests {
         ]);
         let result = apply_schema_validation(&project);
         let expected_message = "/ExternalConditions/shading_segments: [{'start360':0,'end360':45}] has less than 8 items";
-        contains_expected_schema_validation_errors(result, &[expected_message]);
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
@@ -268,7 +286,7 @@ mod tests {
         let expected_messages = &[
             "/NumberOfBedrooms: '2' is not of type 'integer'",
             "/ExternalConditions/shading_segments: {'number':1,'start360':0,'end360':45} is not of type 'array'"];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
@@ -278,7 +296,7 @@ mod tests {
         let expected_messages = &[
             "/HeatingControlType: 'something invalid' is not one of 'SeparateTempControl' or 'SeparateTimeAndTempControl'"
         ];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
@@ -286,7 +304,7 @@ mod tests {
         remove_key(&mut project["ExternalConditions"], "shading_segments");
         let result = apply_schema_validation(&project);
         let expected_messages = &["/ExternalConditions: 'shading_segments' is a required property"];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
@@ -295,7 +313,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let expected_messages =
             &["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
@@ -310,7 +328,7 @@ mod tests {
         let expected_messages = &[
             "/Zone/zone 1/BuildingElement/window 0: {'type':'BuildingElementTransparent','thermal_resistance_construction':0.4,'pitch':90,'orientation360':90,'g_value':0.75,'frame_area_fraction':0.25,'base_height':1,'height':1.25,'width':4,'security_risk':true,'window_part_list':[{'free_area_height':1.6,'mid_height':1.5,'max_window_open_area':3}],'shading':[{'type':'overhang','depth':0.5,'distance':0.5},{'type':'sidefinleft','depth':0.25,'distance':0.1},{'type':'sidefinright','depth':0.25,'distance':0.1}],'treatment':[{'type':'blinds','controls':'manual','delta_r':0.05,'trans_red':0.5}],'u_value':1.2} is valid under more than one of the schemas listed in the 'oneOf' keyword"
         ];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
@@ -320,7 +338,7 @@ mod tests {
         project["Zone"]["zone 1"]["ThermalBridging"] = json!(0.5);
         let result = apply_schema_validation(&project);
         let expected_messages = &["/Zone/zone 1/ThermalBridging: 0.5 is not of type 'object'"];
-        contains_expected_schema_validation_errors(result, expected_messages);
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     fn smart_hot_water_tank_preheated_source() -> Value {
@@ -374,7 +392,7 @@ mod tests {
         preheated_source["preheated tank"]["not_a_real_field"] = json!(1);
         project["PreHeatedWaterSource"] = preheated_source;
         let result = apply_schema_validation(&project);
-        contains_expected_schema_validation_errors(
+        contains_expected_schema_validation_errors_exact(
             result,
             &["/PreHeatedWaterSource/preheated tank: Unevaluated properties are not allowed ('not_a_real_field' was unexpected)"],
         );
@@ -382,26 +400,25 @@ mod tests {
 
     #[rstest]
     fn test_if_then_conditions(mut project: Value) {
-        project["HotWaterDemand"]["Shower"]["mixer"]
-            .as_object_mut()
-            .unwrap()
-            .remove("flowrate");
-        assert!(apply_schema_validation(&project).is_err());
+        // If a shower of type MixerShower then it must have a flow_rate property
+        remove_key(
+            &mut project["HotWaterDemand"]["Shower"]["mixer"],
+            "flowrate",
+        );
+        let result = apply_schema_validation(&project);
+        let expected_message = "/HotWaterDemand/Shower/mixer: 'flowrate' is a required property";
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
     fn test_if_then_conditions_negation(mut project: Value) {
-        let mixer = project["HotWaterDemand"]["Shower"]["mixer"]
-            .as_object_mut()
-            .unwrap();
+        // If a shower is not of type MixerShower then it must not have a flow_rate property
+        let mixer = &mut project["HotWaterDemand"]["Shower"]["mixer"];
         mixer["type"] = json!("InstantElecShower");
-        mixer.remove("allow_low_flowrate");
+        remove_key(mixer, "allow_low_flowrate");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("flowrate"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_message = "/HotWaterDemand/Shower/mixer: Unevaluated properties are not allowed ('flowrate' was unexpected)";
+        contains_expected_schema_validation_errors_partial(result, &[expected_message]);
     }
 
     #[rstest]
@@ -411,11 +428,9 @@ mod tests {
         // And a flowrate below the standard mininum of 8 l/min
         project["HotWaterDemand"]["Shower"]["mixer"]["flowrate"] = json!(5.0);
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("flowrate"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_message =
+            "/HotWaterDemand/Shower/mixer/flowrate: 5.0 is less than the minimum of 8";
+        contains_expected_schema_validation_errors_exact(result, &[expected_message])
     }
 
     #[rstest]
@@ -426,7 +441,9 @@ mod tests {
             "EnergySupply": "something",
             "ColdWaterSource": "header tank",
         });
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let expected_message = "/HotWaterDemand/Shower/other: 'rated_power' is a required property";
+        contains_expected_schema_validation_errors_exact(result, &[expected_message])
     }
 
     #[rstest]
@@ -452,25 +469,27 @@ mod tests {
             "Zone": "thing",
         });
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("convective_type"));
-            assert!(errors.contains("EnergySupply"));
-            assert!(errors.contains("dry_core_min_output"));
-            assert!(errors.contains("dry_core_max_output"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_messages = &[
+            "/SpaceHeatSystem/main 1: 'EnergySupply' is a required property",
+            "/SpaceHeatSystem/main 1: Unevaluated properties are not allowed ('rated_power', 'convective_type' were unexpected)",
+            "/SpaceHeatSystem/main 2: 'dry_core_min_output' is a required property",
+            "/SpaceHeatSystem/main 2: 'dry_core_max_output' is a required property",
+            "/SpaceHeatSystem/main 2: Unevaluated properties are not allowed ('pwr_in', 'rated_power_instant', 'storage_capacity', 'air_flow_type', 'frac_convective', 'fan_pwr', 'n_units', 'EnergySupply', 'Zone' were unexpected)",
+        ];
+        contains_expected_schema_validation_errors_exact(result, expected_messages);
     }
 
     #[rstest]
     fn test_any_of_conditions(mut project: Value) {
         // BuildingElementOpaque must have either `u_value` or `thermal_resistance_construction`
-        project["Zone"]["zone 1"]["BuildingElement"]["roof 0"]
-            .as_object_mut()
-            .unwrap()
-            .remove("thermal_resistance_construction");
-        assert!(apply_schema_validation(&project).is_err());
+        remove_key(
+            &mut project["Zone"]["zone 1"]["BuildingElement"]["roof 0"],
+            "thermal_resistance_construction",
+        );
+        let result = apply_schema_validation(&project);
+        let expected_message =
+            "/Zone/zone 1/BuildingElement/roof 0: {'type':'BuildingElementOpaque','is_unheated_pitched_roof':true,'colour':'Intermediate','area':20.0,'areal_heat_capacity':'Very light','mass_distribution_class':'IE: Mass divided over internal and external side','pitch':45,'orientation360':90,'base_height':2.5,'height':2.5,'width':10} is not valid under any of the schemas listed in the 'oneOf' keyword";
+        contains_expected_schema_validation_errors_exact(result, &[expected_message]);
     }
 
     #[rstest]
