@@ -1445,7 +1445,7 @@ impl InputForProcessing {
     fn all_building_elements_of_types(
         &self,
         types: &[&str],
-    ) -> JsonAccessResult<Vec<&Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&Map<String, JsonValue>>> {
         let building_elements = self
             .zone_node()?
             .values()
@@ -1503,6 +1503,12 @@ impl InputForProcessing {
         &mut self,
     ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
         self.all_building_elements_mut_of_types(&["BuildingElementTransparent"])
+    }
+
+    pub fn all_transparent_building_elements(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&Map<String, JsonValue>>> {
+        self.all_building_elements_of_types(&["BuildingElementTransparent"])
     }
 
     pub(crate) fn all_ground_building_elements_mut(

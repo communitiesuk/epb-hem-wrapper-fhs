@@ -18,6 +18,7 @@ use crate::future_homes_standard::ventilation::{
     create_background_vents, create_mechanical_ventilation,
 };
 use anyhow::{anyhow, bail};
+use approx::relative_eq;
 use arcstr::ArcStr;
 use fsum::FSum;
 use home_energy_model::compare_floats::max_of_2;
@@ -511,7 +512,12 @@ fn calc_max_glazing_area_fraction(
         sum_uval_times_area += rooflight_area * u_value;
     }
 
-    let rooflight_correction_factor = if total_rooflight_area == 0.0 {
+    let rooflight_correction_factor = if relative_eq!(
+        total_rooflight_area,
+        0.,
+        epsilon = 1e-10,
+        max_relative = 1e-9
+    ) {
         0.0
     } else {
         let average_rooflight_uval = sum_uval_times_area / total_rooflight_area;
@@ -527,27 +533,20 @@ fn edit_glazing_for_glazing_limit(
     input: &mut InputForProcessing,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let total_glazing_area: f64 = input
-        .all_building_elements()?
-        .values()
-        .filter(|el| {
-            el.get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|type_str| type_str == "BuildingElementTransparent")
-        })
-        .map(|el| {
-            let height = el.get("height").and_then(Value::as_f64);
-            let width = el.get("width").and_then(Value::as_f64);
-            if let (Some(height), Some(width)) = (height, width) {
-                Ok(height * width)
-            } else {
-                bail!(
-                    "Failed to parse height and width as numbers for transparent element: {:?}",
-                    el
-                );
-            }
-        })
-        .sum::<Result<f64, _>>()?;
+    let mut area_sum = FSum::new();
+    for el in input.all_transparent_building_elements()? {
+        let height = el
+            .get("height")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse height as number"))?;
+        let width = el
+            .get("width")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse width as number"))?;
+
+        area_sum += height * width
+    }
+    let total_glazing_area = area_sum.value();
 
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
@@ -576,10 +575,16 @@ fn edit_glazing_for_glazing_limit(
                 &window_rooflight_element,
             )?;
 
-            let wall_roof_area_total = same_orientation
-                .iter()
-                .filter_map(|(_, wall_roof)| wall_roof.get("area").and_then(Value::as_f64))
-                .sum::<f64>();
+            let mut area_sum = FSum::new();
+            for wall_roof in same_orientation.values() {
+                let area = wall_roof
+                    .get("area")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| anyhow!("Failed to parse area as number"))?;
+
+                area_sum += area
+            }
+            let wall_roof_area_total = area_sum.value();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
                 if let Some(area) = wall_roof_val.get("area").and_then(Value::as_f64) {
@@ -754,13 +759,23 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
     ])
 });
 
-///  Apply heat network settings to notional building calculation in project_dict.
+///  Apply heat network settings to notional building calculation
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
     cold_water_source: &str,
     custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_communal: bool,
 ) -> anyhow::Result<()> {
+    let build_type = input.build_type()?;
+    // Building-level distribution losses are the daily pipework heat loss within
+    // an apartment block up to the dwelling boundary, so they apply to flats
+    // only. 62 is the notional flat value; houses have no such losses.
+    let building_level_distribution_losses = match build_type.as_str() {
+        "flat" => 62.,
+        "house" => 0.,
+        other => bail!("Unrecognised build_type: {other}"),
+    };
+
     let notional_heat_network = json!(
      {
         NOTIONAL_HIU: {
@@ -768,7 +783,7 @@ fn edit_add_heatnetwork_heating(
             "EnergySupply": NOTIONAL_HEAT_NETWORK_NAME,
             "power_max": 45,
             "HIU_daily_loss": 0.8,
-            "building_level_distribution_losses": 62,
+            "building_level_distribution_losses": building_level_distribution_losses,
         }
     });
     input.set_heat_source_wet(notional_heat_network)?;
@@ -799,25 +814,26 @@ fn edit_add_heatnetwork_heating(
             },
         )]
     } else {
+        let length = custom_energy_supply_factors.len() as f64;
+        let mut emissions_sum = FSum::new();
+        let mut out_of_scope_sum = FSum::new();
+        let mut primary_energy_sum = FSum::new();
+
+        for factor in custom_energy_supply_factors.values() {
+            emissions_sum += factor.emissions_factor_kg_co2e_k_wh;
+            out_of_scope_sum +=
+                factor.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions;
+            primary_energy_sum += factor.primary_energy_factor_k_wh_k_wh_delivered;
+        }
+
         [(
             NOTIONAL_HEAT_NETWORK_NAME.into(),
             CustomEnergySourceFactor {
-                emissions_factor_kg_co2e_k_wh: custom_energy_supply_factors
-                    .values()
-                    .map(|f| f.emissions_factor_kg_co2e_k_wh)
-                    .sum::<f64>()
-                    / custom_energy_supply_factors.len() as f64,
-                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions:
-                    custom_energy_supply_factors
-                        .values()
-                        .map(|f| f.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions)
-                        .sum::<f64>()
-                        / custom_energy_supply_factors.len() as f64,
-                primary_energy_factor_k_wh_k_wh_delivered: custom_energy_supply_factors
-                    .values()
-                    .map(|f| f.primary_energy_factor_k_wh_k_wh_delivered)
-                    .sum::<f64>()
-                    / custom_energy_supply_factors.len() as f64,
+                emissions_factor_kg_co2e_k_wh: emissions_sum.value() / length,
+                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions: out_of_scope_sum
+                    .value()
+                    / length,
+                primary_energy_factor_k_wh_k_wh_delivered: primary_energy_sum.value() / length,
             },
         )]
     }
@@ -1024,7 +1040,7 @@ fn replace_space_heating_system(
             "emitters": [{"wet_emitter_type": "radiator", "frac_convective": 0.7, "c": c, "n": n}],
             "temp_diff_emit_dsgn": temp_diff_emit_dsgn,
             "variable_flow": false,
-            "HeatSource": {"name": heat_source_name, "temp_flow_limit_upper": 65.0},
+            "HeatSource": {"name": heat_source_name, "temp_flow_limit_upper": 55.0},
             "ecodesign_controller": eco_design_controller,
             "Control": HEATING_PATTERN,
             "design_flow_temp": design_flow_temp,
@@ -1571,7 +1587,7 @@ fn calc_design_capacity(
         })
         .collect();
 
-    let design_capacity_overall = design_capacity_map.values().sum::<f64>();
+    let design_capacity_overall = FSum::with_all(design_capacity_map.values()).value();
 
     Ok((design_capacity_map, design_capacity_overall))
 }
