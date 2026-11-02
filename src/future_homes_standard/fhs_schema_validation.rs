@@ -966,7 +966,7 @@ mod tests {
         remove_key(&mut project["EnergySupply"], "mains elec");
         let result = apply_schema_validation(&project);
         let error_message = "/EnergySupply: 'mains elec' is a required property";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -977,7 +977,7 @@ mod tests {
 
         let result = apply_schema_validation(&project);
         let error_message = "/EnergySupply/mains elec/fuel: 'electricity' was expected";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -1010,7 +1010,7 @@ mod tests {
         });
         let result = apply_schema_validation(&project);
         let error_message = "/HeatSourceWet/heatpump: Unevaluated properties are not allowed ('power_max_backup' was unexpected)";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -1040,7 +1040,13 @@ mod tests {
                 "time_constant_onoff_operation": 1,
             }
         });
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_messages = &mut [
+            "/HeatSourceWet/heatpump: Unevaluated properties are not allowed",
+            "/HeatSourceWet/heatpump: {'type':'HeatPump','is_heat_network':false,'EnergySupply':'mains elec','source_type':'OutsideAir','sink_type':'Water','backup_ctrl_type':'TopUp','modulating_control':true,'min_modulation_rate_35':0.2,'min_modulation_rate_55':0.2,'temp_return_feed_max':40,'temp_lower_operating_limit':-10,'min_temp_diff_flow_return_for_hp_to_operate':5,'var_flow_temp_ctrl_during_test':false,'power_heating_circ_pump':0.1,'power_source_circ_pump':0.1,'power_standby':0.01,'power_crankcase_heater':0.01,'power_off':0.0,'test_data_EN14825':[],'time_constant_onoff_operation':1} is not valid under any of the schemas listed in the 'oneOf' keyword",
+
+            ];
+        contains_expected_schema_validation_errors_partially(result, error_messages);
     }
 
     #[rstest]
@@ -1070,6 +1076,23 @@ mod tests {
         assert!(apply_schema_validation(&project).is_ok());
         // And a reference to an existing EnergySupply is also fine
         project["HeatSourceWet"]["heat network"]["EnergySupply"] = json!("mains elec");
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_hiu_building_level_distribution_losses_is_optional(mut project: Value) {
+        // Given an HIU heat source that omits building_level_distribution_losses
+        // (the wrapper supplies the build-type-dependent default)
+        project["HeatSourceWet"] = json!({
+            "heat network": {
+                "type": "HIU",
+                 "is_heat_network": true,
+                "heat_network_type": "sleeved DHN",
+                "HIU_daily_loss": 1,
+                "power_max": 1,
+                "EnergySupply": "mains elec"
+            }
+        });
         assert!(apply_schema_validation(&project).is_ok());
     }
 
@@ -1158,7 +1181,10 @@ mod tests {
         // energy supply of the heat network (it's just to power the pump). Only when the
         // top level HeatSourceWet is a heat network (i.e. is_heat_network is true), should
         // a custom "EnergySupply" be permitted
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_messages =
+            "/HeatSourceWet/heat pump/EnergySupply: {'name':'custom_heat_pump_supply','factor':{'Emissions Factor kgCO2e/kWh':1,'Emissions Factor kgCO2e/kWh including out-of-scope emissions':1,'Primary Energy Factor kWh/kWh delivered':1},'is_export_capable':false} is not of type 'string'";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages]);
     }
 
     #[rstest]
@@ -1207,11 +1233,9 @@ mod tests {
         // And the heat pump itself must not have eahp_mixed_max_temp and eahp_mixed_min_temp
         // And because the subschema is invalid, none of the other properties are evaluated either
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert_eq!(errors, "/HeatSourceWet/heat pump/test_data_EN14825/0: Unevaluated properties are not allowed ('eahp_mixed_ext_air_ratio' was unexpected)");
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_messages =
+            "/HeatSourceWet/heat pump/test_data_EN14825/0: Unevaluated properties are not allowed ('eahp_mixed_ext_air_ratio' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages]);
     }
 
     #[rstest]
@@ -1298,7 +1322,14 @@ mod tests {
         // Then it errors that test data must have eahp_mixed_ext_air_ratio and air_flow_rate
         // And the heat pump itself must have eahp_mixed_max_temp and eahp_mixed_min_temp
         // Because the subschema is invalid then none of the properties are evaluated
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_messages = &mut [
+            "/HeatSourceWet/heat pump: 'eahp_mixed_max_temp' is a required property",
+            "/HeatSourceWet/heat pump: 'eahp_mixed_min_temp' is a required property",
+            "/HeatSourceWet/heat pump/test_data_EN14825/0: 'air_flow_rate' is a required property",
+            "/HeatSourceWet/heat pump/test_data_EN14825/0: 'eahp_mixed_ext_air_ratio' is a required property",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
     }
 
     #[rstest]
@@ -1307,12 +1338,10 @@ mod tests {
         // is required. (Else the wrapper will create an orientation360 = 180)
         project["Zone"]["zone 1"]["BuildingElement"]["floor 0"]["pitch"] = json!(180);
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("orientation360"));
-            assert!(errors.contains("unexpected"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_messages = &mut [
+            "/Zone/zone 1/BuildingElement/floor 0: Unevaluated properties are not allowed ('orientation360' was unexpected)",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
     }
 
     #[rstest]
@@ -1320,12 +1349,28 @@ mod tests {
         // Given a BuildingElementTransparent with pitch 180, indicating a skylight
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]["pitch"] = json!(180);
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("orientation360"));
-            assert!(errors.contains("unexpected"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_messages = &mut [
+            "/Zone/zone 1/BuildingElement/window 0: Unevaluated properties are not allowed ('orientation360' was unexpected)",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
+    }
+
+    #[rstest]
+    fn test_transparent_element_may_omit_window_part_list(mut project: Value) {
+        // Given a fixed (non-openable) window with no openable sections, the
+        // window_part_list is omitted entirely
+        remove_key(
+            &mut project["Zone"]["zone 1"]["BuildingElement"]["window 0"],
+            "window_part_list",
+        );
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_transparent_element_may_have_empty_window_part_list(mut project: Value) {
+        // Given a fixed (non-openable) window with an explicitly empty section list
+        project["Zone"]["zone 1"]["BuildingElement"]["window 0"]["window_part_list"] = json!([]);
+        assert!(apply_schema_validation(&project).is_ok());
     }
 
     #[rstest]
