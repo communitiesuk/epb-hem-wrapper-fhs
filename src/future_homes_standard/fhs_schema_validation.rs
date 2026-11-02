@@ -271,12 +271,10 @@ mod tests {
     fn test_incorrect_enum_value_errors(mut project: Value) {
         project["HeatingControlType"] = json!("something invalid");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            let error_message = errors.to_string();
-            assert!(error_message.contains("SeparateTempControl"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_messages = &[
+            "/HeatingControlType: 'something invalid' is not one of 'SeparateTempControl' or 'SeparateTimeAndTempControl'"
+        ];
+        contains_expected_schema_validation_errors(result, expected_messages);
     }
 
     #[rstest]
@@ -286,13 +284,8 @@ mod tests {
             .unwrap()
             .remove("shading_segments");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            let error_message = errors.to_string();
-            assert!(error_message.contains("shading_segments"));
-            assert!(error_message.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let expected_messages = &["/ExternalConditions: 'shading_segments' is a required property"];
+        contains_expected_schema_validation_errors(result, expected_messages);
     }
 
     #[rstest]
@@ -301,15 +294,25 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("header tank");
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let expected_messages =
+            &["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
+        contains_expected_schema_validation_errors(result, expected_messages);
     }
 
     #[rstest]
+    // Given a BuildingElement with both u_value and
+    // thermal_resistance_contruction provided as inputs, where only "oneOf" is
+    // permitted by the schema
     fn test_both_one_of_errors(mut project: Value) {
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]["u_value"] = json!(1.2);
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]
             ["thermal_resistance_construction"] = json!(0.4);
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let expected_messages = &[
+            "/Zone/zone 1/BuildingElement/window 0: {'type':'BuildingElementTransparent','thermal_resistance_construction':0.4,'pitch':90,'orientation360':90,'g_value':0.75,'frame_area_fraction':0.25,'base_height':1,'height':1.25,'width':4,'security_risk':true,'window_part_list':[{'free_area_height':1.6,'mid_height':1.5,'max_window_open_area':3}],'shading':[{'type':'overhang','depth':0.5,'distance':0.5},{'type':'sidefinleft','depth':0.25,'distance':0.1},{'type':'sidefinright','depth':0.25,'distance':0.1}],'treatment':[{'type':'blinds','controls':'manual','delta_r':0.05,'trans_red':0.5}],'u_value':1.2} is valid under more than one of the schemas listed in the 'oneOf' keyword"
+        ];
+        contains_expected_schema_validation_errors(result, expected_messages);
     }
 
     #[rstest]
