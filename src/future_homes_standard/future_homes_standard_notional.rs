@@ -51,7 +51,6 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
-use tracing::instrument;
 
 // Notional external wall U-value (W/m².K), applied to every above-ground opaque wall.
 // Below-ground basement walls reuse this via their fabric-equivalent construction resistance.
@@ -147,6 +146,8 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         heat_network_type,
         custom_energy_supply_factors,
         is_fee,
+        #[cfg(test)]
+        None,
     )?;
 
     // modify air-conditioning
@@ -1477,12 +1478,17 @@ fn edit_space_heating_system(
     heat_network_type: Option<HeatNetworkType>,
     custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
     is_fee: bool,
+    #[cfg(test)] canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
 ) -> anyhow::Result<()> {
     // FEE calculation which doesn't need the space heating system at this stage.
     if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
-        let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
+        let (design_capacity_map, design_capacity_overall) = calc_design_capacity(
+            input,
+            #[cfg(test)]
+            canned_calc_design_capacity,
+        )?;
 
         if let Some(heat_network_type @ (HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)) =
             heat_network_type
@@ -1545,10 +1551,17 @@ fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[instrument(skip(input))]
 fn calc_design_capacity(
     input: &InputForProcessing,
+    #[cfg(test)] canned_result: Option<(IndexMap<ArcStr, f64>, f64)>,
 ) -> anyhow::Result<(IndexMap<ArcStr, f64>, f64)> {
+    #[cfg(test)]
+    {
+        if let Some(canned_result) = canned_result {
+            return Ok(canned_result);
+        }
+    }
+
     // Create a deep copy as init_resistance_or_uvalue() will add u_value & r_c
     // which will raise warning when called second time
     let mut input = input.clone();
@@ -3899,13 +3912,21 @@ mod tests {
             .to_string()
     }
 
+    #[fixture]
+    fn canned_calc_design_capacity() -> Option<(IndexMap<ArcStr, f64>, f64)> {
+        Some((
+            serde_json::from_value(json!({"whole dwelling": 1})).unwrap(),
+            1.,
+        ))
+    }
+
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_non_sleeved_district_heat_network(
         mut test_input: InputForProcessing,
         cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
         // Given an unsleeved DHN network
         // When the notional heating system is created
@@ -3916,6 +3937,7 @@ mod tests {
             HeatNetworkType::UnsleevedDhn.into(),
             &mut Default::default(),
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
 
@@ -4043,40 +4065,37 @@ mod tests {
             serde_json::from_value(test_input.input["HeatSourceWet"].clone()).unwrap();
         assert_eq!(actual_heat_source_wet, expected_heat_source_wet);
 
-        let expected_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
-            serde_json::from_value(json!({
-                "hw cylinder": {
-                    "ColdWaterSource": &cold_water_source,
-                    "HeatSource": {
-                        "notional_HP": {
-                            "heater_position": 0.1,
-                            "name": "notional_HP",
-                            "temp_flow_limit_upper": 60,
-                            "thermostat_position": 0.1,
-                            "type": "HeatSourceWet",
-                        }
-                    },
-                    "daily_losses": 0.46660029577109363,
-                    "type": "StorageTank",
-                    "volume": 80.0,
-                    "primary_pipework": [
-                        {
-                            "external_diameter_mm": 28,
-                            "insulation_thermal_conductivity": 0.035,
-                            "insulation_thickness_mm": 35,
-                            "internal_diameter_mm": 26,
-                            "length": 2.5,
-                            "location": "internal",
-                            "pipe_contents": "water",
-                            "surface_reflectivity": false,
-                        }
-                    ],
-                }
-            }))
-            .unwrap();
-        let actual_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
-            serde_json::from_value(test_input.input["HotWaterSource"].clone()).unwrap();
-        assert_eq!(actual_hot_water_source, expected_hot_water_source);
+        let expected_hot_water_source = json!({
+            "hw cylinder": {
+                "ColdWaterSource": &cold_water_source,
+                "HeatSource": {
+                    "notional_HP": {
+                        "heater_position": 0.1,
+                        "name": "notional_HP",
+                        "temp_flow_limit_upper": 60,
+                        "thermostat_position": 0.1,
+                        "type": "HeatSourceWet",
+                    }
+                },
+                "daily_losses": 0.46660029577109363,
+                "type": "StorageTank",
+                "volume": 80.0,
+                "primary_pipework": [
+                    {
+                        "external_diameter_mm": 28.,
+                        "insulation_thermal_conductivity": 0.035,
+                        "insulation_thickness_mm": 35.,
+                        "internal_diameter_mm": 26.,
+                        "length": 2.5,
+                        "location": "internal",
+                        "pipe_contents": "water",
+                        "surface_reflectivity": false,
+                    }
+                ],
+            }
+        });
+        let actual_hot_water_source = &test_input.input["HotWaterSource"];
+        assert_eq!(actual_hot_water_source, &expected_hot_water_source);
 
         // And the SpaceHeatSystem is replaced with a notional one
         assert_eq!(
@@ -4167,12 +4186,12 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_sleeved_dhn_heat_network(
         mut test_input: InputForProcessing,
         cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
         let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
@@ -4197,6 +4216,7 @@ mod tests {
             HeatNetworkType::SleevedDhn.into(),
             &mut custom_energy_factors,
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
         // Then the heating system created is a heat network with an HIU
@@ -4292,12 +4312,12 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_communal_heat_network(
         mut test_input: InputForProcessing,
         cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
         let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
@@ -4332,6 +4352,7 @@ mod tests {
             serde_json::from_value(heat_network_type).unwrap(),
             &mut custom_energy_factors,
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
 
@@ -4427,12 +4448,12 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "currently fails as python mocks calc_design_capacity return value and we don't"]
     fn test_flat_uses_notional_building_level_losses(
         mut test_input: InputForProcessing,
         cold_water_source: String,
         tfa: f64,
         is_fee: bool,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
         // Given a flat (building-level distribution losses apply to flats only)
         test_input.input["General"]["build_type"] = json!("flat");
@@ -4454,6 +4475,7 @@ mod tests {
             HeatNetworkType::SleevedDhn.into(),
             &mut custom_energy_factors,
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
 
