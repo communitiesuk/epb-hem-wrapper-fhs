@@ -17,6 +17,7 @@ use anyhow::{anyhow, bail};
 use arcstr::ArcStr;
 use csv::{Reader, WriterBuilder};
 use fsum::FSum;
+use home_energy_model::core::space_heat_demand::building_element::convert_uvalue_to_resistance;
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
@@ -178,6 +179,7 @@ pub(crate) fn final_preprocessing(
     create_vent_opening_schedule(input)?;
     window_treatment(input)?;
     create_thermal_penetration(input)?;
+    split_internal_partitions(input)?;
     create_heating(input)?;
     create_infiltration_ventilation(input)?;
     calc_sfp_mech_vent(input)?;
@@ -3640,6 +3642,134 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
         }
     }
 
+    Ok(())
+}
+
+/// Return one half-thickness face of a full-construction internal partition.
+///    
+/// The construction is halved at its mid-plane: the construction resistance and areal heat
+/// capacity are halved, while the face area and mass distribution class are retained. `pitch`
+/// is set by the caller so the two faces can point in opposite directions for a horizontal
+/// partition.
+///
+/// When the partition is specified by U-value, the U-value cannot simply be doubled: it bundles
+/// in the inside and outside surface resistances, which depend on the heat-flow direction (and
+/// so on pitch). Halving the construction requires those surface resistances to be removed
+/// first. The U-value is therefore converted to the construction resistance at the full
+/// element's pitch, using the same convention hem-core applies, and that resistance is halved.
+/// hem-core then re-applies the correct per-face surface resistances when it builds each face.
+fn half_thickness_face(
+    building_element: serde_json::Value,
+    pitch: f64,
+) -> anyhow::Result<serde_json::Value> {
+    let mut face = building_element.clone();
+    face["pitch"] = json!(pitch);
+    face["areal_heat_capacity"] = json!(
+        building_element
+            .get("areal_heat_capacity")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Building element areal_heat_capacity is not a number"
+            ))?
+            / 2.0
+    );
+    if let Some(thermal_resistance_construction) =
+        building_element.get("thermal_resistance_construction")
+    {
+        let thermal_resistance_construction =
+            thermal_resistance_construction.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("Building element thermal_resistance_construction is not a number")
+            })?;
+        face["thermal_resistance_construction"] = json!(thermal_resistance_construction / 2.0);
+    } else if let Some(u_value) = building_element.get("u_value") {
+        let u_value = u_value
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("Building element u_value is not a number"))?;
+        let original_pitch = building_element
+            .get("pitch")
+            .and_then(|value| value.as_f64())
+            .ok_or_else(|| anyhow::anyhow!("Building element pitch is not a number"))?;
+        let thermal_resistance_construction = convert_uvalue_to_resistance(u_value, original_pitch);
+        face["thermal_resistance_construction"] = json!(thermal_resistance_construction / 2.0);
+        face.as_object_mut().unwrap().remove("u_value");
+    }
+    Ok(face)
+}
+
+/// Split each internal partition into the two half-thickness faces the engine expects.
+///
+/// A BuildingElementAdjacentConditionedSpace is entered once as the full construction. The
+/// Home Energy Model represents an internal partition as two half-thickness elements, one
+/// per face, so each partition is replaced by two faces: the near face keeps the entered
+/// pitch and the opposite face takes 180 - pitch (giving floor-up / ceiling-down for a
+/// horizontal partition; both faces stay vertical for a wall). Contributions scale linearly
+/// with area in the engine, so two faces of the entered area are equivalent to the single
+/// full-area element a user would otherwise enter by hand.
+///
+/// Single-zone assumption: both faces are placed in the element's own zone, since FHS is
+/// single-zone today and there is no adjacent zone to receive the opposite face. An explicit
+/// adjacent-zone input is deferred until multi-zone demos exist.
+///
+/// Must run after create_thermal_penetration so areal_heat_capacity is already numeric.
+pub(crate) fn split_internal_partitions(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for zone in input.zone_node_mut()?.values_mut() {
+        let building_elements = zone
+            .get_mut("BuildingElement")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| anyhow!("Zone BuildingElement node was not an object"))?;
+        let names: Vec<_> = building_elements.keys().cloned().collect();
+
+        for name in names {
+            let element_type = building_elements
+                .get(&name)
+                .and_then(|element| element.get("type"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("Building element type not found"))?;
+            if element_type != "BuildingElementAdjacentConditionedSpace" {
+                continue;
+            }
+
+            let new_name = format!("_split_partition_{name}");
+            let opposite_name = format!("_split_partition_opposite_{name}");
+            for existing_name_check in [&new_name, &opposite_name] {
+                if building_elements.contains_key(existing_name_check) {
+                    bail!(
+                        "Cannot split internal partition '{name}': an element named '{existing_name_check}' already exists"
+                    );
+                }
+            }
+            let mut building_element = building_elements
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| anyhow!("Building element '{name}' not found"))?;
+            let building_element_object = building_element
+                .as_object_mut()
+                .ok_or_else(|| anyhow!("Building element '{name}' was not an object"))?;
+            let is_adjacent_space_within_dwelling = building_element_object
+                .remove("is_adjacent_space_within_dwelling")
+                .and_then(|value| value.as_bool())
+                .ok_or_else(|| {
+                    anyhow!("Building element is_adjacent_space_within_dwelling not found")
+                })?;
+            let pitch = building_element_object
+                .get("pitch")
+                .and_then(|value| value.as_f64())
+                .ok_or_else(|| anyhow!("Building element pitch not found"))?;
+
+            let near_face = half_thickness_face(building_element.clone(), pitch)?;
+            let opposite_face = if is_adjacent_space_within_dwelling {
+                Some(half_thickness_face(building_element, 180.0 - pitch)?)
+            } else {
+                None
+            };
+
+            building_elements.remove(&name);
+            building_elements.insert(new_name, near_face);
+            if let Some(opposite_face) = opposite_face {
+                building_elements.insert(opposite_name, opposite_face);
+            }
+        }
+    }
     Ok(())
 }
 
