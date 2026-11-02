@@ -189,6 +189,10 @@ mod tests {
         }
     }
 
+    fn remove_key(value: &mut Value, key: &str) {
+        value.as_object_mut().unwrap().remove(key);
+    }
+
     #[rstest]
     fn test_microwave_and_kettle_accepted_in_appliances(mut project: Value) {
         // Microwave and Kettle are supported by the runtime and may be
@@ -279,10 +283,7 @@ mod tests {
 
     #[rstest]
     fn test_missing_required_value_errors(mut project: Value) {
-        project["ExternalConditions"]
-            .as_object_mut()
-            .unwrap()
-            .remove("shading_segments");
+        remove_key(&mut project["ExternalConditions"], "shading_segments");
         let result = apply_schema_validation(&project);
         let expected_messages = &["/ExternalConditions: 'shading_segments' is a required property"];
         contains_expected_schema_validation_errors(result, expected_messages);
@@ -290,10 +291,7 @@ mod tests {
 
     #[rstest]
     fn test_missing_one_of_errors(mut project: Value) {
-        project["ColdWaterSource"]
-            .as_object_mut()
-            .unwrap()
-            .remove("header tank");
+        remove_key(&mut project["ColdWaterSource"], "header tank");
         let result = apply_schema_validation(&project);
         let expected_messages =
             &["/ColdWaterSource: {} is not valid under any of the schemas listed in the 'oneOf' keyword"];
@@ -301,10 +299,10 @@ mod tests {
     }
 
     #[rstest]
-    // Given a BuildingElement with both u_value and
-    // thermal_resistance_contruction provided as inputs, where only "oneOf" is
-    // permitted by the schema
     fn test_both_one_of_errors(mut project: Value) {
+        // Given a BuildingElement with both u_value and
+        // thermal_resistance_contruction provided as inputs, where only "oneOf" is
+        // permitted by the schema
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]["u_value"] = json!(1.2);
         project["Zone"]["zone 1"]["BuildingElement"]["window 0"]
             ["thermal_resistance_construction"] = json!(0.4);
