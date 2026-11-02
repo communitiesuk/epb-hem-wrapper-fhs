@@ -4454,6 +4454,7 @@ mod tests {
     fn test_actual_with_centralised_mechanical_ventilation_system(
         mut test_input: InputForProcessing,
     ) {
+        // Given a dwelling with two wet rooms and a Centralised continuous MEV
         test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
             "mechvent1": {
                 "vent_type": "Centralised continuous MEV",
@@ -4506,6 +4507,66 @@ mod tests {
         });
         let actual_mech_vent =
             test_input.input["InfiltrationVentilation"]["MechanicalVentilation"].clone();
+        assert_eq!(actual_mech_vent, expected_mech_vent);
+    }
+
+    #[rstest]
+    fn test_actual_with_decentralised_mechanical_ventilation_system(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a dwelling with two wet rooms and a Decentralised continuous MEV
+        test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
+            "mechvent1": {
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0,
+                "pitch": 90,
+            }
+        });
+        let minimum_air_flow_rate = 100.;
+        let minimum_vent_area = 200.;
+        let minimum_vent_count = 4;
+
+        // When the notional infiltration ventilation preprocessing is applied
+        edit_infiltration_ventilation(
+            &mut test_input,
+            minimum_air_flow_rate,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then two dMEVs are created in the notional with numbered vent names
+        let expected_mech_vent = json!({
+            "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 2.25,
+                "orientation360": 90.,
+                "pitch": 90.,
+            },
+            "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0.,
+                "pitch": 90.,
+            },
+        });
+        let actual_mech_vent =
+            test_input.input["InfiltrationVentilation"]["MechanicalVentilation"].clone();
+
         assert_eq!(actual_mech_vent, expected_mech_vent);
     }
 }
