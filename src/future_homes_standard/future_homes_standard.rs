@@ -1558,8 +1558,7 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
         let (is_heat_battery, has_charging_sources) = {
             let heat_source_wet = input.heat_source_wet_by_key(&heat_source_key)?;
             (
-                heat_source_wet.get("type").and_then(JsonValue::as_str)
-                    == Some("HeatBattery"),
+                heat_source_wet.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"),
                 heat_source_wet.get("HeatSource").is_some(),
             )
         };
@@ -1636,7 +1635,7 @@ fn create_heat_battery_charging_source_controls(
         for (source_name, source) in charging_sources.iter_mut() {
             let control_name = format!("HeatBattery_{heat_source_key}_{source_name}_Control");
             source["Control"] = json!(control_name);
-            source["schedule_unit"] = json!("soc"); 
+            source["schedule_unit"] = json!("soc");
             let schedule = json!({
                 "main": [{"value": "day", "repeat": 365}],
                 "day": charge_when_off_peak.clone(),
@@ -1958,18 +1957,19 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
 }
 /// Assign the standard water-heating availability controls to a storage or
 /// smart hot water tank.
-/// 
+///
 /// Smart tanks are driven by state-of-charge controls and carry a maximum
 /// setpoint control on the tank itself; storage tanks use temperature setpoint
 /// controls. Solar thermal heat sources stay always-available, so they get no
 /// minimum control. Applies to both HotWaterSource cylinders and pre-heated
 /// tanks, which share the same tank handling.
-fn apply_tank_heat_source_controls(tank: &mut serde_json::Value, 
+fn apply_tank_heat_source_controls(
+    tank: &mut serde_json::Value,
     hw_smart_hot_water_tank_temp_max_name: &str,
     hw_smart_hot_water_tank_max_soc_name: &str,
     hw_smart_hot_water_tank_min_soc_name: &str,
     hw_max_temp: &str,
-    hw_min_temp: &str
+    hw_min_temp: &str,
 ) -> anyhow::Result<()> {
     let tank_type = tank
         .get("type")
@@ -1999,7 +1999,6 @@ fn apply_tank_heat_source_controls(tank: &mut serde_json::Value,
 
     Ok(())
 }
-
 
 /// Load the daily evaporative profile from a CSV file.
 ///
@@ -7431,7 +7430,7 @@ mod tests {
             );
         }
     }
-    
+
     mod create_space_heat_distribution {
         use super::*;
 
