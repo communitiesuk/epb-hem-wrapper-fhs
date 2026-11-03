@@ -183,6 +183,7 @@ mod tests {
             let mut actual_error_messages = errors.split("\n").collect::<Vec<_>>();
             expected_error_messages.sort();
             actual_error_messages.sort();
+            assert_eq!(actual_error_messages.len(), expected_error_messages.len());
             for (expected, actual) in expected_error_messages.iter().zip(actual_error_messages) {
                 assert_eq!(actual, *expected);
             }
@@ -2302,6 +2303,7 @@ mod tests {
         // Given a preheated tank used by a mixer shower as its source
         project["PreHeatedWaterSource"] = json!({
             "preheated tank": {
+                "type": "StorageTank",
                 "volume": 80.0,
                 "daily_losses": 1.68,
                 "init_temp": 35.0,
@@ -2338,6 +2340,483 @@ mod tests {
         project["HotWaterDemand"]["Shower"]["mixer"]["ColdWaterSource"] = json!("wwhrs system");
         let result = apply_schema_validation(&project);
         let error_message = "/HotWaterDemand/Shower/mixer/ColdWaterSource: 'wwhrs system' is not one of 'header tank' or 'mains water'";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    fn mvhr_vent_with_ductwork(project: &mut Value, ductwork: Value) {
+        // Build a fully valid MVHR vent, varying only the ductwork under test
+        project["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
+            "vent1": {
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 1,
+                "vent_type": "MVHR",
+                "mvhr_eff": 0.9,
+                "mvhr_location": "inside",
+                "SFP": 1.5,
+                "position_intake": {
+                    "mid_height_air_flow_path": 1.5,
+                    "orientation360": 90,
+                    "pitch": 60,
+                },
+                "position_exhaust": {
+                    "mid_height_air_flow_path": 1.5,
+                    "orientation360": 90,
+                    "pitch": 60,
+                },
+                "ductwork": ductwork,
+            }
+        });
+    }
+
+    #[rstest]
+    fn test_circular_ductwork_valid(mut project: Value) {
+        // Given a circular duct providing internal and external diameters
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "circular",
+                "duct_type": "supply",
+                "external_diameter_mm": 127,
+                "internal_diameter_mm": 125,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // Then validation passes
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_rectangular_ductwork_valid(mut project: Value) {
+        // Given a rectangular duct providing a perimeter instead of diameters
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "rectangular",
+                "duct_type": "supply",
+                "duct_perimeter_mm": 528,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // Then validation passes
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    // test name in Python is test_rectangular_ductwork_missing_perimeter_raises
+    fn test_rectangular_ductwork_missing_perimeter_errors(mut project: Value) {
+        // Given a rectangular duct without a perimeter
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "rectangular",
+                "duct_type": "supply",
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that duct_perimeter_mm is required
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0: 'duct_perimeter_mm' is a required property";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    // test name in Python is test_rectangular_ductwork_with_diameters_raises
+    fn test_rectangular_ductwork_with_diameters_errors(mut project: Value) {
+        // Given a rectangular duct that also supplies circular diameters
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "rectangular",
+                "duct_type": "supply",
+                "duct_perimeter_mm": 528,
+                "external_diameter_mm": 127,
+                "internal_diameter_mm": 125,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that the diameters are not allowed
+        // Note that the Rust crate puts the property in the path, whereas the Python
+        // reports the false-schema errors against the parent object
+        let error_messages = &mut [
+            "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/internal_diameter_mm: False schema does not allow 125",
+            "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/external_diameter_mm: False schema does not allow 127",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
+    }
+
+    #[rstest]
+    // test name in Python is test_circular_ductwork_with_perimeter_raises
+    fn test_circular_ductwork_with_perimeter_errors(mut project: Value) {
+        // Given a circular duct that also supplies a rectangular perimeter
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "circular",
+                "duct_type": "supply",
+                "duct_perimeter_mm": 528,
+                "external_diameter_mm": 127,
+                "internal_diameter_mm": 125,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that the perimeter is not allowed
+        // Note that the Rust crate puts the property in the path, whereas the Python
+        // reports the false-schema error against the parent object
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/duct_perimeter_mm: False schema does not allow 528";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    // test name in Python is test_circular_ductwork_missing_diameter_raises
+    fn test_circular_ductwork_missing_diameter_errors(mut project: Value) {
+        // Given a circular duct that provides only one of the two required diameters
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "circular",
+                "duct_type": "supply",
+                "internal_diameter_mm": 125,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that external_diameter_mm is required
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0: 'external_diameter_mm' is a required property";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    // test name in Python is test_rectangular_ductwork_zero_perimeter_raises
+    fn test_rectangular_ductwork_zero_perimeter_errors(mut project: Value) {
+        // Given a rectangular duct with a zero perimeter (duct_perimeter_mm is exclusiveMinimum 0)
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "rectangular",
+                "duct_type": "supply",
+                "duct_perimeter_mm": 0,
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "length": 5.0,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that duct_perimeter_mm must be greater than 0
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/duct_perimeter_mm: 0 is less than or equal to the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_hot_water_cylinder_init_temp_rejected(mut project: Value) {
+        // Given a hot water cylinder declaring an initial temperature
+        // (the wrapper standardises it, so it is not an input)
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"],
+            "init_temp",
+            json!(60.0),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it should raise an error indicating the property is not allowed
+        let error_message = "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed ('init_temp' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_preheated_tank_init_temp_accepted(mut project: Value) {
+        // Given a pre-heated tank declaring its initial temperature
+        // (no wrapper standardisation applies, so it remains an input)
+        let mut preheated_tank = project["HotWaterSource"]["hw cylinder"].clone();
+        insert_key_value(&mut preheated_tank, "init_temp", json!(35.0));
+        project["PreHeatedWaterSource"] = json!({"preheated tank": preheated_tank});
+        // When validation is run, it should not raise
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    // test name in Python is test_preheated_tank_missing_init_temp_raises
+    fn test_preheated_tank_missing_init_temp_errors(mut project: Value) {
+        // Given a pre-heated tank without an initial temperature
+        let preheated_tank = project["HotWaterSource"]["hw cylinder"].clone();
+        project["PreHeatedWaterSource"] = json!({"preheated tank": preheated_tank});
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it should raise an error indicating the property is required
+        let error_message =
+            "/PreHeatedWaterSource/preheated tank: 'init_temp' is a required property";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_point_of_use_efficiency_one_validates(mut project: Value) {
+        // An electric point-of-use heater with efficiency exactly 1.0 validates.
+        project["HotWaterSource"]["hw cylinder"] = json!({
+            "type": "PointOfUse",
+            "efficiency": 1,
+            "EnergySupply": "mains elec",
+            "ColdWaterSource": "header tank",
+        });
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_point_of_use_efficiency_other_than_one_rejected(mut project: Value) {
+        // The core only handles electric point-of-use heaters, which are 100%
+        // efficient by definition, so efficiency must be exactly 1.0.
+        project["HotWaterSource"]["hw cylinder"] = json!({
+            "type": "PointOfUse",
+            "efficiency": 0.9,
+            "EnergySupply": "mains elec",
+            "ColdWaterSource": "header tank",
+        });
+        let result = apply_schema_validation(&project);
+        // The failing const subschema means unevaluatedProperties can't "see" the
+        // sibling properties, so they surface as unexpected alongside the const error.
+        let error_message = "/HotWaterSource/hw cylinder/efficiency: 1 was expected";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    fn intermittent_mev_vent(sfp: f64) -> Value {
+        // A minimal valid Intermittent MEV entry; only SFP varies between tests.
+        json!({
+            "vent_type": "Intermittent MEV",
+            "EnergySupply": "mains elec",
+            "design_outdoor_air_flow_rate": 30,
+            "SFP": sfp,
+            "mid_height_air_flow_path": 1.5,
+            "orientation360": 90,
+            "pitch": 90,
+        })
+    }
+
+    #[rstest]
+    // test name in Python is test_intermittent_mev_sfp_below_minimum_raises
+    fn test_intermittent_mev_sfp_below_minimum_errors(mut project: Value) {
+        // An intermittent extract fan SFP below the lower sanity bound is rejected.
+        insert_key_value(
+            &mut project["InfiltrationVentilation"]["MechanicalVentilation"],
+            "imev1",
+            intermittent_mev_vent(0.04),
+        );
+        let result = apply_schema_validation(&project);
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/imev1/SFP: 0.04 is less than the minimum of 0.05";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_intermittent_mev_sfp_at_minimum_validates(mut project: Value) {
+        // An intermittent extract fan SFP exactly at the lower sanity bound validates.
+        insert_key_value(
+            &mut project["InfiltrationVentilation"]["MechanicalVentilation"],
+            "imev1",
+            intermittent_mev_vent(0.05),
+        );
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_decentralised_mev_sfp_below_intermittent_floor_validates(mut project: Value) {
+        // The intermittent-extract SFP floor binds Intermittent MEV only: a decentralised
+        // continuous MEV carrying a lower SFP still validates.
+        insert_key_value(
+            &mut project["InfiltrationVentilation"]["MechanicalVentilation"],
+            "dmev1",
+            json!({
+                "vent_type": "Decentralised continuous MEV",
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 30,
+                "SFP": 0.04,
+                "mid_height_air_flow_path": 1.5,
+                "orientation360": 90,
+                "pitch": 90,
+            }),
+        );
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_party_wall_uvalue_rejected(mut project: Value) {
+        // Given a party wall with a defined u-value
+        let wall = &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"];
+        remove_key(wall, "thermal_resistance_construction");
+        insert_key_value(wall, "u_value", json!(0.3));
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then validation error is raised that u-value is unexpected
+        // Note that the Rust crate puts the property in the path, whereas the Python
+        // reports the false-schema error against the parent object
+        let error_message =
+            "/Zone/zone 1/BuildingElement/wall 0/u_value: False schema does not allow 0.3";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_party_wall_defined_resistance_rejected(mut project: Value) {
+        // Given a party wall with a defined resistance
+        let wall = &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"];
+        wall["party_wall_cavity_type"] = json!("defined_resistance");
+        insert_key_value(wall, "thermal_resistance_cavity", json!(0.5));
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then validation error is raised that defined_resistance is not allowed
+        let error_message = "/Zone/zone 1/BuildingElement/wall 0/party_wall_cavity_type: 'defined_resistance' is not one of 'solid', 'unfilled_unsealed' or 3 other candidates";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_party_wall_whole_wall_uvalue_required(mut project: Value) {
+        // Given a party wall without the whole-wall U-value (required for the BREL)
+        remove_key(
+            &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"],
+            "u_value_whole_wall",
+        );
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then validation error is raised that u_value_whole_wall is required
+        let error_messages = &[
+            "/Zone/zone 1/BuildingElement/wall 0: Unevaluated properties are not allowed",
+            "/Zone/zone 1/BuildingElement/wall 0: 'u_value_whole_wall' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages);
+    }
+
+    #[rstest]
+    fn test_party_wall_whole_wall_uvalue_negative_rejected(mut project: Value) {
+        // Given a party wall with a negative whole-wall U-value
+        project["Zone"]["zone 1"]["BuildingElement"]["wall 0"]["u_value_whole_wall"] = json!(-0.1);
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then validation error is raised that the value is below the minimum
+        let error_message = "/Zone/zone 1/BuildingElement/wall 0/u_value_whole_wall: -0.1 is less than the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_party_wall_whole_wall_uvalue_zero_allowed(mut project: Value) {
+        // Given an adiabatic party wall with a whole-wall U-value of zero
+        project["Zone"]["zone 1"]["BuildingElement"]["wall 0"]["u_value_whole_wall"] = json!(0);
+        // When the validation function is called, then no error is raised
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_party_wall_whole_wall_uvalue_above_maximum_rejected(mut project: Value) {
+        // Given a whole-wall U-value above the bound applied to U-values generally
+        // (a plausible slip is entering W/(m²·K) as its reciprocal or in other units)
+        project["Zone"]["zone 1"]["BuildingElement"]["wall 0"]["u_value_whole_wall"] = json!(500);
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then validation error is raised that the value is above the maximum
+        let error_message = "/Zone/zone 1/BuildingElement/wall 0/u_value_whole_wall: 500 is greater than the maximum of 10";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    fn test_whole_wall_uvalue_not_constrained_by_cavity_type(mut project: Value) {
+        // Given a solid party wall, which the energy calculation treats as losing no
+        // heat, declaring a non-zero whole-element U-value. The whole-element value
+        // covers both leaves, while thermal_resistance_construction reaches only the
+        // wall's midpoint, so the cavity type does not imply a value for it and the
+        // assessor's figure is taken as authored.
+        let building_element = &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"];
+        building_element["party_wall_cavity_type"] = json!("solid");
+        // a solid party wall takes no lining type
+        remove_key(building_element, "party_wall_lining_type");
+        building_element["u_value_whole_wall"] = json!(0.5);
+        // When the validation function is called, then no error is raised
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_missing_cavity_type_does_not_demand_a_lining_type(mut project: Value) {
+        // Given a party wall declaring neither a cavity type nor a lining type. The
+        // lining-type rule is guarded by a required check so it cannot fire here:
+        // demanding a lining type as well would point the assessor at a field that
+        // may not apply once the cavity type is supplied.
+        let building_element = &mut project["Zone"]["zone 1"]["BuildingElement"]["wall 0"];
+        remove_key(building_element, "party_wall_cavity_type");
+        remove_key(building_element, "party_wall_lining_type");
+        // When the validation function is called
+        let result = apply_schema_validation(&project);
+        // Then the only errors concern the absent cavity type
+        let error_messages = &mut [
+            "/Zone/zone 1/BuildingElement/wall 0: Unevaluated properties are not allowed ('areal_heat_capacity', 'mass_distribution_class', 'pitch', 'area', 'u_value_whole_wall' were unexpected)",
+            "/Zone/zone 1/BuildingElement/wall 0: 'party_wall_cavity_type' is a required property",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages);
+    }
+
+    #[rstest]
+    // test name in Python is test_ductwork_zero_internal_diameter_raises
+    fn test_ductwork_zero_internal_diameter_errors(mut project: Value) {
+        // Given a duct with zero internal diameter (internal_diameter_mm is exclusiveMinimum 0)
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "circular",
+                "duct_type": "supply",
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "internal_diameter_mm": 0,
+                "external_diameter_mm": 127,
+                "length": 14.43,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that internal_diameter_mm must be greater than 0
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/internal_diameter_mm: 0 is less than or equal to the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
+    }
+
+    #[rstest]
+    // test name in Python is test_ductwork_zero_external_diameter_raises
+    fn test_ductwork_zero_external_diameter_errors(mut project: Value) {
+        // Given a duct with zero external diameter (external_diameter_mm is exclusiveMinimum 0)
+        mvhr_vent_with_ductwork(
+            &mut project,
+            json!([{
+                "cross_section_shape": "circular",
+                "duct_type": "supply",
+                "insulation_thermal_conductivity": 0.035,
+                "insulation_thickness_mm": 0,
+                "internal_diameter_mm": 5,
+                "external_diameter_mm": 0,
+                "length": 14.43,
+                "reflective": false,
+            }]),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then an error is raised that external_diameter_mm must be greater than 0
+        let error_message = "/InfiltrationVentilation/MechanicalVentilation/vent1/ductwork/0/external_diameter_mm: 0 is less than or equal to the minimum of 0";
         contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 }
