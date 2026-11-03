@@ -1956,6 +1956,50 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
 
     Ok(())
 }
+/// Assign the standard water-heating availability controls to a storage or
+/// smart hot water tank.
+/// 
+/// Smart tanks are driven by state-of-charge controls and carry a maximum
+/// setpoint control on the tank itself; storage tanks use temperature setpoint
+/// controls. Solar thermal heat sources stay always-available, so they get no
+/// minimum control. Applies to both HotWaterSource cylinders and pre-heated
+/// tanks, which share the same tank handling.
+fn apply_tank_heat_source_controls(tank: &mut serde_json::Value, 
+    hw_smart_hot_water_tank_temp_max_name: &str,
+    hw_smart_hot_water_tank_max_soc_name: &str,
+    hw_smart_hot_water_tank_min_soc_name: &str,
+    hw_max_temp: &str,
+    hw_min_temp: &str
+) -> anyhow::Result<()> {
+    let tank_type = tank
+        .get("type")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!("Tank type is missing or not a string"))?;
+    let (control_max, control_min) = if tank_type == "SmartHotWaterTank" {
+        tank["temp_setpnt_max"] = json!(hw_smart_hot_water_tank_temp_max_name);
+        (
+            json!(hw_smart_hot_water_tank_max_soc_name),
+            json!(hw_smart_hot_water_tank_min_soc_name),
+        )
+    } else {
+        (json!(hw_max_temp), json!(hw_min_temp))
+    };
+
+    let heat_sources = tank
+        .get_mut("HeatSource")
+        .and_then(|value| value.as_object_mut())
+        .ok_or_else(|| anyhow!("HeatSource is missing or not an object"))?;
+
+    for heat_source in heat_sources.values_mut() {
+        heat_source["Controlmax"] = control_max.clone();
+        if heat_source.get("type").and_then(|v| v.as_str()) != Some("SolarThermalSystem") {
+            heat_source["Controlmin"] = control_min.clone();
+        }
+    }
+
+    Ok(())
+}
+
 
 /// Load the daily evaporative profile from a CSV file.
 ///
