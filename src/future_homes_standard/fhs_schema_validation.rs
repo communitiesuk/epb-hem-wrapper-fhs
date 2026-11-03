@@ -209,8 +209,12 @@ mod tests {
         }
     }
 
-    fn remove_key(value: &mut Value, key: &str) {
-        value.as_object_mut().unwrap().remove(key);
+    fn remove_key(base: &mut Value, key: &str) {
+        base.as_object_mut().unwrap().remove(key);
+    }
+
+    fn insert_key_value(base: &mut Value, key: &str, value: Value) {
+        base.as_object_mut().unwrap().insert(key.into(), value);
     }
 
     #[rstest]
@@ -923,10 +927,7 @@ mod tests {
         // Given PartO_active_cooling_required at the top level
         // But no SpaceCoolSystem defined within a zone
         project["PartO_active_cooling_required"] = json!(true);
-        project["Zone"]["zone 1"]
-            .as_object_mut()
-            .unwrap()
-            .remove("SpaceCoolSystem");
+        remove_key(&mut project["Zone"]["zone 1"], "SpaceCoolSystem");
         let result = apply_schema_validation(&project);
         let error_message = "/Zone/zone 1: 'SpaceCoolSystem' is a required property";
         contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
@@ -1373,6 +1374,113 @@ mod tests {
         assert!(apply_schema_validation(&project).is_ok());
     }
 
+    /// A PCM heat battery, as used by the charging configuration tests.
+    fn pcm_heat_battery(
+        temp_min_useful: Option<f64>,
+        rated_charge_power: Option<f64>,
+        heat_source: Value,
+    ) -> Value {
+        let mut battery = json!({
+            "type": "HeatBattery",
+            "battery_type": "pcm",
+            "EnergySupply": "mains elec",
+            "is_heat_network": false,
+            "A": 174.33952,
+            "B": -931.565,
+            "electricity_circ_pump": 0.06,
+            "electricity_standby": 0.0244,
+            "flow_rate_l_per_min": 10,
+            "heat_storage_kJ_per_K_above_Phase_transition": 381.5,
+            "heat_storage_kJ_per_K_below_Phase_transition": 305.2,
+            "heat_storage_kJ_per_K_during_Phase_transition": 12317,
+            "inlet_diameter_mm": 6.5,
+            "max_rated_losses": 0.22,
+            "max_temperature": 80,
+            "number_of_units": 1,
+            "phase_transition_temperature_lower": 57,
+            "phase_transition_temperature_upper": 59,
+            "simultaneous_charging_and_discharging": false,
+            "velocity_in_HEX_tube_at_1_l_per_min_m_per_s": 0.035,
+        });
+        if let Some(temp_min_useful) = temp_min_useful {
+            insert_key_value(&mut battery, "temp_min_useful", json!(temp_min_useful));
+        }
+
+        if let Some(rated_charge_power) = rated_charge_power {
+            insert_key_value(
+                &mut battery,
+                "rated_charge_power",
+                json!(rated_charge_power),
+            );
+        }
+
+        insert_key_value(&mut battery, "HeatSource", json!(heat_source));
+        battery
+    }
+
+    fn hydronic_charging_source() -> Value {
+        json!({
+            "type": "HeatSourceWet",
+            "name": "HeatPump1",
+            "temp_flow_limit_upper": 65.0,
+            "flow_rate_charging_l_per_min": 10,
+            "A": 174.33952,
+            "B": -931.565,
+            "velocity_in_HEX_tube_at_1_l_per_min_m_per_s": 0.035,
+            "inlet_diameter_mm": 6.5,
+        })
+    }
+
+    #[rstest]
+    fn test_heat_battery_charged_by_a_wet_heat_source_accepted(mut project: Value) {
+        // Given a PCM heat battery charged by a heat pump rather than a direct electric element.
+        let temp_min_useful = Some(40.);
+        let heat_battery = pcm_heat_battery(
+            temp_min_useful,
+            None,
+            json!({"hp_charging": hydronic_charging_source()}),
+        );
+        project["HeatSourceWet"] = json!({"hb1": heat_battery});
+        // When validation is run, then no error: the charging circuit's own heat exchanger and
+        // flow characteristics are given separately from the battery's, which may differ
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_heat_battery_cannot_combine_both_charging_configurations(mut project: Value) {
+        // Given a PCM heat battery declaring charging sources and a rated charge power
+        let temp_min_useful = Some(40.);
+        let rated_charge_power = Some(15.);
+        let heat_battery = pcm_heat_battery(
+            temp_min_useful,
+            rated_charge_power,
+            json!({"hp_charging": hydronic_charging_source()}),
+        );
+        project["HeatSourceWet"] = json!({"hb1": heat_battery});
+        // When validation is run
+        // Then it is rejected here rather than by the core, which forbids the same combination.
+        // The path and the offending property are asserted rather than the whole message, which
+        // is jsonschema's wording and can change when it is upgraded
+        let result = apply_schema_validation(&project);
+        let error_message = "HeatSourceWet/hb1/rated_charge_power";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+    }
+
+    #[rstest]
+    fn test_heat_battery_charging_sources_require_the_discharge_reference(mut project: Value) {
+        // Given charging sources but no temperature to treat as fully discharged, which the
+        // state-of-charge calculation needs
+        let heat_battery = pcm_heat_battery(
+            None,
+            None,
+            json!({"hp_charging": hydronic_charging_source()}),
+        );
+        project["HeatSourceWet"] = json!({"hb1": heat_battery});
+        let result = apply_schema_validation(&project);
+        let error_message = "'temp_min_useful' is a required property";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+    }
+
     #[rstest]
     fn test_edge_insulation_subschema_valid(mut project: Value) {
         // Given a BuildingElementGround containing horizontal edge_insulation with width property
@@ -1388,10 +1496,87 @@ mod tests {
             "thickness_walls": 0.2,
             "perimeter": 16.0,
             "psi_wall_floor_junc": 0.5,
-            "edge_insulation": [
-            {"edge_thermal_resistance": 10, "type": "horizontal", "width": 0.1}
-            ],
+            "edge_insulation": [{"edge_thermal_resistance": 10, "type": "horizontal", "width": 0.1}],
         });
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    /// A suspended-floor ground element, as used by the smart air brick tests.
+    fn suspended_floor(
+        smart_air_bricks: Option<bool>,
+        vents_open_during_airtightness_test: Option<bool>,
+    ) -> Value {
+        let mut floor = json!({
+            "type": "BuildingElementGround",
+            "total_area": 15.0,
+            "area": 15.0,
+            "u_value": 1.4,
+            "thermal_resistance_floor_construction": 0.2,
+            "areal_heat_capacity": "Very light",
+            "mass_distribution_class": "D: Mass equally distributed",
+            "floor_type": "Suspended_floor",
+            "thickness_walls": 0.2,
+            "perimeter": 16.0,
+            "psi_wall_floor_junc": 0.5,
+            "height_upper_surface": 0.3,
+            "thermal_transm_walls": 1.5,
+            "thermal_resist_insul": 0.5,
+            "area_per_perimeter_vent": 0.003,
+        });
+        if let Some(smart_air_bricks) = smart_air_bricks {
+            insert_key_value(&mut floor, "smart_air_bricks", json!(smart_air_bricks));
+        };
+
+        if let Some(vents_open_during_airtightness_test) = vents_open_during_airtightness_test {
+            insert_key_value(
+                &mut floor,
+                "vents_open_during_airtightness_test",
+                json!(vents_open_during_airtightness_test),
+            );
+        };
+        floor
+    }
+
+    #[rstest]
+    fn test_smart_air_bricks_require_the_airtightness_test_state(mut project: Value) {
+        // Given a suspended floor with smart air bricks but no statement of whether the
+        // underfloor vents were open during the pressurisation test
+        project["Zone"]["zone 1"]["BuildingElement"]["ground"] = suspended_floor(Some(true), None);
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: the infiltration adjustment is applied relative to the tested
+        // state, so it cannot be derived without knowing it. The sibling listing is present
+        // because a missing property fails at the element rather than below it, so it is not
+        // suppressed.
+        let error_message = &mut [
+            "/Zone/zone 1/BuildingElement/ground: Unevaluated properties are not allowed",
+            "/Zone/zone 1/BuildingElement/ground: 'vents_open_during_airtightness_test' is a required property"
+            ];
+        contains_expected_schema_validation_errors_partially(result, error_message)
+    }
+
+    #[rstest]
+    fn test_airtightness_test_state_rejected_without_smart_air_bricks(mut project: Value) {
+        // Given a suspended floor stating the airtightness-test vent state but no smart air
+        // bricks, where the state has nothing to adjust
+        insert_key_value(
+            &mut project["Zone"]["zone 1"]["BuildingElement"],
+            "ground",
+            suspended_floor(None, Some(true)),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // validation message in Python is true should not be valid under {}
+        let error_message = "/Zone/zone 1/BuildingElement/ground/vents_open_during_airtightness_test: {} is not allowed for true";
+        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+    }
+
+    #[rstest]
+    fn test_smart_air_bricks_with_the_airtightness_test_state_accepted(mut project: Value) {
+        // Given a suspended floor stating the airtightness-test vent state but no smart air
+        // bricks, where the state has nothing to adjust
+        project["Zone"]["zone 1"]["BuildingElement"]["ground"] =
+            suspended_floor(Some(true), Some(false));
         assert!(apply_schema_validation(&project).is_ok());
     }
 
@@ -1414,7 +1599,12 @@ mod tests {
             {"edge_thermal_resistance": 10, "type": "horizontal", "depth": 0.1}
             ],
         });
-        assert!(apply_schema_validation(&project).is_err());
+        let result = apply_schema_validation(&project);
+        let error_message = &mut [
+            "/Zone/zone 1/BuildingElement/ground/edge_insulation/0: Unevaluated properties are not allowed ('depth' was unexpected)",
+            "/Zone/zone 1/BuildingElement/ground/edge_insulation/0: 'width' is a required property"
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_message)
     }
 
     #[rstest]
@@ -1494,12 +1684,441 @@ mod tests {
         });
         // Then it should raise an error indicating that a heat_exchanger_surface_area is required
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("heat_exchanger_surface_area"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_message)
+    }
+
+    #[rstest]
+    fn test_smart_hot_water_tank_with_hw_only_heat_pump_needs_a_heat_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given a SmartHotWaterTank fed by a hot-water-only heat pump, with no
+        // heat-exchanger surface area declared
+        project["HotWaterSource"]["hw cylinder"] = json!({
+            "type": "SmartHotWaterTank",
+            "volume": 80.0,
+            "daily_losses": 1.68,
+            "ColdWaterSource": "header tank",
+            "EnergySupply_pump": "mains elec",
+            "max_flow_rate_pump_l_per_min": 1000,
+            "power_pump_kW": 5.0,
+            "temp_usable": 40,
+            "HeatSource": {
+                "hwo_hp": {
+                    "type": "HeatPump_HWOnly",
+                    "EnergySupply": "mains elec",
+                    "power_max": 5.0,
+                    "tank_volume_declared": 100.0,
+                    "daily_losses_declared": 1.05,
+                    "heat_exchanger_surface_area_declared": 1.5,
+                    "in_use_factor_mismatch": 0.6,
+                    "heater_position": 0.1,
+                    "test_data": {
+                        "M": {
+                            "cop_dhw": 2.5,
+                            "energy_input_measured": 2.338,
+                            "hw_tapping_prof_daily_total": 5.845,
+                            "hw_vessel_loss_daily": 2.0,
+                            "power_standby": 0.02,
+                        }
+                    },
+                }
+            },
+        });
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: a tank installed separately from the heat pump is heated
+        // through a coil, whose surface area must be characterised
+        let error_message = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_message)
+    }
+
+    #[rstest]
+    fn test_smart_hot_water_tank_may_declare_a_heat_exchanger_area(mut project: Value) {
+        // Given a SmartHotWaterTank fed by a hot-water-only heat pump that declares a
+        // heat-exchanger surface area for its coil
+        project["HotWaterSource"]["hw cylinder"] = json!({
+            "type": "SmartHotWaterTank",
+            "volume": 80.0,
+            "daily_losses": 1.68,
+            "heat_exchanger_surface_area": 3.0,
+            "ColdWaterSource": "header tank",
+            "EnergySupply_pump": "mains elec",
+            "max_flow_rate_pump_l_per_min": 1000,
+            "power_pump_kW": 5.0,
+            "temp_usable": 40,
+            "HeatSource": {
+                "hwo_hp": {
+                    "type": "HeatPump_HWOnly",
+                    "EnergySupply": "mains elec",
+                    "power_max": 5.0,
+                    "tank_volume_declared": 100.0,
+                    "daily_losses_declared": 1.05,
+                    "heat_exchanger_surface_area_declared": 1.5,
+                    "in_use_factor_mismatch": 0.6,
+                    "heater_position": 0.1,
+                    "test_data": {
+                        "M": {
+                            "cop_dhw": 2.5,
+                            "energy_input_measured": 2.338,
+                            "hw_tapping_prof_daily_total": 5.845,
+                            "hw_vessel_loss_daily": 2.0,
+                            "power_standby": 0.02,
+                        }
+                    },
+                }
+            },
+        });
+        // When validation is run, then no error: a separately-installed smart tank is
+        // heated through a coil, characterised by its surface area
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    /// A hot-water-only heat pump heat source, as used by the exchanger-area tests.
+    fn hw_only_heat_pump(mut extra: Value) -> Value {
+        let mut hp = json!({
+            "type": "HeatPump_HWOnly",
+            "EnergySupply": "mains elec",
+            "power_max": 5.0,
+            "tank_volume_declared": 100.0,
+            "daily_losses_declared": 1.05,
+            "heat_exchanger_surface_area_declared": 1.5,
+            "in_use_factor_mismatch": 0.6,
+            "heater_position": 0.1,
+            "thermostat_position": 0.33,
+            "test_data": {
+                "M": {
+                    "cop_dhw": 2.5,
+                    "energy_input_measured": 2.338,
+                    "hw_tapping_prof_daily_total": 5.845,
+                    "hw_vessel_loss_daily": 2.0,
+                    "power_standby": 0.02,
+                }
+            },
+        });
+        hp.as_object_mut()
+            .unwrap()
+            .append(extra.as_object_mut().unwrap());
+        hp
+    }
+
+    /// A hot-water-only heat pump supplied as a single unit with its store.
+    fn integral_hw_only_heat_pump() -> Value {
+        hw_only_heat_pump(json!({"tank_is_integral": true}))
+    }
+
+    ///A smart hot water tank fed by the given heat sources.
+    fn smart_hot_water_tank(heat_source: Value) -> Value {
+        json!({
+            "type": "SmartHotWaterTank",
+            "volume": 80.0,
+            "daily_losses": 1.68,
+            "ColdWaterSource": "header tank",
+            "EnergySupply_pump": "mains elec",
+            "max_flow_rate_pump_l_per_min": 1000,
+            "power_pump_kW": 5.0,
+            "temp_usable": 40,
+            "HeatSource": heat_source,
+        })
+    }
+
+    #[rstest]
+    fn test_storage_tank_needs_a_heat_exchanger_area_beside_another_heat_source(
+        mut project: Value,
+    ) {
+        // Given a StorageTank whose HeatSource holds a hot-water-only heat pump alongside
+        // the immersion heater, with no heat-exchanger surface area declared
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"]["HeatSource"],
+            "hwo_hp",
+            hw_only_heat_pump(json!({})),
+        );
+
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: the exchanger area is required whenever any heat source is a
+        // hot-water-only heat pump, not only when it is the sole heat source
+        let error_message = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_message)
+    }
+
+    #[rstest]
+    fn test_smart_hot_water_tank_needs_a_heat_exchanger_area_beside_another_heat_source(
+        mut project: Value,
+    ) {
+        // Given a SmartHotWaterTank whose HeatSource holds a hot-water-only heat pump
+        // alongside an immersion heater, with no heat-exchanger surface area declared
+        project["HotWaterSource"]["hw cylinder"] = json!({
+            "type": "SmartHotWaterTank",
+            "volume": 80.0,
+            "daily_losses": 1.68,
+            "ColdWaterSource": "header tank",
+            "EnergySupply_pump": "mains elec",
+            "max_flow_rate_pump_l_per_min": 1000,
+            "power_pump_kW": 5.0,
+            "temp_usable": 40,
+            "HeatSource": {
+                "hwo_hp": hw_only_heat_pump(json!({})),
+                "immersion": {
+                    "type": "ImmersionHeater",
+                    "EnergySupply": "mains elec",
+                    "power": 3.0,
+                    "heater_position": 0.1,
+                    "thermostat_position": 0.33,
+                },
+            },
+        });
+
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected for the same reason as the storage tank above
+        let error_message = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_message)
+    }
+
+    #[rstest]
+    fn test_storage_tank_integral_to_its_heat_pump_omits_the_exchanger_area(mut project: Value) {
+        // Given a StorageTank supplied as a single unit with its hot-water-only heat pump,
+        // declaring no exchanger area
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"]["HeatSource"],
+            "hwo_hp",
+            integral_hw_only_heat_pump(),
+        );
+
+        // When validation is run, then no error: the unit is tested with its store to
+        // EN 16147, so there is no separately installed exchanger to compare against
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_storage_tank_integral_to_its_heat_pump_must_not_declare_an_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given an integral StorageTank that nonetheless declares an exchanger area
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] =
+            json!({"hwo_hp": integral_hw_only_heat_pump()});
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"],
+            "heat_exchanger_surface_area",
+            json!(3.0),
+        );
+
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: no de-rating comparison applies to an integral unit, so
+        // there is no exchanger area to declare
+        // Python validation error message varies slightly: 3.0 should not be valid under {}
+        let error_message =
+            "/HotWaterSource/hw cylinder/heat_exchanger_surface_area: {} is not allowed for 3.0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message])
+    }
+
+    #[rstest]
+    fn test_smart_hot_water_tank_integral_to_its_heat_pump_omits_the_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given a SmartHotWaterTank supplied as a single unit with its hot-water-only heat
+        // pump, declaring no exchanger area
+        project["HotWaterSource"]["hw cylinder"] =
+            smart_hot_water_tank(json!({"hwo_hp": integral_hw_only_heat_pump()}));
+        // When validation is run, then no error, for the same reason as the storage tank
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_smart_hot_water_tank_integral_to_its_heat_pump_must_not_declare_an_area(
+        mut project: Value,
+    ) {
+        // Given an integral SmartHotWaterTank that nonetheless declares an exchanger area
+        let mut cylinder = smart_hot_water_tank(json!({"hwo_hp": integral_hw_only_heat_pump()}));
+        insert_key_value(&mut cylinder, "heat_exchanger_surface_area", json!(3.0));
+        project["HotWaterSource"]["hw cylinder"] = cylinder;
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected, for the same reason as the storage tank
+        // Python validation error message is varies slightly: 3.0 should not be valid under {}
+        let error_message =
+            "/HotWaterSource/hw cylinder/heat_exchanger_surface_area: {} is not allowed for 3.0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message])
+    }
+
+    #[rstest]
+    fn test_tank_declared_separate_from_its_heat_pump_still_needs_an_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given a tank whose heat pump states tank_is_integral explicitly as false
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({
+            "hwo_hp": hw_only_heat_pump(json!({})),
+        });
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected just as when the property is absent: the core model defaults
+        // tank_is_integral to false, so stating it changes nothing
+        let error_messages = &mut [
+            "HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages)
+    }
+
+    #[rstest]
+    fn test_integral_heat_pump_beside_another_heat_source_omits_the_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given an integral hot-water-only heat pump alongside the immersion heater
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"]["HeatSource"],
+            "hwo_hp",
+            integral_hw_only_heat_pump(),
+        );
+        // When validation is run, then no error: the exchanger area is tied to how the heat
+        // pump and store are supplied, not to how many heat sources the tank has
+        assert!(apply_schema_validation(&project).is_ok());
+    }
+
+    #[rstest]
+    fn test_a_tank_cannot_be_both_integral_and_separate_from_its_heat_pumps(mut project: Value) {
+        // Given one integral and one separately-installed hot-water-only heat pump on the
+        // same tank, which the core model rejects whether or not an area is declared
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({
+            "integral_hp": integral_hw_only_heat_pump(),
+            "separate_hp": hw_only_heat_pump(json!({})),
+        });
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: the separately-installed pump requires an area that the
+        // integral one forbids, so no input can satisfy both
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'heat_exchanger_surface_area' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages)
+    }
+
+    #[rstest]
+    fn test_an_unrecognised_property_is_named_rather_than_its_siblings(mut project: Value) {
+        // Given a heat source carrying a misspelled property, with the input otherwise valid
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({
+            "hwo_hp": hw_only_heat_pump(json!({"tank_is_integrall": true})),
+        });
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"],
+            "heat_exchanger_surface_area",
+            json!(3.0),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then the offending property is named on its own. The unknown property makes the
+        // tank's subschema fail, which would otherwise leave every sibling of the tank
+        // reported as unexpected and bury this message
+        let error_messages =
+            "/HotWaterSource/hw cylinder/HeatSource/hwo_hp: Unevaluated properties are not allowed ('tank_is_integrall' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages])
+    }
+
+    #[rstest]
+    fn test_an_unrecognised_property_on_the_tank_itself_is_still_named(mut project: Value) {
+        // Given a misspelled property on the tank, where nothing below it fails
+        insert_key_value(
+            &mut project["HotWaterSource"]["hw cylinder"],
+            "daily_lossses",
+            json!(1.0),
+        );
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is reported precisely: suppressing the unreliable report must not
+        // suppress the reliable one
+        let error_messages =
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed ('daily_lossses' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages])
+    }
+
+    #[rstest]
+    fn test_an_unrecognised_property_is_deferred_behind_a_deeper_failure(mut project: Value) {
+        // Given a tank carrying both an unrecognised property and a deeper failure
+        let cylinder = &mut project["HotWaterSource"]["hw cylinder"];
+        insert_key_value(cylinder, "bogus_property", json!(1.0));
+        cylinder["HeatSource"] = json!({"hwo_hp": hw_only_heat_pump(json!({"power_max": -5}))});
+        insert_key_value(cylinder, "heat_exchanger_surface_area", json!(1.0));
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then only the deeper failure is reported. Suppressing the tank's listing defers
+        // the report of bogus_property rather than losing it: the input cannot pass while
+        // power_max stands, and the property is named once power_max is corrected.
+        let error_messages =
+            "/HotWaterSource/hw cylinder/HeatSource/hwo_hp/power_max: -5 is less than or equal to the minimum of 0";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages])
+    }
+
+    #[rstest]
+    fn test_an_unrecognised_property_resurfaces_once_the_deeper_failure_is_fixed(
+        mut project: Value,
+    ) {
+        // Given the same input with the deeper failure corrected
+        let cylinder = &mut project["HotWaterSource"]["hw cylinder"];
+        insert_key_value(cylinder, "bogus_property", json!(1.0));
+        cylinder["HeatSource"] = json!({"hwo_hp": hw_only_heat_pump(json!({}))});
+        insert_key_value(cylinder, "heat_exchanger_surface_area", json!(1.0));
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then the deferred property is reported
+        let error_messages =
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed ('bogus_property' was unexpected)";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_messages])
+    }
+
+    #[rstest]
+    fn test_an_unrecognised_property_survives_an_unrelated_failure_elsewhere(mut project: Value) {
+        // Given an unrecognised property on the tank, and a failure in an unrelated
+        // subtree that is deeper than the tank. The depth must be greater for this to
+        // test anything: suppression only considers errors deeper than the object, so a
+        // shallower failure never reaches the check that the paths share a prefix.
+        let cylinder = &mut project["HotWaterSource"]["hw cylinder"];
+        insert_key_value(cylinder, "bogus_property", json!(1.0));
+        project["Zone"]["zone 1"]["BuildingElement"]["wall 0"]["pitch"] = json!(999);
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then the tank's report survives: a deeper failure elsewhere in the input does
+        // not explain it, so only a failure beneath the tank may suppress it
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed ('bogus_property' was unexpected)",
+            "/Zone/zone 1/BuildingElement/wall 0/pitch: 999 is greater than the maximum of 120.0",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages)
+    }
+
+    #[rstest]
+    fn test_a_tank_without_a_heat_source_is_not_told_to_remove_the_exchanger_area(
+        mut project: Value,
+    ) {
+        // Given a tank missing HeatSource entirely but declaring an exchanger area
+        let cylinder = &mut project["HotWaterSource"]["hw cylinder"];
+        remove_key(cylinder, "HeatSource");
+        insert_key_value(cylinder, "heat_exchanger_surface_area", json!(1.0));
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then the exchanger area is not among the errors. Both branches are guarded on
+        // HeatSource being present, so neither fires: telling the assessor to remove the
+        // exchanger area would point at a property needed once a heat source is given.
+        // The object's own listing remains, being ambiguous rather than misleading.
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder: 'HeatSource' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages)
     }
 
     #[rstest]
