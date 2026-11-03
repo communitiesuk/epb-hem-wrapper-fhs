@@ -2008,6 +2008,13 @@ impl InputForProcessing {
             .collect::<anyhow::Result<_, _>>()
     }
 
+    pub(crate) fn heat_source_wet_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
+        Ok(self
+            .optional_root_object("HeatSourceWet")?
+            .map(|heat_sources| heat_sources.keys().map(Into::into).collect())
+            .unwrap_or_default())
+    }
+
     pub fn heat_source_wet_mut(&mut self) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
         self.optional_root_object_mut("HeatSourceWet")
     }

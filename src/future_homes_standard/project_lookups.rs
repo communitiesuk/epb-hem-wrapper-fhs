@@ -8,7 +8,7 @@ use home_energy_model::output::{OutputCore, OutputSummary};
 use indexmap::IndexMap;
 use std::sync::Arc;
 
-const OFFPEAK_END_HOUR: f64 = 7.0;
+pub(crate) const OFFPEAK_END_HOUR: f64 = 7.0;
 
 #[derive(thiserror::Error, Debug)]
 enum ProjectLookupError {

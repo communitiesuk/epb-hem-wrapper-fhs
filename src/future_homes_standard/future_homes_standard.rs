@@ -9,6 +9,7 @@ use crate::future_homes_standard::input::{
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
     JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
 };
+use crate::future_homes_standard::project_lookups::OFFPEAK_END_HOUR;
 use crate::future_homes_standard::smart_air_brick_validation::{
     smart_air_brick_floors, smart_air_brick_floors_mut,
 };
@@ -1477,6 +1478,30 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Return True if the project contains electric storage heaters or heat batteries.
+///
+///  These devices charge on a 7-hour off-peak electricity tariff (Economy 7), so their
+/// electricity costs must be split between off-peak and on-peak rates for EER calculation.
+fn has_offpeak_electricity_devices(input: &InputForProcessing) -> anyhow::Result<bool> {
+    for space_heat_system in input.space_heat_system_keys()? {
+        if let Some(system) = input.space_heat_system_for_key(&space_heat_system)? {
+            if let Some(type_str) = system.get("type").and_then(JsonValue::as_str) {
+                if type_str == "ElecStorageHeater" {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    if input
+        .heat_source_wet()?
+        .values()
+        .any(|hsw| hsw.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"))
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Create charging control schedules for thermal storage systems.
 ///
 /// This includes:
@@ -1485,8 +1510,9 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
 fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 00:00 until 07:00 off-peak charging
     let mut charging_offpeak = Vec::with_capacity(48);
-    charging_offpeak.extend(repeat_n(true, 14));
-    charging_offpeak.extend(repeat_n(false, 48 - 14));
+    let offpeak_steps = (OFFPEAK_END_HOUR / SIMTIME_STEP) as usize;
+    charging_offpeak.extend(repeat_n(true, offpeak_steps));
+    charging_offpeak.extend(repeat_n(false, 48 - offpeak_steps));
 
     // Electric storage heaters (SpaceHeatSystem)
     for zone_key in input.zone_keys()? {
@@ -1525,32 +1551,113 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
     }
 
     // Heat batteries (HeatSourceWet)
-    // In addition any heat battery "HeatSourceWet" must have a ControlCharge
-    for (heat_source_key, heat_source_wet) in input.heat_source_wet()? {
-        if heat_source_wet
-            .get("type")
-            .and_then(JsonValue::as_str)
-            .is_some_and(|type_str| type_str == "HeatBattery")
-        {
-            let hb_ctrlname = "HeatBattery_Control";
-            input
-                .heat_source_wet_by_key_mut(&heat_source_key)?
-                .insert("ControlCharge".into(), json!(&hb_ctrlname));
-            input.add_control(
-                hb_ctrlname,
+    // A heat battery charges either from named charging sources, each with its own control, or
+    // from a direct electric element at a rated power with a single ControlCharge. The core
+    // model forbids both at once, so only one is set here.
+    for heat_source_key in input.heat_source_wet_keys()? {
+        let (is_heat_battery, has_charging_sources) = {
+            let heat_source_wet = input.heat_source_wet_by_key(&heat_source_key)?;
+            (
+                heat_source_wet.get("type").and_then(JsonValue::as_str)
+                    == Some("HeatBattery"),
+                heat_source_wet.get("HeatSource").is_some(),
+            )
+        };
+        if is_heat_battery {
+            if has_charging_sources {
+                create_heat_battery_charging_source_controls(
+                    input,
+                    &heat_source_key,
+                    &charging_offpeak,
+                )?;
+            } else {
+                let hb_ctrlname = "HeatBattery_Control";
+                input
+                    .heat_source_wet_by_key_mut(&heat_source_key)?
+                    .insert("ControlCharge".into(), json!(hb_ctrlname));
+                input.add_control(
+                    hb_ctrlname,
+                    json!({
+                        "type": "ChargeControl",
+                        "start_day": 0,
+                        "time_series_step": 0.5,
+                        "logic_type": "heat_battery",
+                        "charge_level": 1,
+                        "schedule": {
+                            "main": [{"value": "day", "repeat": 365}],
+                            "day": charging_offpeak,
+                        },
+                    }),
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Give a heat battery's charging source its control, on the off-peak window.
+///
+/// The pattern is the same off-peak window used when a battery charges from a direct electric
+/// element, so a hydronically-charged battery is timed no differently. Setpoints are states of
+/// charge rather than temperatures: a PCM battery only charges once the source exceeds its
+/// phase change temperature, so a temperature band would have to be held below the flow
+/// temperature and would cap the heat source below the point it has to exceed.
+///
+/// In the window the band runs from a full charge to a full charge, which starts charging
+/// whenever the battery is short of full and stops it once full - the same intent as the
+/// charge_level of 1 used for direct electric charging. Outside it both are None, the core's
+/// convention for a control that is off, which cannot start charging at all rather than
+/// setting a target it is already at.
+///
+/// That a battery declares at most one charging source, and that a hydronic source names a heat
+/// source which exists and is not itself a battery, are guaranteed by input validation, which
+/// runs before the wrapper branches by mode.
+fn create_heat_battery_charging_source_controls(
+    input: &mut InputForProcessing,
+    heat_source_key: &str,
+    charging_offpeak: &[bool],
+) -> anyhow::Result<()> {
+    let charge_when_off_peak = charging_offpeak
+        .iter()
+        .map(|&off_peak| off_peak.then_some(1.0))
+        .collect::<Vec<Option<f64>>>();
+
+    let controls = {
+        let heat_source_wet = input.heat_source_wet_by_key_mut(heat_source_key)?;
+        let charging_sources = heat_source_wet
+            .get_mut("HeatSource")
+            .and_then(JsonValue::as_object_mut)
+            .ok_or_else(|| {
+                anyhow!("Heat battery '{heat_source_key}' has a HeatSource that is not an object")
+            })?;
+        let mut controls = Vec::with_capacity(charging_sources.len());
+
+        for (source_name, source) in charging_sources.iter_mut() {
+            let control_name = format!("HeatBattery_{heat_source_key}_{source_name}_Control");
+            source["Control"] = json!(control_name);
+            source["schedule_unit"] = json!("soc"); 
+            let schedule = json!({
+                "main": [{"value": "day", "repeat": 365}],
+                "day": charge_when_off_peak.clone(),
+            });
+            controls.push((
+                control_name,
                 json!({
-                    "type": "ChargeControl",
+                    "type": "RangeTimeControl",
                     "start_day": 0,
                     "time_series_step": 0.5,
-                    "logic_type": "heat_battery",
-                    "charge_level": 1,
-                    "schedule": {
-                        "main": [{"value": "day", "repeat": 365}],
-                        "day": charging_offpeak,
-                    },
+                    "schedule_lower": schedule.clone(),
+                    "schedule_upper": schedule,
                 }),
-            )?;
+            ));
         }
+
+        controls
+    };
+
+    for (control_name, control) in controls {
+        input.add_control(&control_name, control)?;
     }
 
     Ok(())
@@ -7280,7 +7387,7 @@ mod tests {
             );
         }
     }
-
+    
     mod create_space_heat_distribution {
         use super::*;
 
