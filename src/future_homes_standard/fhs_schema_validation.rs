@@ -2122,19 +2122,70 @@ mod tests {
     }
 
     #[rstest]
+    fn test_hw_only_heat_pump_must_declare_the_database_exchanger_area(mut project: Value) {
+        // Given an integral hot-water-only heat pump omitting the declared exchanger area,
+        // which the core model requires even though it reads it only when de-rating applies
+        let heat_pump = &mut integral_hw_only_heat_pump();
+        remove_key(heat_pump, "heat_exchanger_surface_area_declared");
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({ "hwo_hp": heat_pump });
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected here, naming the property, rather than later in the core
+        // where the same omission surfaces as a bare "Field required"
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder/HeatSource/hwo_hp: Unevaluated properties are not allowed",
+            "/HotWaterSource/hw cylinder/HeatSource/hwo_hp: 'heat_exchanger_surface_area_declared' is a required property",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_messages)
+    }
+
+    #[rstest]
+    fn test_integral_hw_only_heat_pump_may_declare_a_null_exchanger_area(mut project: Value) {
+        // Given an integral hot-water-only heat pump declaring the property as null, the
+        // store being tested with the pump so there is no database area to compare against
+        let heat_pump = &mut integral_hw_only_heat_pump();
+        insert_key_value(
+            heat_pump,
+            "heat_exchanger_surface_area_declared",
+            json!(null),
+        );
+        project["HotWaterSource"]["hw cylinder"]["HeatSource"] = json!({ "hwo_hp": heat_pump });
+        // When validation is run, then no error: the core model types the field as optional
+        // and never reads it for an integral unit, so no figure need be invented
+        let result = apply_schema_validation(&project);
+        // Then it is rejected here, naming the property, rather than later in the core
+        // where the same omission surfaces as a bare "Field required"
+        assert!(result.is_ok(), "{}", result.unwrap_err());
+    }
+
+    #[rstest]
+    fn test_separate_hw_only_heat_pump_must_not_declare_a_null_exchanger_area(mut project: Value) {
+        // Given a separately-installed hot-water-only heat pump declaring the property as
+        // null, its tank supplying the exchanger area the de-rating compares against
+        let cylinder = &mut project["HotWaterSource"]["hw cylinder"];
+        insert_key_value(cylinder, "heat_exchanger_surface_area", json!(1.2));
+        let hp = &mut hw_only_heat_pump(json!({"heat_exchanger_surface_area_declared": null}));
+        cylinder["HeatSource"] = json!({"hwo_hp": hp});
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it is rejected: here the core does read the value, comparing it against the
+        // installed area, so null would leave the de-rating with nothing to compare
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder/HeatSource/hwo_hp/heat_exchanger_surface_area_declared: null is not of type 'number'",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages)
+    }
+
+    #[rstest]
     fn test_heat_source_of_storage_tank_must_have_thermostat_position(mut project: Value) {
         // Given a StorageTank whose HeatSource does not have a thermostat_position
-        project["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"]
-            .as_object_mut()
-            .unwrap()
-            .remove("thermostat_position");
+        let immersion = &mut project["HotWaterSource"]["hw cylinder"]["HeatSource"]["immersion"];
+        remove_key(immersion, "thermostat_position");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("thermostat_position"));
-            assert!(errors.contains("required"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_messages = &mut [
+            "/HotWaterSource/hw cylinder/HeatSource/immersion: 'thermostat_position' is a required property",
+        ];
+        contains_expected_schema_validation_errors_exactly(result, error_messages)
     }
 
     #[rstest]
@@ -2142,8 +2193,10 @@ mod tests {
         // Given a PreHeatedWaterSource, with a ColdWaterSource of itself
         project["PreHeatedWaterSource"] = json!({
             "preheated tank": {
+                "type": "StorageTank",
                 "volume": 80.0,
                 "daily_losses": 1.68,
+                "init_temp": 35.0,
                 "ColdWaterSource": "preheated tank",
                 "HeatSource": {
                     "immersion": {
@@ -2156,7 +2209,15 @@ mod tests {
                 },
             }
         });
-        assert!(apply_schema_validation(&project).is_err());
+        // When validation is run
+        let result = apply_schema_validation(&project);
+        // Then it should raise an error indicating that thermostat_position is required
+        let error_message_partials = &mut [
+            "/PreHeatedWaterSource/preheated tank:",
+            "{'properties':{'ColdWaterSource':{'const':'preheated tank'}}}",
+            "{'type':'StorageTank','volume':80.0,'daily_losses':1.68,'init_temp':35.0,'ColdWaterSource':'preheated tank','HeatSource':{'immersion':{'type':'ImmersionHeater','power':3.0,'EnergySupply':'mains elec','heater_position':0.1,'thermostat_position':0.33}}}",
+        ];
+        contains_expected_schema_validation_errors_partially(result, error_message_partials)
     }
 
     #[rstest]
@@ -2198,6 +2259,9 @@ mod tests {
                 "system_a_utilisation_factor": 0.972,
             }
         });
+
+        project["HotWaterSource"]["hw cylinder"]["ColdWaterSource"] = json!("wwhrs system");
+
         assert!(apply_schema_validation(&project).is_ok());
     }
 
@@ -2240,6 +2304,7 @@ mod tests {
             "preheated tank": {
                 "volume": 80.0,
                 "daily_losses": 1.68,
+                "init_temp": 35.0,
                 "ColdWaterSource": "mains water",
                 "HeatSource": {
                     "immersion": {
@@ -2254,12 +2319,8 @@ mod tests {
         });
         project["HotWaterDemand"]["Shower"]["mixer"]["ColdWaterSource"] = json!("preheated tank");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("preheated tank"));
-            assert!(errors.contains("header tank"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = "/HotWaterDemand/Shower/mixer/ColdWaterSource: 'preheated tank' is not one of 'header tank' or 'mains water'";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 
     #[rstest]
@@ -2276,11 +2337,7 @@ mod tests {
         });
         project["HotWaterDemand"]["Shower"]["mixer"]["ColdWaterSource"] = json!("wwhrs system");
         let result = apply_schema_validation(&project);
-        if let Err(SchemaValidationError { errors }) = result {
-            assert!(errors.contains("wwhrs system"));
-            assert!(errors.contains("header tank"));
-        } else {
-            panic!("Expected validation error, got {:?}", result);
-        }
+        let error_message = "/HotWaterDemand/Shower/mixer/ColdWaterSource: 'wwhrs system' is not one of 'header tank' or 'mains water'";
+        contains_expected_schema_validation_errors_exactly(result, &mut [error_message]);
     }
 }
