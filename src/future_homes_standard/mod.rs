@@ -298,7 +298,7 @@ fn do_fhs_postprocessing(
     if let Err(e) = metrics.serialize(&mut serializer) {
         error!("Could not write out metrics postprocess file: {}", e);
     }
-    
+
     if flags.intersects(FhsFlags::FHS | FhsFlags::FHS_NOTIONAL) {
         let notional = flags.contains(FhsFlags::FHS_NOTIONAL);
         apply_fhs_postprocessing(
@@ -311,7 +311,7 @@ fn do_fhs_postprocessing(
             notional,
             output_mode,
             custom_energy_supply_factors,
-            todo!("Provide generation curtailed data for alpha 9 migration")
+            todo!("Provide generation curtailed data for alpha 9 migration"),
         )?;
     } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         let OutputSummary {

@@ -1,6 +1,7 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
 use arcstr::ArcStr;
+use fsum::FSum;
 use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
@@ -218,7 +219,8 @@ impl InputForProcessing {
     }
 
     pub fn total_zone_area(&self) -> JsonAccessResult<f64> {
-        self.zone_node()?
+        let areas = self
+            .zone_node()?
             .values()
             .map(|z| {
                 z.get("area")
@@ -226,7 +228,9 @@ impl InputForProcessing {
                     .as_f64()
                     .ok_or(json_error("Area field not a number"))
             })
-            .sum::<JsonAccessResult<f64>>()
+            .collect::<JsonAccessResult<Vec<_>>>()?;
+
+        Ok(FSum::with_all(areas).value())
     }
 
     pub fn area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {

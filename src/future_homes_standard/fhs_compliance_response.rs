@@ -277,7 +277,7 @@ impl
                 &dwelling_fhs_results.output.core.results_end_user,
                 dwelling_fhs_results.output.core.timestep_array.len(),
                 &custom_energy_source_factors[&CalculationKey::Fhs],
-                todo!("Provide generation curtailed data for alpha 9 migration")
+                todo!("Provide generation curtailed data for alpha 9 migration"),
             )?,
             target_final_rates: calc_final_rates(
                 notional_input,
@@ -286,7 +286,7 @@ impl
                 &notional_fhs_results.output.core.results_end_user,
                 notional_fhs_results.output.core.timestep_array.len(),
                 &custom_energy_source_factors[&CalculationKey::FhsNotional],
-                todo!("Provide generation curtailed data alpha 9 migration")
+                todo!("Provide generation curtailed data alpha 9 migration"),
             )?,
             dwelling_fabric_energy_efficiency: calc_fabric_energy_efficiency(
                 dwelling_fhs_fee_results
