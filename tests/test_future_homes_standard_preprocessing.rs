@@ -35,10 +35,13 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 #[test]
 fn test_fhs_preprocessing_output_against_provided_results() {
     let demo_file_names = [
+        "demo_FHS",
         "DESN-H-End-02-ESH-cMEV",
+        "DESN-F-MS-02-ESH-cMEV.json",
         "DESN-H-End-02-HP-iMEV-pre-heat",
         "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
-        "demo_FHS",
+        "DESN-H-End-02-HP-MVHR-basement.json",
+        "DESN-H-End-02-HN-cMEV.json",
     ];
 
     let mut total_difference_count = 0;
