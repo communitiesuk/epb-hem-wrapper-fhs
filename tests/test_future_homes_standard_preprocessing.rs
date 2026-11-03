@@ -173,10 +173,12 @@ fn run_fhs_preprocessing(
         false,
         &[OutputFormat::Json],
     );
+
     assert!(
         result.is_ok(),
-        "\nError running Rust FHS preprocessing for: {}.json",
-        input_file_name
+        "\nError running Rust FHS preprocessing for {}.json: {:?}",
+        input_file_name,
+        result.err().unwrap()
     );
     println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
 }
