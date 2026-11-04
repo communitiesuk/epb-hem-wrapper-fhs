@@ -4426,25 +4426,25 @@ fn shading_factor(
             .map(|x| x.to_vec()),
     );
 
-    todo!("Needs to point at alpha 9 branch and make `window_shading_expand_reveals` public");
-    // {
-    //     let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
+    
+    
+        let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
 
-    //     time.iter()
-    //         .map(|t_it| {
-    //             conditions.direct_shading_reduction_factor(
-    //                 base_height,
-    //                 height,
-    //                 width,
-    //                 tilt,
-    //                 orientation,
-    //                 Some(window_shading_expanded.as_slice()),
-    //                 t_it,
-    //             )
-    //         })
-    //         .collect()
-    // }
-}
+        time.iter()
+            .map(|t_it| {
+                conditions.direct_shading_reduction_factor(
+                    base_height,
+                    height,
+                    width,
+                    tilt,
+                    orientation,
+                    Some(window_shading_expanded.as_slice()),
+                    t_it,
+                )
+            })
+            .collect()
+    }
+
 
 fn top_up_lighting(
     input: &InputForProcessing,
