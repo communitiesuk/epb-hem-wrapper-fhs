@@ -7607,6 +7607,103 @@ mod tests {
         }
     }
 
+    mod create_smart_air_brick_pattern {
+        use rstest::rstest;
+        use serde_json::json;
+
+        use crate::{
+            future_homes_standard::{
+                future_homes_standard::{create_smart_air_brick_pattern, simtime},
+                input::InputForProcessing,
+            },
+        };
+
+        fn input(ground_overides: Option<serde_json::Value>) -> InputForProcessing {
+            let mut ground = json!({
+                "type": "BuildingElementGround",
+                "floor_type": "Suspended_floor",
+                "area_per_perimeter_vent": 0.003,
+            });
+            if let Some(overides) = ground_overides {
+                for (k, v) in overides.as_object().unwrap() {
+                    ground[k] = v.clone();
+                }
+            }
+            let input_json = json!({
+                "Control": {},
+           "Zone": {
+               "zone 1": {
+                    "BuildingElement": {
+                        "ground": ground,
+                        "wall 0": {"type": "BuildingElementOpaque"},
+                    }
+                }
+            },});
+            InputForProcessing { input: input_json }
+        }
+
+        #[rstest]
+        fn test_standardised_schedule_attached_to_a_smart_air_brick_floor() {
+            //Given a suspended floor declaring smart air bricks
+            let mut input = input(Some(json!({"smart_air_bricks": true})));
+            //When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            //Then the floor references one standardised control, which the wrapper supplies
+            //rather than the assessor: a smart air brick modulates on measured underfloor
+            //conditions, so a compliance assessment cannot take the pattern as an input
+            let element = &input.input["Zone"]["zone 1"]["BuildingElement"]["ground"];
+            assert_eq!(element["Control_smart_air_brick"], "SmartAirBrick_Control");
+            let control = &input.input["Control"]["SmartAirBrick_Control"];
+            assert_eq!(control["type"], "SetpointTimeControl");
+            assert_eq!(control["time_series_step"], 0.5);
+            // And it carries one opening ratio per timestep of the year, within 0 to 1
+            let ratios = &control["schedule"]["main"];
+            assert_eq!(ratios.as_array().unwrap().len(), simtime().total_steps());
+            assert!(ratios
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.as_f64().unwrap() >= 0.0));
+            assert!(ratios
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.as_f64().unwrap() <= 1.0));
+        }
+
+        #[rstest]
+        fn test_no_control_without_smart_air_bricks() {
+            // Given a suspended floor with ordinary fixed air bricks
+            let mut input = input(None);
+            // When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            // Then no control is built and nothing references one, so a dwelling without them
+            // carries none of this in its preprocessed output
+            assert!(input.input["Control"].as_object().unwrap().is_empty());
+            assert!(!input.input["Zone"]["zone 1"]["BuildingElement"]["ground"]
+                .as_object()
+                .unwrap()
+                .contains_key("Control_smart_air_brick"));
+        }
+
+        #[rstest]
+        fn test_flag_ignored_on_a_floor_the_core_would_not_honour() {
+            // Given the flag on a solid ground floor rather than a suspended one, which the schema
+            // does not allow but the function should not depend on that
+            let mut input = input(Some(json!({"smart_air_bricks": true, "floor_type": "Slab_no_edge_insulation"})));
+            // When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            // Then nothing is attached, matching the conditions the core applies when it honours
+            // the control, so the two cannot disagree about which elements the feature is for
+            assert!(input.input["Control"].as_object().unwrap().is_empty());
+            assert!(!input.input["Zone"]["zone 1"]["BuildingElement"]["ground"]
+                .as_object()
+                .unwrap()
+                .contains_key("Control_smart_air_brick"));
+        }
+
+    }
+
     mod create_space_heat_distribution {
         use super::*;
 
