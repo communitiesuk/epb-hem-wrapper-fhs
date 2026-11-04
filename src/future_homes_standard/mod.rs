@@ -1,11 +1,11 @@
 use crate::future_homes_standard::fhs_compliance_response::{
     CalculatedComplianceResult, FhsComplianceResponse,
 };
-use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::future_homes_standard::metrics::Metrics;
+use crate::future_homes_standard::part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::project_lookups::by_fuel;
 use crate::{CalculationKey, FhsFlags};
 use crate::{CustomEnergySourceFactors, HemWrapper};
@@ -27,7 +27,6 @@ use tracing::error;
 
 mod appliance;
 mod fhs_compliance_response;
-mod fhs_part_f_validation;
 pub mod fhs_schema_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;
@@ -38,6 +37,7 @@ mod hw_events;
 mod imev_scheduler;
 pub(crate) mod input;
 pub(crate) mod metrics;
+mod part_f_validation;
 pub(crate) mod project_lookups;
 pub(crate) mod sleeved_dhn_validation;
 pub(crate) mod smart_air_brick_validation;

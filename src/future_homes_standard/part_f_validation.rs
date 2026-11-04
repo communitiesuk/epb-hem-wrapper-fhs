@@ -1,6 +1,7 @@
 pub(crate) mod part_f {
     use anyhow::{anyhow, bail};
     use approx::relative_eq;
+    use fsum::FSum;
     use home_energy_model::{
         compare_floats::max_of_2,
         core::units::{LITRES_PER_CUBIC_METRE, SECONDS_PER_HOUR},
@@ -85,12 +86,15 @@ pub(crate) mod part_f {
     }
 
     fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        vents
-            .iter()
-            .map(|v| {
-                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
-            })
-            .sum()
+        let mut design_outdoor_air_flow_rate_sum = FSum::new();
+
+        for vent in vents {
+            let design_outdoor_air_flow_rate = vent.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?;
+
+            design_outdoor_air_flow_rate_sum += design_outdoor_air_flow_rate
+        }
+
+        Ok(design_outdoor_air_flow_rate_sum.value())
     }
 
     fn sufficient_whole_dwelling_ventilation_rate_continuous(
@@ -98,12 +102,7 @@ pub(crate) mod part_f {
         total_floor_area: f64,
         bedrooms: usize,
     ) -> anyhow::Result<bool> {
-        let total_design_flow: f64 = vents
-            .iter()
-            .map(|v| {
-                anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)
-            })
-            .sum::<Result<f64, _>>()?;
+        let total_design_flow = total_design_flow_from_vents(&vents)?;
 
         let min_ventilation =
             minimum_whole_dwelling_ventilation_rate_continuous(total_floor_area, bedrooms);
@@ -179,14 +178,20 @@ pub(crate) mod part_f {
     }
 
     fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        vents
-            .iter()
-            .map(|v| {
-                anyhow::Ok(v.get("area_cm2").and_then(|v| v.as_f64()).ok_or_else(|| {
+        let mut area_sum = FSum::new();
+
+        for vent in vents {
+            let area = vent
+                .get("area_cm2")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
                     anyhow!("area_cm2 provided as a number is expected for MechanicalVentilation")
-                })?)
-            })
-            .sum()
+                })?;
+
+            area_sum += area;
+        }
+
+        Ok(area_sum.value())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -536,7 +541,7 @@ pub(crate) mod part_f {
 
 #[cfg(test)]
 mod tests {
-    use crate::future_homes_standard::fhs_part_f_validation::part_f;
+    use crate::future_homes_standard::part_f_validation::part_f;
     use serde_json::{json, Map, Value};
 
     #[test]
