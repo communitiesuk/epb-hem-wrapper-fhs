@@ -5323,28 +5323,31 @@ mod tests {
         let valid_flowrate = check_shower_flowrate(&input);
         assert!(valid_flowrate.is_ok());
     }
+    // This would mean +/- 0.005 which would correspond to two decimal places of precision
+    const TWO_DECIMAL_PLACES: f64 = 5e-3;
+
     #[rstest]
     fn test_calc_1_occupant() {
         // test with on occupant and a range of floor areas
         assert_relative_eq!(
             1.075,
             calc_n_occupants(10., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.232,
             calc_n_occupants(20., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.433,
             calc_n_occupants(50., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.437,
             calc_n_occupants(100., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
     }
 
@@ -5821,9 +5824,10 @@ mod tests {
 
         #[rstest]
         fn test_preheated_tank_gets_controls(mut input: InputForProcessing) {
-            // Given a dwelling with a preheated tank (fed by a header tank)
+            // Given a dwelling with a StorageTank preheated tank (fed by a header tank)
             input.input["PreHeatedWaterSource"] = json!({
                 "preheated tank": {
+                    "type": "StorageTank",
                     "volume": 80.0,
                     "daily_losses": 1.68,
                     "ColdWaterSource": "header tank",
@@ -5842,16 +5846,64 @@ mod tests {
             // When water heating pattern is created
             create_water_heating_pattern(&mut input).unwrap();
 
-            // Then it receives identical controls to a StorageTank
+            let preheated_tank = &input.input["PreHeatedWaterSource"]["preheated tank"];
+            assert_eq!(preheated_tank["temp_setpnt_max"], "_HW_smart_hot_water_tank_temp_max");
+
+            //  Then it receives the same temperature setpoint controls as a hw-cylinder StorageTank
+            // a max setpoint control on the tank and min/max SoC controls on the heat source.
             assert_eq!(
-                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
-                    ["Controlmax"],
-                "_HW_max_temp"
+                preheated_tank["HeatSource"]["immersion"]["Controlmax"],
+                "_HW_smart_hot_water_tank_max_soc"
             );
             assert_eq!(
-                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
-                    ["Controlmin"],
-                "_HW_min_temp"
+                preheated_tank["HeatSource"]["immersion"]["Controlmin"],
+                "_HW_smart_hot_water_tank_min_soc"
+            );
+        }
+
+        #[rstest]
+        fn test_preheated_smart_tank_gets_controls(mut input: InputForProcessing) {
+            // Given a dwelling with a SmartHotWaterTank preheated tank (fed by a header tank)
+            input.input["PreHeatedWaterSource"] = json!({
+                "preheated tank": {
+                    "type": "SmartHotWaterTank",
+                    "volume": 80.0,
+                    "daily_losses": 1.68,
+                    "ColdWaterSource": "header tank",
+                    "init_temp": 35.0,
+                    "EnergySupply_pump": "mains elec",
+                    "power_pump_kW": 5.0,
+                    "max_flow_rate_pump_l_per_min": 1000.0,
+                    "temp_usable": 40.0,
+                    "HeatSource": {
+                        "immersion": {
+                            "type": "ImmersionHeater",
+                            "power": 3.0,
+                            "EnergySupply": "mains elec",
+                            "heater_position": 0.1,
+                        }
+                    },
+                }
+            });
+
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+
+            let preheated_tank = &input.input["PreHeatedWaterSource"]["preheated tank"];
+
+            // Then it receives the same state-of-charge controls as a hw-cylinder SmartHotWaterTank:
+            // a max setpoint control on the tank and min/max SoC controls on the heat source.
+            assert_eq!(
+                preheated_tank["temp_setpnt_max"],
+                "_HW_smart_hot_water_tank_temp_max"
+            );
+            assert_eq!(
+                preheated_tank["HeatSource"]["immersion"]["Controlmax"],
+                "_HW_smart_hot_water_tank_max_soc"
+            );
+            assert_eq!(
+                preheated_tank["HeatSource"]["immersion"]["Controlmin"],
+                "_HW_smart_hot_water_tank_min_soc"
             );
         }
     }
