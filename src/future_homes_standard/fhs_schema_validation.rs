@@ -79,7 +79,7 @@ impl ValidationError {
     /// genuinely unrecognised property, dropping the listing defers the report of it
     /// rather than losing it: the input cannot pass while the deeper failure stands, and
     /// the property is named once that failure is fixed.
-
+    ///
     /// A failure reported against the object itself is ambiguous. It may equally have
     /// caused the cascade, but the same error set also arises when a property really is
     /// unrecognised alongside an unrelated one - a shower that changes type and keeps its

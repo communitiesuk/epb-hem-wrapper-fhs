@@ -10,13 +10,12 @@ default-run = "future-homes-standard"
 [dependencies]
 anyhow = "1.0.100"
 approx = "0.5.1"
-arcstr = { version = "1.2.0", features = ["serde"] }
 bitflags = "2.12.1"
 clap = { version = "4.5.53", features = ["derive"], optional = true }
 csv = "1.4.0"
 fsum = "0.1.4"
 #home-energy-model = { path = "../epb-home-energy-model", features = ["clap"] }
-home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "main", features = ["clap"] }
+home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "1_0_0a9", features = ["clap"] }
 indexmap = { version = "2.12.1", features = ["serde"] }
 itertools = "0.15.0"
 jsonschema = { version = "0.58.5", default-features = false, features = ["macros"] }

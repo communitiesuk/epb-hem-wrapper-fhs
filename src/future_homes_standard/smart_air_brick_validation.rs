@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
-use arcstr::ArcStr;
-use serde_json::Value;
-
 use crate::future_homes_standard::input::InputForProcessing;
+use home_energy_model::ArcStr;
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Return the dwelling's smart air brick floors, by building element name.

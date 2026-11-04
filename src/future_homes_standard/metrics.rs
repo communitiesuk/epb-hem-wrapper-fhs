@@ -1,6 +1,5 @@
 #![allow(unused)]
 use crate::future_homes_standard::project_lookups::{FuelOutput, Tariff};
-use arcstr::ArcStr;
 use fsum::FSum;
 use serde::Serialize;
 use std::sync::Arc;

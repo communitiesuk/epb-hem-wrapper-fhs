@@ -5,8 +5,8 @@ use anyhow::bail;
 use fsum::FSum;
 use home_energy_model::input::{FuelType, Input, InputForCalcHtcHlp};
 use home_energy_model::output::{OutputCore, OutputSummary};
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
-use std::sync::Arc;
 
 pub(crate) const OFFPEAK_END_HOUR: f64 = 7.0;
 
@@ -77,7 +77,7 @@ fn is_eer_applicable_source(project: &Input, source: &str) -> bool {
     is_vent || is_space_heating || is_water_heating || is_lighting
 }
 
-fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>) -> f64 {
+fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<ArcStr, f64>) -> f64 {
     usage
         .iter()
         .filter(|(source, _)| is_eer_applicable_source(project, source.as_ref()))
@@ -107,7 +107,7 @@ fn select_eer_applicable_usage(project: &Input, usage: &IndexMap<Arc<str>, f64>)
 /// * `timestep_array` - simulation timestep start times in hours from start of year.
 fn eer_energy_by_period(
     input: &Input,
-    usage_by_end_use: &IndexMap<Arc<str>, Vec<f64>>,
+    usage_by_end_use: &IndexMap<ArcStr, Vec<f64>>,
     generated_consumed_ts: &[f64],
     timestep_array: &[f64],
 ) -> anyhow::Result<(f64, f64)> {
@@ -249,12 +249,12 @@ pub(crate) fn by_fuel(
     // zero fuel cost, so there is no generation factor term here.
     let mut result = vec![];
     for (supply, usage) in output_summary.delivered_energy().iter() {
-        let Some(energy_supply) = project.energy_supply().get(supply.as_ref()) else {
+        let Some(energy_supply) = project.energy_supply().get(supply) else {
             // Excludes anything not from one of the provided EnergySupply's
             // e.g. _energy_from_environment
             continue;
         };
-        let fuel = energy_supply.fuel;
+        let fuel = energy_supply.fuel();
         if offpeak_electricity && fuel == FuelType::Electricity {
             // Economy 7 path: split import cost into off-peak and on-peak tiers using timestep
             // data.

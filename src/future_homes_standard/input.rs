@@ -1,8 +1,7 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
 use anyhow::anyhow;
-use arcstr::ArcStr;
 use fsum::FSum;
-use home_energy_model::hem_core::simulation_time::SimulationTime;
+use home_energy_model::core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
     WaterDistribution, WaterHeatingEvent, WaterPipework,
@@ -10,6 +9,7 @@ use home_energy_model::input::{
 use home_energy_model::input::{
     Control, EnergySupplyInput, InfiltrationVentilation, InputForCalcHtcHlp, ZoneDictionary,
 };
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

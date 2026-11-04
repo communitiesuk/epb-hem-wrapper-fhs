@@ -4,11 +4,11 @@ use crate::future_homes_standard::future_homes_standard::{calc_final_rates, Fina
 use crate::future_homes_standard::future_homes_standard_fee::calc_fabric_energy_efficiency;
 use crate::{CalculationKey, CustomEnergySourceFactors};
 use anyhow::anyhow;
+use home_energy_model::ArcStr;
 use home_energy_model::CalculationResult;
 use indexmap::IndexMap;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[derive(Serialize)]
 pub struct FhsComplianceResponse {
@@ -110,15 +110,15 @@ pub(super) struct DeliveredEnergyUse {
 
 impl
     From<(
-        &IndexMap<Arc<str>, IndexMap<Arc<str>, f64>>,
-        &IndexMap<Arc<str>, IndexMap<Arc<str>, f64>>,
+        &IndexMap<ArcStr, IndexMap<ArcStr, f64>>,
+        &IndexMap<ArcStr, IndexMap<ArcStr, f64>>,
         f64,
     )> for DeliveredEnergyUse
 {
     fn from(
         (dwelling_energy_use, target_energy_use, total_floor_area): (
-            &IndexMap<Arc<str>, IndexMap<Arc<str>, f64>>,
-            &IndexMap<Arc<str>, IndexMap<Arc<str>, f64>>,
+            &IndexMap<ArcStr, IndexMap<ArcStr, f64>>,
+            &IndexMap<ArcStr, IndexMap<ArcStr, f64>>,
             f64,
         ),
     ) -> Self {
@@ -131,33 +131,27 @@ impl
 
         let by_system = dwelling_energy_use["total"]
             .iter()
-            .filter(|(key, _)| key.as_ref() != "total")
+            .filter(|(key, _)| *key != "total")
             .map(|(key, &value)| {
                 let dwelling_use = value / total_floor_area;
 
                 let target_use = remaining_target_energy_use
                     .keys()
                     .find(|&target_key: &_| match () {
-                        _ if key.as_ref().contains("water_heating") => {
-                            target_key.as_ref().contains("water_heating")
+                        _ if key.contains("water_heating") => target_key.contains("water_heating"),
+                        _ if key.contains("space_heating") => target_key.contains("space_heating"),
+                        _ if key.contains("HeatPump_auxiliary") => {
+                            target_key.contains("HeatPump_auxiliary")
                         }
-                        _ if key.as_ref().contains("space_heating") => {
-                            target_key.as_ref().contains("space_heating")
-                        }
-                        _ if key.as_ref().contains("HeatPump_auxiliary") => {
-                            target_key.as_ref().contains("HeatPump_auxiliary")
-                        }
-                        _ => target_key.as_ref().contains(key.as_ref()),
+                        _ => target_key.contains(key.as_str()),
                     })
                     .cloned()
-                    .and_then(|target_key| {
-                        remaining_target_energy_use.shift_remove(target_key.as_ref())
-                    })
+                    .and_then(|target_key| remaining_target_energy_use.shift_remove(&target_key))
                     .unwrap_or(0.)
                     / total_floor_area;
 
                 (
-                    String::from(key.as_ref()),
+                    key.to_string(),
                     PerformanceValue {
                         actual: dwelling_use,
                         notional: target_use,
@@ -277,7 +271,7 @@ impl
                 &dwelling_fhs_results.output.core.results_end_user,
                 dwelling_fhs_results.output.core.timestep_array.len(),
                 &custom_energy_source_factors[&CalculationKey::Fhs],
-                todo!("Provide generation curtailed data for alpha 9 migration"),
+                &dwelling_fhs_results.output.core.generation_curtailed,
             )?,
             target_final_rates: calc_final_rates(
                 notional_input,
@@ -286,7 +280,7 @@ impl
                 &notional_fhs_results.output.core.results_end_user,
                 notional_fhs_results.output.core.timestep_array.len(),
                 &custom_energy_source_factors[&CalculationKey::FhsNotional],
-                todo!("Provide generation curtailed data alpha 9 migration"),
+                &notional_fhs_results.output.core.generation_curtailed,
             )?,
             dwelling_fabric_energy_efficiency: calc_fabric_energy_efficiency(
                 dwelling_fhs_fee_results
@@ -316,7 +310,7 @@ impl
             energy_use_by_fuel: dwelling_energy_use
                 .keys()
                 .map(|fuel| {
-                    (String::from(fuel.as_ref()), {
+                    (fuel.to_string(), {
                         let dwelling_fuel_total =
                             dwelling_energy_use[fuel]["total"] / total_floor_area;
                         // the "fuel" key here is actually the energy supply name at the moment

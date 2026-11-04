@@ -16,6 +16,7 @@ pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
 };
+pub use home_energy_model::ArcStr;
 pub use home_energy_model::HemResponse;
 pub use home_energy_model::HEM_VERSION;
 pub use home_energy_model::HEM_VERSION_DATE;
@@ -26,7 +27,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{BufReader, Cursor, Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
 use tracing::{error, instrument};
 
 pub mod future_homes_standard;
@@ -304,4 +304,4 @@ pub fn run_wrappers(
         })?
 }
 
-type CustomEnergySourceFactors = IndexMap<Arc<str>, CustomEnergySourceFactor>;
+type CustomEnergySourceFactors = IndexMap<ArcStr, CustomEnergySourceFactor>;

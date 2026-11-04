@@ -2,10 +2,10 @@ use crate::future_homes_standard::future_homes_standard::HourlyHotWaterEvent;
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::random::Pcg64;
 use anyhow::{anyhow, bail};
-use arcstr::ArcStr;
 use csv::Reader;
+use home_energy_model::core::schedule::WaterScheduleEventType;
 use home_energy_model::core::water_heat_demand::misc::calc_fraction_hot_water;
-use home_energy_model::input::WaterHeatingEventType;
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use partial_application::partial;
@@ -297,7 +297,7 @@ impl Debug for Drawoff {
 
 pub struct DrawoffEvent {
     time: f64,
-    _event_type: WaterHeatingEventType,
+    _event_type: WaterScheduleEventType,
     volume: f64,
     duration: f64,
 }
@@ -313,7 +313,7 @@ impl From<HourEvent> for DrawoffEvent {
     }
 }
 
-impl From<SimpleLabelBasedOn900KSample> for WaterHeatingEventType {
+impl From<SimpleLabelBasedOn900KSample> for WaterScheduleEventType {
     fn from(value: SimpleLabelBasedOn900KSample) -> Self {
         if value.is_shower_type() {
             Self::Shower
@@ -490,7 +490,7 @@ impl HotWaterEventGenerator {
     pub fn overlap_check(
         &mut self,
         hourly_events: &mut Vec<Vec<HourlyHotWaterEvent>>,
-        matching_types: &[WaterHeatingEventType],
+        matching_types: &[WaterScheduleEventType],
         event_start: f64,
         duration: f64,
     ) {

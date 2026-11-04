@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
-use anyhow::{anyhow, bail};
-use arcstr::ArcStr;
-use serde_json::Value;
-
 use crate::future_homes_standard::input::InputForProcessing;
+use anyhow::{anyhow, bail};
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
+use serde_json::Value;
 
 /// Validate the charging sources declared on each heat battery.
 ///

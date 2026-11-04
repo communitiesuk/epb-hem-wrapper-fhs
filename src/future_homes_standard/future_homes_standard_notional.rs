@@ -19,7 +19,6 @@ use crate::future_homes_standard::ventilation::{
 };
 use anyhow::{anyhow, bail};
 use approx::relative_eq;
-use arcstr::ArcStr;
 use fsum::FSum;
 use home_energy_model::compare_floats::max_of_2;
 use home_energy_model::core::common::WaterSupply;
@@ -27,6 +26,8 @@ use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
 use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
 use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model::core::simulation_time::SimulationTime;
+use home_energy_model::core::simulation_time::Timestep;
 use home_energy_model::core::space_heat_demand::building_element::{
     convert_uvalue_to_resistance, pitch_class, HeatFlowDirection,
 };
@@ -40,12 +41,11 @@ use home_energy_model::core::water_heat_demand::dhw_demand::HotWaterDemandResult
 use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
 use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
 use home_energy_model::corpus::{HotWaterSource, HotWaterSourceBehaviour};
-use home_energy_model::hem_core::simulation_time::SimulationTime;
-use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
     CustomEnergySourceFactor, EcoDesignController, WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
@@ -73,7 +73,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
     fn demand_hot_water(
         &self,
         _usage_events: Vec<WaterEventResult>,
-        _simtime: SimulationTimeIteration,
+        _simtime: Timestep,
     ) -> anyhow::Result<f64> {
         unreachable!()
     }
@@ -82,7 +82,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
         &self,
         volume_required: f64,
         _volume_required_already: f64,
-        _simtime: SimulationTimeIteration,
+        _simtime: Timestep,
     ) -> anyhow::Result<Vec<(f64, f64)>> {
         Ok(vec![(HW_TEMPERATURE, volume_required)])
     }
@@ -91,7 +91,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
     input: &mut InputForProcessing,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     fhs_fee_assumptions: bool,
 ) -> anyhow::Result<()> {
     let is_fee = fhs_fee_assumptions;
@@ -764,7 +764,7 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
     cold_water_source: &str,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     is_communal: bool,
 ) -> anyhow::Result<()> {
     let build_type = input.build_type()?;
@@ -1275,13 +1275,14 @@ fn calc_daily_hw_demand(
             event_name,
             serde_json::from_value(json!(event_type))?,
             event_schedules,
+            None,
         )?;
     }
 
     // Mock hot water source which returns the same temperature at every timestep
     let mock_hw_source: IndexMap<_, _> = IndexMap::from_iter([(
         "hw cylinder".into(),
-        HotWaterSource::Fake(Arc::new(MockHotWaterSource)),
+        HotWaterSource::Wildcard(Arc::new(MockHotWaterSource)),
     )]);
     let energy_supply: Arc<RwLock<EnergySupply>> = {
         let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
@@ -1476,7 +1477,7 @@ fn edit_space_heating_system(
     cold_water_source: &str,
     total_floor_area: f64,
     heat_network_type: Option<HeatNetworkType>,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     is_fee: bool,
     #[cfg(test)] canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
 ) -> anyhow::Result<()> {
@@ -1582,7 +1583,7 @@ fn calc_design_capacity(
 
     let HtcHlpCalculation {
         htc_map: htc_dict, ..
-    } = calc_htc_hlp(&input.as_input_for_calc_htc_hlp()?)?;
+    } = calc_htc_hlp(&input.as_input_for_calc_htc_hlp()?, None)?;
 
     // Calculate design capacity
     let min_air_temp = *input.external_conditions()?.air_temperatures().as_ref().ok_or_else(|| anyhow!("FHS Notional wrapper expected to have air temperatures merged onto the input structure."))?.iter().min_by(|a, b| a.total_cmp(b)).ok_or_else(|| anyhow!("FHS Notional wrapper expects air temperature list set on input structure not to be empty."))?;
@@ -4152,7 +4153,7 @@ mod tests {
         test_input.input["EnergySupply"]["custom_1"] =
             json!({"fuel": "custom", "is_export_capable": false});
 
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -4193,7 +4194,7 @@ mod tests {
         tfa: f64,
         canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -4287,7 +4288,7 @@ mod tests {
 
         // And the custom energy factors have the notional heat network has
         // the mean factors of the actual custom supplies
-        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let expected_custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "_notional_heat_network": {
                     "Emissions Factor kgCO2e/kWh": 0.75,
@@ -4319,7 +4320,7 @@ mod tests {
         tfa: f64,
         canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -4423,7 +4424,7 @@ mod tests {
         assert_eq!(actual_space_heat_system, expected_space_heat_system);
 
         // And the custom energy factors have the standardised factors of a communal system
-        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let expected_custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "_notional_heat_network": {
                     "Emissions Factor kgCO2e/kWh": 0.033,
@@ -4457,7 +4458,7 @@ mod tests {
     ) {
         // Given a flat (building-level distribution losses apply to flats only)
         test_input.input["General"]["build_type"] = json!("flat");
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,

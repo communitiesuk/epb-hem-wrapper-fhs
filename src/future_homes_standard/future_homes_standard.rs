@@ -14,31 +14,34 @@ use crate::future_homes_standard::smart_air_brick_validation::{
 };
 use crate::CustomEnergySourceFactors;
 use anyhow::{anyhow, bail};
-use arcstr::ArcStr;
 use csv::{Reader, WriterBuilder};
 use fsum::FSum;
+use home_energy_model::core::external_conditions::{
+    create_external_conditions, ExternalConditions, WindowShadingObject,
+};
+use home_energy_model::core::schedule::WaterScheduleEventType;
+use home_energy_model::core::simulation_time::SimulationTime;
 use home_energy_model::core::space_heat_demand::building_element::convert_uvalue_to_resistance;
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
-use home_energy_model::hem_core::external_conditions::{
-    create_external_conditions, ExternalConditions, WindowShadingObject,
-};
-use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     CustomEnergySourceFactor, EnergySupplyDetails, FuelType, Input, TransparentBuildingElement,
-    TransparentBuildingElementJsonValue, WaterHeatingEventType,
+    TransparentBuildingElementJsonValue,
 };
 use home_energy_model::output_writer::OutputWriter;
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use itertools::{izip, Itertools};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
+use std::borrow::Borrow;
 use std::convert::Into;
+use std::hash::Hash;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 const HOURS_TO_END_DEC: f64 = 8760.;
 
@@ -93,7 +96,7 @@ fn _warn_about_input(message: &str) {
 /// Apply initial pre-processing required for all modes
 pub(crate) fn initial_preprocessing(
     input: &mut InputForProcessing,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<IndexMap<ArcStr, CustomEnergySourceFactor>> {
     create_hot_water_demand(input)?;
     create_zone_area(input)?;
     create_hot_water_distribution(input)?;
@@ -442,14 +445,14 @@ fn apply_energy_factor_series(energy_data: &[f64], factors: &Vec<f64>) -> anyhow
 pub fn apply_fhs_postprocessing(
     input: &Input,
     output_writer: &impl OutputWriter,
-    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
-    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
-    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
+    energy_import: &IndexMap<ArcStr, Vec<f64>>,
+    energy_export: &IndexMap<ArcStr, Vec<f64>>,
+    results_end_user: &IndexMap<ArcStr, IndexMap<ArcStr, Vec<f64>>>,
     timestep_array: &[f64],
     notional: bool,
     output_mode: &str,
     custom_energy_supply_factors: &CustomEnergySourceFactors,
-    generation_curtailed: &IndexMap<Arc<str>, Vec<f64>>,
+    generation_curtailed: &IndexMap<ArcStr, Vec<f64>>,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
 
@@ -502,15 +505,18 @@ pub fn apply_fhs_postprocessing(
     Ok(())
 }
 
-pub(super) fn calc_final_rates(
+pub(super) fn calc_final_rates<T>(
     input: &Input,
-    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
-    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
-    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
+    energy_import: &IndexMap<T, Vec<f64>>,
+    energy_export: &IndexMap<T, Vec<f64>>,
+    results_end_user: &IndexMap<T, IndexMap<T, Vec<f64>>>,
     number_of_timesteps: usize,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
-    generation_curtailed: &IndexMap<Arc<str>, Vec<f64>>,
-) -> anyhow::Result<FinalRates> {
+    custom_energy_supply_factors: &IndexMap<T, CustomEnergySourceFactor>,
+    generation_curtailed: &IndexMap<T, Vec<f64>>,
+) -> anyhow::Result<FinalRates>
+where
+    T: ToString + Hash + Eq + Clone + Borrow<ArcStr>,
+{
     // For each EnergySupply object:
     // look up relevant factors for import/export from csv or custom factors
     // from input file
@@ -519,9 +525,9 @@ pub(super) fn calc_final_rates(
     // Applying factors in this way rather than applying a net export factor to
     // exported energy accounts for energy generated and used on site and also
     // accounts for battery storage losses
-    let mut emis_results: IndexMap<String, FhsCalculationResult> = Default::default();
-    let mut emis_oos_results: IndexMap<String, FhsCalculationResult> = Default::default();
-    let mut pe_results: IndexMap<String, FhsCalculationResult> = Default::default();
+    let mut emis_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
+    let mut emis_oos_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
+    let mut pe_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
 
     for (energy_supply_key, energy_supply_details) in input
         .energy_supply()
@@ -539,9 +545,9 @@ pub(super) fn calc_final_rates(
             .or_default();
         let supply_pe_result = pe_results.entry(energy_supply_key.clone()).or_default();
 
-        let fuel_code = energy_supply_details.fuel;
+        let fuel_code = energy_supply_details.fuel();
 
-        let energy_supply_key: Arc<str> = energy_supply_key.as_str().into();
+        let energy_supply_key: ArcStr = energy_supply_key.into();
 
         // Get emissions/PE factors for import/export
         let (emis_factor_import_export, emis_oos_factor_import_export, pe_factor_import_export) =
@@ -591,7 +597,7 @@ pub(super) fn calc_final_rates(
             };
 
         // Calculate energy imported and associated emissions/PE
-        if fuel_code == FuelType::Electricity {
+        if FuelType::Electricity == fuel_code {
             supply_emis_result.import = apply_energy_factor_series(
                 &energy_import[&energy_supply_key],
                 &emis_factor_import_export,
@@ -604,7 +610,7 @@ pub(super) fn calc_final_rates(
                 &energy_import[&energy_supply_key],
                 &pe_factor_import_export,
             )?;
-        } else if fuel_code == FuelType::UnmetDemand {
+        } else if FuelType::UnmetDemand == fuel_code {
             // unmet demand is calculated as a special case where it is only the increase in unmet
             // demand between timesteps that should be accounted for, not the raw number
 
@@ -758,7 +764,7 @@ pub(super) fn calc_final_rates(
                 ..
             } = generation_factors;
 
-            if fuel_code == FuelType::UnmetDemand {
+            if FuelType::UnmetDemand == fuel_code {
                 // unmet demand is calculated as a special case where it is only the increase in unmet
                 // demand between timesteps that should be accounted for, not the raw number
 
@@ -810,20 +816,20 @@ pub(super) fn calc_final_rates(
         // Calculate unregulated energy demand and associated emissions/PE
         let mut energy_unregulated = vec![0.; number_of_timesteps];
         for (end_user_name, end_user_energy) in results_end_user[&energy_supply_key].iter() {
-            if APPLIANCE_TYPES.contains(&end_user_name.as_ref()) {
+            if APPLIANCE_TYPES.contains(&end_user_name.to_string().as_str()) {
                 for (t_idx, energy_unregulated_value) in energy_unregulated.iter_mut().enumerate() {
                     *energy_unregulated_value += end_user_energy[t_idx];
                 }
             }
         }
-        if fuel_code == FuelType::Electricity {
+        if FuelType::Electricity == fuel_code {
             supply_emis_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &emis_factor_import_export)?;
             supply_emis_oos_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &emis_oos_factor_import_export)?;
             supply_pe_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &pe_factor_import_export)?;
-        } else if fuel_code == FuelType::UnmetDemand {
+        } else if FuelType::UnmetDemand == fuel_code {
             // unmet demand is calculated as a special case where it is only the increase in unmet
             // demand between timesteps that should be accounted for, not the raw number
 
@@ -926,9 +932,9 @@ pub(super) fn calc_final_rates(
 pub(super) struct FinalRates {
     pub(super) emission_rate: f64,
     pub(super) primary_energy_rate: f64,
-    pub(super) emissions_results: IndexMap<String, FhsCalculationResult>,
-    pub(super) emissions_out_of_scope_results: IndexMap<String, FhsCalculationResult>,
-    pub(super) primary_energy_results: IndexMap<String, FhsCalculationResult>,
+    pub(super) emissions_results: IndexMap<ArcStr, FhsCalculationResult>,
+    pub(super) emissions_out_of_scope_results: IndexMap<ArcStr, FhsCalculationResult>,
+    pub(super) primary_energy_results: IndexMap<ArcStr, FhsCalculationResult>,
 }
 
 #[derive(Default)]
@@ -961,7 +967,7 @@ fn write_postproc_file(
     output_writer: &impl OutputWriter,
     output_mode: &str,
     file_name: &str,
-    results: IndexMap<String, FhsCalculationResult>,
+    results: IndexMap<ArcStr, FhsCalculationResult>,
     no_of_timesteps: usize,
 ) -> anyhow::Result<()> {
     let file_location = format!("{output_mode}__postproc_{file_name}");
@@ -3444,7 +3450,7 @@ pub(super) fn create_hot_water_use_pattern(
             // TODO (from Python) - implies 2 uses of the same IES may overlap, could check them separately
             hw_event_gen.overlap_check(
                 &mut hourly_events,
-                &[WaterHeatingEventType::Bath, WaterHeatingEventType::Shower],
+                &[WaterScheduleEventType::Bath, WaterScheduleEventType::Shower],
                 event_start,
                 duration,
             );
@@ -3452,7 +3458,7 @@ pub(super) fn create_hot_water_use_pattern(
                 .get_mut(event_start.floor() as usize)
                 .unwrap()
                 .push(HourlyHotWaterEvent {
-                    event_type: WaterHeatingEventType::Shower,
+                    event_type: WaterScheduleEventType::Shower,
                     start: event_start,
                     end: event_start + duration / 60.,
                 });
@@ -3758,12 +3764,15 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
                 .get("areal_heat_capacity")
                 .ok_or_else(|| anyhow!("Building element areal heat capacity was not found."))?;
 
-            building_element["areal_heat_capacity"]  = match areal_heat_value {
+            building_element["areal_heat_capacity"] = match areal_heat_value {
                 JsonValue::String(areal_heat_class) => {
                     if let Some(mapped_value) = AREAL_HEAT_MAP.get(areal_heat_class.as_str()) {
                         json!(mapped_value)
                     } else {
-                        bail!("Unrecognised areal heat capacity class '{}'.", areal_heat_class);
+                        bail!(
+                            "Unrecognised areal heat capacity class '{}'.",
+                            areal_heat_class
+                        );
                     }
                 }
                 JsonValue::Number(n) => {
@@ -4509,7 +4518,7 @@ fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()>
 /// reference it for the heat network. We extract out the custom energy factors to be used later.
 fn create_custom_energy_supply_factors(
     input: &mut InputForProcessing,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<IndexMap<ArcStr, CustomEnergySourceFactor>> {
     let mut custom_energy_supply_factors = IndexMap::new();
 
     let heat_source_wet_keys = input
@@ -4533,7 +4542,7 @@ fn create_custom_energy_supply_factors(
             .and_then(|v| v.as_object())
             .map(|v| {
                 (
-                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("name").and_then(|v| v.as_str()).map(ArcStr::from),
                     v.get("factor").and_then(|v| v.as_object()),
                     v.get("is_export_capable").and_then(|v| v.as_bool()),
                 )
@@ -4541,10 +4550,8 @@ fn create_custom_energy_supply_factors(
         {
             if is_heat_network {
                 // Extract custom energy factor
-                custom_energy_supply_factors.insert(
-                    Arc::<str>::from(name.to_string()),
-                    serde_json::from_value(json!(factor))?,
-                );
+                custom_energy_supply_factors
+                    .insert(name.clone(), serde_json::from_value(json!(factor))?);
                 // Create new top level EnergySupply
                 if input.energy_supplies_contain_key(&name)? {
                     bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply for HeatSourceWet '{heat_source_wet_key}' with the same name.");
@@ -4569,17 +4576,15 @@ fn create_custom_energy_supply_factors(
             .and_then(|v| v.as_object())
             .map(|v| {
                 (
-                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("name").and_then(|v| v.as_str()).map(ArcStr::from),
                     v.get("factor").and_then(|v| v.as_object()),
                     v.get("is_export_capable").and_then(|v| v.as_bool()),
                 )
             })
         {
             // Extract custom energy factor
-            custom_energy_supply_factors.insert(
-                Arc::<str>::from(name.to_string()),
-                serde_json::from_value(json!(factor))?,
-            );
+            custom_energy_supply_factors
+                .insert(name.clone(), serde_json::from_value(json!(factor))?);
             // Create new top level EnergySupply
             if input.energy_supplies_contain_key(&name)? {
                 bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet '{heat_source_wet_key}' with the same name.");
@@ -4611,7 +4616,7 @@ pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::
 
 #[derive(Clone, Copy)]
 pub struct HourlyHotWaterEvent {
-    pub event_type: WaterHeatingEventType,
+    pub event_type: WaterScheduleEventType,
     pub start: f64,
     pub end: f64,
 }
