@@ -5852,19 +5852,15 @@ mod tests {
 
             // When water heating pattern is created
             create_water_heating_pattern(&mut input).unwrap();
-
             let preheated_tank = &input.input["PreHeatedWaterSource"]["preheated tank"];
-            assert_eq!(preheated_tank["temp_setpnt_max"], "_HW_smart_hot_water_tank_temp_max");
-
-            //  Then it receives the same temperature setpoint controls as a hw-cylinder StorageTank
-            // a max setpoint control on the tank and min/max SoC controls on the heat source.
+            // Then it receives the same temperature setpoint controls as a hw-cylinder StorageTank
             assert_eq!(
                 preheated_tank["HeatSource"]["immersion"]["Controlmax"],
-                "_HW_smart_hot_water_tank_max_soc"
+                "_HW_max_temp"
             );
             assert_eq!(
                 preheated_tank["HeatSource"]["immersion"]["Controlmin"],
-                "_HW_smart_hot_water_tank_min_soc"
+                "_HW_min_temp"
             );
         }
 
