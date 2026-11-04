@@ -3754,16 +3754,23 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
             // (BuildingElementAdjacentConditionedSpace and
             // BuildingElementAdjacentUnconditionedSpace_Simple); for the other types listed
             // here the value is always a class string, so the numeric passthrough is a no-op.
-            let mut areal_heat_value = building_element
+            let areal_heat_value = building_element
                 .get("areal_heat_capacity")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Building element areal heat capacity was not a string."))?;
+                .ok_or_else(|| anyhow!("Building element areal heat capacity was not found."))?;
 
-            if let Some(mapped_value) = AREAL_HEAT_MAP.get(areal_heat_value) {
-                building_element["areal_heat_capacity"] = json!(mapped_value);
-            } else {
-                building_element["areal_heat_capacity"] = json!(areal_heat_value);
-            }
+            building_element["areal_heat_capacity"]  = match areal_heat_value {
+                JsonValue::String(areal_heat_class) => {
+                    if let Some(mapped_value) = AREAL_HEAT_MAP.get(areal_heat_class.as_str()) {
+                        json!(mapped_value)
+                    } else {
+                        bail!("Unrecognised areal heat capacity class '{}'.", areal_heat_class);
+                    }
+                }
+                JsonValue::Number(n) => {
+                    json!(n)
+                }
+                _ => bail!("Building element areal heat capacity must be a string or number."),
+            };
 
             let mass_distribution_value = MASS_DISTRIBUTION_MAP
                 .get(
