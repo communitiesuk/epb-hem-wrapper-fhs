@@ -1487,7 +1487,7 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
 ///
 ///  These devices charge on a 7-hour off-peak electricity tariff (Economy 7), so their
 /// electricity costs must be split between off-peak and on-peak rates for EER calculation.
-fn has_offpeak_electricity_devices(input: &InputForProcessing) -> anyhow::Result<bool> {
+pub(crate) fn has_offpeak_electricity_devices(input: &InputForProcessing) -> anyhow::Result<bool> {
     for space_heat_system in input.space_heat_system_keys()? {
         if let Some(system) = input.space_heat_system_for_key(&space_heat_system)? {
             if let Some(type_str) = system.get("type").and_then(JsonValue::as_str) {
@@ -6330,12 +6330,13 @@ mod tests {
     mod apply_defaults {
         use super::*;
 
+        // We need to add the general key to each input to allow processing.
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_floor_pitch() {
             // Given a floor building element
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {"a": {"BuildingElement": {"floor": {"type": "BuildingElementGround"}}}},
                     "EnergySupply": {},
@@ -6353,11 +6354,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_orientation_to_flat_opaques() {
             // Given a floor building element
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {
                         "a": {"BuildingElement": {"floor": {"type": "BuildingElementOpaque", "pitch": 0}}}
@@ -6388,11 +6389,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_orientation_to_flat_transparent_elements() {
             // Given a window building element with a flat pitch, indicating a skylight
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {
                         "a": {
@@ -6426,11 +6427,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_vent_opening_ratio_init() {
             // Given a project dict with InfiltrationVentilation
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {},
@@ -6448,11 +6449,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_pressure_difference_ref() {
             // Given a project dict with InfiltrationVentilation and one vent
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {"vent1": {}}},
                     "EnergySupply": {},
@@ -6470,11 +6471,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_sup_air_flw_ctrl_and_sup_air_temp_ctrl() {
             // Given a project dict with InfiltrationVentilation and one mech vent
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}, "MechanicalVentilation": {"mechvent1": {}}},
                     "EnergySupply": {},
@@ -6492,11 +6493,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_battery_age() {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
@@ -6514,11 +6515,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_battery_grid_charging() {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
@@ -6536,11 +6537,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_bath_flowrate() {
             // Given a project dict with HotWaterDemand and one Bath
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {},
@@ -6558,11 +6559,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_gas() {
             // Given a project dict with Energy supply and gas fuel type
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "gas"}},
@@ -6580,11 +6581,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_electricity() {
             // Given a project dict with Energy supply and electricity fuel type
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity"}},
@@ -6602,12 +6603,12 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_is_export_capable_electricity_override() {
             // Given a project dict with an energy supply with electricity fuel type
             // Where the user has specified the value for is_export_capable
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "is_export_capable": false}},
@@ -6625,11 +6626,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_state_of_charge_init() {
             // Given a electric storage heater
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
@@ -6647,11 +6648,105 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
+        fn test_adds_state_of_charge_init_for_dry_core_heat_batteries() {
+            // Given a dry core heat battery
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {
+                        "a": {"type": "HeatBattery", "battery_type": "dry_core"}
+                    },
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a state_of_charge_init of 1.0 is added to the battery
+            assert_eq!(
+                input.input["HeatSourceWet"]["a"]["state_of_charge_init"],
+                json!(1.0)
+            );
+        }
+
+        #[test]
+        fn test_defaults_building_level_losses_to_zero_for_house_hiu() {
+            // Given a house with an HIU that omits building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {"a": {"type": "HIU"}},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then building_level_distribution_losses is set to 0
+            assert_eq!(
+                input.input["HeatSourceWet"]["a"]["building_level_distribution_losses"],
+                json!(0)
+            );
+        }
+
+        #[test]
+        fn test_raises_for_house_hiu_with_building_level_losses() {
+            // Given a house with an HIU that provides building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {
+                        "a": {"type": "HIU", "building_level_distribution_losses": 50}
+                    },
+                }),
+            };
+            // When apply_defaults is called, then it is rejected as not permitted for a house
+            let error = apply_defaults(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "building_level_distribution_losses is not permitted for an HIU heat source in a house"
+            );
+        }
+
+        #[test]
+        fn test_raises_for_flat_hiu_missing_building_level_losses() {
+            // Given a flat with an HIU that omits building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "flat", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {"a": {"type": "HIU"}},
+                }),
+            };
+            // When apply_defaults is called, then an error is returned
+            let error = apply_defaults(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "building_level_distribution_losses is required for an HIU heat source in a flat"
+            );
+        }
+
+        #[test]
         fn test_adds_temp_init_for_heat_batteries() {
             // Given a heat battery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
@@ -6669,11 +6764,11 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "as part of 1.0.0a9 migration"]
         fn test_adds_time_delay_backup_for_heat_pumps() {
             // Given a heat pump with a backup_ctrl_type of not None
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
