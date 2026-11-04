@@ -5,8 +5,7 @@ use crate::future_homes_standard::hw_events::{
 };
 use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
-    json_error, HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap,
-    InputForProcessing, JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
+    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing, JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME, json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
 };
 use crate::future_homes_standard::project_lookups::OFFPEAK_END_HOUR;
 use crate::future_homes_standard::smart_air_brick_validation::{
@@ -1957,17 +1956,17 @@ fn apply_tank_heat_source_controls(
     let (control_max, control_min) = if tank.is_smart_hot_water_tank() {
         tank.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
         (
-            json!(hw_smart_hot_water_tank_max_soc_name),
-            json!(hw_smart_hot_water_tank_min_soc_name),
+            hw_smart_hot_water_tank_max_soc_name,
+            hw_smart_hot_water_tank_min_soc_name,
         )
     } else {
-        (json!(hw_max_temp), json!(hw_min_temp))
+        (hw_max_temp, hw_min_temp)
     };
 
     for heat_source in tank.all_heat_sources_mut()? {
-        heat_source["Controlmax"] = control_max.clone();
+        set_control_max_name_for_heat_source(heat_source, control_max)?;
         if heat_source.get("type").and_then(|v| v.as_str()) != Some("SolarThermalSystem") {
-            heat_source["Controlmin"] = control_min.clone();
+            set_control_min_name_for_heat_source(heat_source, control_min)?;
         }
     }
 
