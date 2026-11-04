@@ -479,6 +479,13 @@ impl InputForProcessing {
             .collect())
     }
 
+    pub(crate) fn preheated_tank_mut(&mut self) -> JsonAccessResult<&mut JsonValue> {
+        Ok(self
+            .root_object_mut("PreHeatedWaterSource")?
+            .get_mut("preheated tank")
+            .ok_or_else(|| json_error("preheated tank not found"))?)
+    }
+
     pub fn zone_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
         Ok(self.zone_node()?.keys().map(Into::into).collect())
     }
@@ -2257,7 +2264,6 @@ impl InputForProcessing {
             "NumberOfWetRooms",
             "NumberOfUtilityRooms",
             "NumberOfBathrooms",
-            "NumberOfSanitaryAccommodations",
             "PartGcompliance",
             "PartO_active_cooling_required",
             "BuildingLength",
@@ -2328,8 +2334,17 @@ impl InputForProcessing {
                     {
                         building_element.remove("security_risk");
                         building_element.remove("is_external_door");
+                        // Whole-wall party-wall U-value is carried for the compliance report only;
+                        // hem-core forbids it on party walls, so strip it before the core run.
+                        building_element.remove("u_value_whole_wall");
+                        // Smart air bricks are stated as a flag, which the wrapper turns into the
+                        // Control_smart_air_brick reference the core reads. The flag itself is not a
+                        // core input.
+                        building_element.remove("smart_air_bricks");
                     }
                 }
+                /*
+                +            */
                 if let Some(building_elements) = zone
                     .get_mut("ThermalBridging")
                     .and_then(|be| be.as_object_mut())

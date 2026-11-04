@@ -5,9 +5,8 @@ use crate::future_homes_standard::hw_events::{
 };
 use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
-    json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
-    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
-    JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
+    json_error, HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap,
+    InputForProcessing, JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
 };
 use crate::future_homes_standard::project_lookups::OFFPEAK_END_HOUR;
 use crate::future_homes_standard::smart_air_brick_validation::{
@@ -1891,38 +1890,15 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         .flat_map(|value| value.as_object_mut())
         .map(HotWaterSourceDetailsJsonMap)
     {
-        if hw_source.is_storage_tank() {
-            for heat_source in hw_source.all_heat_sources_mut()? {
-                set_control_max_name_for_heat_source(heat_source, hw_max_temp)?;
-
-                let heat_source_type = heat_source.get("type").ok_or_else(|| {
-                    json_error("Type field missing from storage tank heat source")
-                })?;
-
-                if heat_source_type != "SolarThermalSystem" {
-                    set_control_min_name_for_heat_source(heat_source, hw_min_temp)?;
-                }
-            }
-        } else if hw_source.is_smart_hot_water_tank() {
-            hw_source.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
-
-            for heat_source in hw_source.all_heat_sources_mut()? {
-                set_control_max_name_for_heat_source(
-                    heat_source,
-                    hw_smart_hot_water_tank_max_soc_name,
-                )?;
-
-                let heat_source_type = heat_source.get("type").ok_or_else(|| {
-                    json_error("Type field missing from smart hot water tank heat source")
-                })?;
-
-                if heat_source_type != "SolarThermalSystem" {
-                    set_control_min_name_for_heat_source(
-                        heat_source,
-                        hw_smart_hot_water_tank_min_soc_name,
-                    )?;
-                }
-            }
+        if hw_source.is_storage_tank() || hw_source.is_smart_hot_water_tank() {
+            apply_tank_heat_source_controls(
+                &mut hw_source,
+                hw_smart_hot_water_tank_temp_max_name,
+                hw_smart_hot_water_tank_max_soc_name,
+                hw_smart_hot_water_tank_min_soc_name,
+                hw_max_temp,
+                hw_min_temp,
+            )?;
         } else if hw_source.is_combi_boiler()
             || hw_source.is_heat_battery()
             || hw_source.is_point_of_use()
@@ -1936,21 +1912,22 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
     }
 
     if input.has_preheated_water_source()? {
-        for heat_source in input.all_preheated_tank_heat_source_values_mut()? {
-            let heat_source = heat_source
-                .as_object_mut()
-                .ok_or_else(|| json_error("Heat source on pre heated tank was not an object"))?;
-
-            heat_source.insert("Controlmax".into(), hw_max_temp.into());
-
-            let heat_source_type = heat_source
-                .get("type")
-                .ok_or_else(|| json_error("Type field missing from pre heated tank heat source"))?;
-
-            if heat_source_type != "SolarThermalSystem" {
-                heat_source.insert("Controlmin".into(), hw_min_temp.into());
-            }
-        }
+        // A pre-heated tank represents an upstream source at its own user-declared
+        // temperature, so (unlike the dwelling's hot water cylinder) its init_temp and
+        // temp_usable are left as entered; only the availability controls are standardised.
+        let preheated_tank = input
+            .preheated_tank_mut()?
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("Preheated tank is not an object"))?;
+        let mut preheated_tank = HotWaterSourceDetailsJsonMap(preheated_tank);
+        apply_tank_heat_source_controls(
+            &mut preheated_tank,
+            hw_smart_hot_water_tank_temp_max_name,
+            hw_smart_hot_water_tank_max_soc_name,
+            hw_smart_hot_water_tank_min_soc_name,
+            hw_max_temp,
+            hw_min_temp,
+        )?;
     }
 
     Ok(())
@@ -1964,19 +1941,15 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
 /// minimum control. Applies to both HotWaterSource cylinders and pre-heated
 /// tanks, which share the same tank handling.
 fn apply_tank_heat_source_controls(
-    tank: &mut serde_json::Value,
+    tank: &mut impl HotWaterSourceDetailsForProcessing,
     hw_smart_hot_water_tank_temp_max_name: &str,
     hw_smart_hot_water_tank_max_soc_name: &str,
     hw_smart_hot_water_tank_min_soc_name: &str,
     hw_max_temp: &str,
     hw_min_temp: &str,
 ) -> anyhow::Result<()> {
-    let tank_type = tank
-        .get("type")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow!("Tank type is missing or not a string"))?;
-    let (control_max, control_min) = if tank_type == "SmartHotWaterTank" {
-        tank["temp_setpnt_max"] = json!(hw_smart_hot_water_tank_temp_max_name);
+    let (control_max, control_min) = if tank.is_smart_hot_water_tank() {
+        tank.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
         (
             json!(hw_smart_hot_water_tank_max_soc_name),
             json!(hw_smart_hot_water_tank_min_soc_name),
@@ -1985,12 +1958,7 @@ fn apply_tank_heat_source_controls(
         (json!(hw_max_temp), json!(hw_min_temp))
     };
 
-    let heat_sources = tank
-        .get_mut("HeatSource")
-        .and_then(|value| value.as_object_mut())
-        .ok_or_else(|| anyhow!("HeatSource is missing or not an object"))?;
-
-    for heat_source in heat_sources.values_mut() {
+    for heat_source in tank.all_heat_sources_mut()? {
         heat_source["Controlmax"] = control_max.clone();
         if heat_source.get("type").and_then(|v| v.as_str()) != Some("SolarThermalSystem") {
             heat_source["Controlmin"] = control_min.clone();
@@ -2823,8 +2791,8 @@ fn create_appliance_gains(
 
     // Assign priority to those with a kWhcycle value, in reverse order
     for (priority, appliance) in appliance_kwhcycle
-        // the Python behaviour differs here as it sorts by index 1 (2nd letter) of the appliance key string,
-        // in the Rust we've implemented what we think is the intended behaviour and reported the bug to DESNZ
+        // Assign priority by descending kWh-per-cycle so the largest single-cycle
+        // demand is shed first under smart-control prioritisation.
         .sorted_by(|_, v1, _, v2| v1.total_cmp(v2).reverse())
         .enumerate()
     {
@@ -2924,7 +2892,6 @@ struct ClothesUseData {
 }
 struct ApplianceCookingDemand {
     mean_annual_demand: f64,
-    _mean_annual_events: f64,
     mean_event_demand: f64,
     fuel: Option<ArcStr>,
     event_count: f64,
@@ -2941,7 +2908,6 @@ fn cooking_demand(
     };
     let oven = ApplianceCookingDemand {
         mean_annual_demand: 285.14,
-        _mean_annual_events: 441.11,
         mean_event_demand: 0.762,
         fuel: oven_fuel,
         event_count: Default::default(),
@@ -2954,7 +2920,6 @@ fn cooking_demand(
     };
     let hobs = ApplianceCookingDemand {
         mean_annual_demand: 352.53,
-        _mean_annual_events: 520.86,
         mean_event_demand: 0.810,
         fuel: hobs_fuel,
         event_count: Default::default(),
@@ -2966,7 +2931,6 @@ fn cooking_demand(
     };
     let microwave = ApplianceCookingDemand {
         mean_annual_demand: 44.11,
-        _mean_annual_events: 710.65,
         mean_event_demand: 0.0772,
         fuel: microwave_fuel,
         event_count: Default::default(),
@@ -2978,7 +2942,6 @@ fn cooking_demand(
     };
     let kettle = ApplianceCookingDemand {
         mean_annual_demand: 173.03,
-        _mean_annual_events: 1782.5,
         mean_event_demand: 0.0985,
         fuel: kettle_fuel,
         event_count: Default::default(),
@@ -3109,6 +3072,9 @@ fn appliance_cooking_defaults(
         ]),
     };
 
+    // Kettle and Microwave are always added as defaults below, so an input
+    // need not declare them. They appear in the input schema only so a user
+    // can pin them ("Default") or opt out ("Not Installed").
     let mut additional_cooking_defaults = IndexMap::from([
         ("Kettle", json!({"kWh_per_cycle": 0.1})),
         ("Microwave", json!({"kWh_per_cycle": 0.08})),
@@ -3399,11 +3365,11 @@ pub(super) fn create_hot_water_use_pattern(
     // Add daily average hot water use to combi boiler and hot water only heat pump (HWOHP) objects,
     // if present
     // TODO (from Python) This is probably only valid if HWOHP is the only heat source for the
-    // storage tank. Make this more robust/flexible in future.
+    // tank. Make this more robust/flexible in future.
     for hot_water_source in input.hot_water_source_mut()?.values_mut() {
         let source_type = hot_water_source.get("type").and_then(|t| t.as_str());
         match source_type {
-            Some("StorageTank") => {
+            Some("StorageTank") | Some("SmartHotWaterTank") => {
                 if let Some(heat_sources) = hot_water_source
                     .get_mut("HeatSource")
                     .and_then(JsonValue::as_object_mut)
@@ -3703,20 +3669,6 @@ fn create_heating(input: &mut InputForProcessing) -> anyhow::Result<()> {
         }
     }
 
-    if let Some(wet_heat_sources) = input.optional_root_object_mut("WetHeatSource")? {
-        for heat_source in wet_heat_sources.values_mut() {
-            if heat_source
-                .get("type")
-                .and_then(JsonValue::as_str)
-                .is_some_and(|type_str| type_str == "HeatBattery")
-            {
-                if let Some(heat_source) = heat_source.as_object_mut() {
-                    heat_source.insert("heat_battery_location".into(), json!("internal"));
-                }
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -3734,13 +3686,17 @@ fn create_infiltration_ventilation(input: &mut InputForProcessing) -> anyhow::Re
 
 static COLOUR_TO_SOLAR_ABSORPTION_MAP: LazyLock<IndexMap<&'static str, f64>> =
     LazyLock::new(|| [("Light", 0.3), ("Intermediate", 0.6), ("Dark", 0.9)].into());
+
+// Areal heat capacity by thermal mass class, in J/(m²·K) as required by hem-core.
+// Values reflect the full depth of each element rather than truncating to the
+// first 100 mm, so they are higher than the surface-layer figures.
 static AREAL_HEAT_MAP: LazyLock<IndexMap<&'static str, usize>> = LazyLock::new(|| {
     [
-        ("Very light", 50000),
-        ("Light", 75000),
-        ("Medium", 110000),
-        ("Heavy", 175000),
-        ("Very heavy", 250000),
+        ("Very light", 240000),
+        ("Light", 450000),
+        ("Medium", 650000),
+        ("Heavy", 850000),
+        ("Very heavy", 1350000),
     ]
     .into()
 });
@@ -3792,22 +3748,23 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
         ]
         .contains(&element_type.as_str())
         {
-            let areal_heat_value = *AREAL_HEAT_MAP
-                .get(
-                    building_element
-                        .get("areal_heat_capacity")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            anyhow!("Building element areal heat capacity was not a string.")
-                        })?,
-                )
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Building element areal heat capacity had unexpected value '{}'.",
-                        building_element["areal_heat_capacity"]
-                    )
-                })?;
-            building_element["areal_heat_capacity"] = json!(areal_heat_value);
+            // A numeric areal heat capacity (J/(m²·K)) may be supplied directly in place
+            // of a qualitative class; pass numeric values through unmapped. The schema only
+            // permits a numeric value on the partition-style types
+            // (BuildingElementAdjacentConditionedSpace and
+            // BuildingElementAdjacentUnconditionedSpace_Simple); for the other types listed
+            // here the value is always a class string, so the numeric passthrough is a no-op.
+            let mut areal_heat_value = building_element
+                .get("areal_heat_capacity")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Building element areal heat capacity was not a string."))?;
+
+            if let Some(mapped_value) = AREAL_HEAT_MAP.get(areal_heat_value) {
+                building_element["areal_heat_capacity"] = json!(mapped_value);
+            } else {
+                building_element["areal_heat_capacity"] = json!(areal_heat_value);
+            }
+
             let mass_distribution_value = MASS_DISTRIBUTION_MAP
                 .get(
                     building_element
@@ -4328,6 +4285,7 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
             let width = get_field_as_f64(el, "width")?;
             let height = get_field_as_f64(el, "height")?;
             let base_height = get_field_as_f64(el, "base_height")?;
+            let pitch = get_field_as_f64(el, "pitch")?;
             let orientation = get_field_as_f64(el, "orientation360")?;
             let shading = el
                 .get("shading")
@@ -4343,6 +4301,7 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
                 base_height,
                 height,
                 width,
+                pitch,
                 Orientation360::from(orientation),
                 &shading,
             )?;
@@ -4374,11 +4333,13 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
         .collect())
 }
 
+#[allow(unused)]
 fn shading_factor(
     input: &InputForProcessing,
     base_height: f64,
     height: f64,
     width: f64,
+    tilt: f64,
     orientation: Orientation360,
     shading: &[WindowShadingObject],
 ) -> anyhow::Result<Vec<f64>> {
@@ -4450,18 +4411,24 @@ fn shading_factor(
             .map(|x| x.to_vec()),
     );
 
-    time.iter()
-        .map(|t_it| {
-            conditions.direct_shading_reduction_factor(
-                base_height,
-                height,
-                width,
-                orientation,
-                Some(shading),
-                t_it,
-            )
-        })
-        .collect()
+    todo!("Needs to point at alpha 9 branch and make `window_shading_expand_reveals` public");
+    // {
+    //     let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
+
+    //     time.iter()
+    //         .map(|t_it| {
+    //             conditions.direct_shading_reduction_factor(
+    //                 base_height,
+    //                 height,
+    //                 width,
+    //                 tilt,
+    //                 orientation,
+    //                 Some(window_shading_expanded.as_slice()),
+    //                 t_it,
+    //             )
+    //         })
+    //         .collect()
+    // }
 }
 
 fn top_up_lighting(
