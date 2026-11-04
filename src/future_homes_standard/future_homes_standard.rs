@@ -6684,6 +6684,61 @@ mod tests {
         }
     }
 
+    mod create_thermal_penetration {
+        use super::*;
+
+        #[test]
+        fn test_maps_areal_heat_capacity_for_each_thermal_mass_class() {
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "a": {
+                            "BuildingElement": {
+                                "Very light": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Very light",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Light": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Light",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Medium": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Medium",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Heavy": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Heavy",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Very heavy": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Very heavy",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                            }
+                        }
+                    }
+                }),
+            };
+
+            create_thermal_penetration(&mut input).unwrap();
+
+            let elements = &input.input["Zone"]["a"]["BuildingElement"];
+            assert_eq!(elements["Very light"]["areal_heat_capacity"], json!(240000));
+            assert_eq!(elements["Light"]["areal_heat_capacity"], json!(450000));
+            assert_eq!(elements["Medium"]["areal_heat_capacity"], json!(650000));
+            assert_eq!(elements["Heavy"]["areal_heat_capacity"], json!(850000));
+            assert_eq!(
+                elements["Very heavy"]["areal_heat_capacity"],
+                json!(1350000)
+            );
+        }
+    }
+
     mod calc_n_occupants {
         use super::*;
 
