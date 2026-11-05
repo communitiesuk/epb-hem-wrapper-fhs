@@ -1,4 +1,3 @@
-#![allow(clippy::all)]
 use crate::future_homes_standard::appliance::FhsAppliance;
 use crate::future_homes_standard::hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
@@ -548,7 +547,7 @@ where
 
         let fuel_code = energy_supply_details.fuel();
 
-        let energy_supply_key: ArcStr = energy_supply_key.into();
+        let energy_supply_key: ArcStr = energy_supply_key;
 
         // Get emissions/PE factors for import/export
         let (emis_factor_import_export, emis_oos_factor_import_export, pe_factor_import_export) =
@@ -1489,14 +1488,13 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
 ///  These devices charge on a 7-hour off-peak electricity tariff (Economy 7), so their
 /// electricity costs must be split between off-peak and on-peak rates for EER calculation.
 pub(crate) fn has_offpeak_electricity_devices(input: &Input) -> anyhow::Result<bool> {
-
     if let Some(space_heat_system) = input.space_heat_system() {
         if space_heat_system
             .values()
             .any(|shs| matches!(shs, SpaceHeatSystemDetails::ElectricStorageHeater { .. }))
-            {
-                return Ok(true);
-            }
+        {
+            return Ok(true);
+        }
     }
 
     if let Some(heat_source_wet) = input.heat_source_wet() {
@@ -2310,7 +2308,7 @@ impl AppliancePropensities<AsDataFile> {
             ]
             .into_iter()
             .map(|probabilities| -> [f64; 24] {
-                let sumcol = FSum::with_all(&probabilities).value();
+                let sumcol = FSum::with_all(probabilities).value();
                 probabilities.map(|x| x / sumcol)
             })
             .collect::<Vec<_>>()
@@ -7532,9 +7530,8 @@ mod tests {
     }
 
     mod create_heating_pattern {
-        use indexmap::map::MutableEntryKey;
 
-use super::*;
+        use super::*;
 
         #[fixture]
         fn input() -> InputForProcessing {
@@ -7686,7 +7683,10 @@ use super::*;
             // an advance, so advanced_start must not be attached to the Control.
             input.input["HeatingControlType"] = json!("SeparateTempControl");
             create_heating_pattern(&mut input).unwrap();
-            assert!(!input.input["Control"]["HeatingPattern_boiler"].as_object().unwrap().contains_key("advanced_start"));
+            assert!(!input.input["Control"]["HeatingPattern_boiler"]
+                .as_object()
+                .unwrap()
+                .contains_key("advanced_start"));
         }
         #[rstest]
         fn test_separate_time_and_temp_control_sets_advanced_start(mut input: InputForProcessing) {

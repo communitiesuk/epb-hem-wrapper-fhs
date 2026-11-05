@@ -464,7 +464,7 @@ impl InputForProcessing {
         Ok(self.root()?.contains_key("PreHeatedWaterSource"))
     }
 
-    pub(crate) fn all_preheated_tank_heat_source_values_mut(
+    pub(crate) fn _all_preheated_tank_heat_source_values_mut(
         &mut self,
     ) -> JsonAccessResult<Vec<&mut JsonValue>> {
         Ok(self
@@ -480,10 +480,9 @@ impl InputForProcessing {
     }
 
     pub(crate) fn preheated_tank_mut(&mut self) -> JsonAccessResult<&mut JsonValue> {
-        Ok(self
-            .root_object_mut("PreHeatedWaterSource")?
+        self.root_object_mut("PreHeatedWaterSource")?
             .get_mut("preheated tank")
-            .ok_or_else(|| json_error("preheated tank not found"))?)
+            .ok_or_else(|| json_error("preheated tank not found"))
     }
 
     pub fn zone_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {

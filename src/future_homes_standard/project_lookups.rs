@@ -1,6 +1,5 @@
 //! Functionality to support looking up information from the project input to help interpret returns
 //! from the core
-#![allow(clippy::all)]
 use anyhow::bail;
 use fsum::FSum;
 use home_energy_model::input::{FuelType, Input, InputForCalcHtcHlp};
