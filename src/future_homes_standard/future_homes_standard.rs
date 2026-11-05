@@ -7721,9 +7721,9 @@ mod tests {
         }
 
         #[rstest]
-        fn test_annual_and_monthly_means_pinned() -> anyhow::Result<()> {
+        fn test_annual_and_monthly_means_pinned() {
             // When the standardised opening series is loaded
-            let ratios = load_smart_air_brick_opening()?;
+            let ratios = load_smart_air_brick_opening().unwrap();
             // Then its annual mean is unchanged. The mean is what drives the modelled saving, the
             // core reducing infiltration in proportion to (1 - ratio), so a regenerated series
             // that moves it changes every result and has to say so
@@ -7736,10 +7736,141 @@ mod tests {
             let september = &ratios[243 * steps_per_day..273 * steps_per_day];
             assert!((january.iter().sum::<f64>() / january.len() as f64 - 0.1243).abs() < 1e-4);
             assert!((september.iter().sum::<f64>() / september.len() as f64 - 0.5599).abs() < 1e-4);
-
-            Ok(())
         }
-    
+    }
+
+    mod create_heat_battery_charging_source {
+        use super::*;
+        use serde_json::json;
+
+        fn project(battery_extra: Option<serde_json::Value>) -> serde_json::Value {
+            let mut battery = json!({
+                "type": "HeatBattery",
+                "battery_type": "pcm",
+                "phase_transition_temperature_upper": 59,
+                "phase_transition_temperature_lower": 57,
+            });
+            let battery = battery.as_object_mut().unwrap();
+            if let Some(battery_extra) = battery_extra {
+                let battery_extra = battery_extra.as_object().unwrap();
+                for (k, v) in battery_extra {
+                    battery.insert(k.clone(), v.clone());
+                }
+            }
+            json!({
+                "Control": {},
+                "Zone": {"zone 1": {}},
+                "HeatSourceWet": {"hb1": battery, "HeatPump1": {"type": "HeatPump"}},
+            })
+        }
+
+        fn hydronic(overrides: Option<serde_json::Value>) -> serde_json::Value {
+            let mut result = json!({
+                "type": "HeatSourceWet",
+                "name": "HeatPump1",
+                "temp_flow_limit_upper": 65.0,
+            });
+            if let Some(overrides) = overrides {
+                let overrides = overrides.as_object().unwrap();
+                let result_obj = result.as_object_mut().unwrap();
+                for (k, v) in overrides {
+                    result_obj.insert(k.clone(), v.clone());
+                }
+            }
+            result
+        }
+
+        #[rstest]
+        fn test_charging_sources_get_off_peak_state_of_charge_controls() {
+            // Given a PCM heat battery charged by a heat pump
+            let project_dict = project(Some(json!({
+                "temp_min_useful": 40.0,
+                "HeatSource": {
+                    "hp_charging": hydronic(None)
+                }
+            })));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            let _ = create_charging_pattern(&mut input).unwrap();
+            // Then the source has its own control on the off-peak window, expressed as states of
+            // charge: a PCM battery only charges above its phase change temperature, so a
+            // temperature band would cap the heat source below the point it has to exceed
+            let source = &input.input["HeatSourceWet"]["hb1"]["HeatSource"]["hp_charging"];
+            assert_eq!(source["schedule_unit"], "soc");
+            let control = &input.input["Control"][source["Control"].as_str().unwrap()];
+            assert_eq!(control["type"], "RangeTimeControl");
+            assert_eq!(control["time_series_step"], 0.5);
+            let day = &control["schedule_lower"]["day"];
+            assert_eq!(day.as_array().unwrap().len(), 48);
+            assert_eq!(
+                day.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| !v.is_null())
+                    .count(),
+                14
+            );
+            assert_eq!(
+                day.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| v.is_null())
+                    .count(),
+                34
+            );
+            assert_eq!(control["schedule_upper"]["day"], *day);
+            // And the direct electric configuration is not also set, the core forbidding both
+            assert!(input.input["HeatSourceWet"]["hb1"]
+                .get("ControlCharge")
+                .is_none());
+        }
+
+        #[rstest]
+        fn test_direct_electric_charging_source_gets_a_control() {
+            // Given a battery charged by a direct electric source given as a charging source, rather
+            // than by the rated_charge_power configuration
+            let project_dict = project(Some(json!({
+                "temp_min_useful": 40.0,
+                "HeatSource": {"immersion": {"type": "DirectElectric", "rated_charge_power": 6.0}},
+            })));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            let _ = create_charging_pattern(&mut input);
+            // Then it is timed the same way as a hydronic source, and no cross-reference check
+            // applies, there being no named heat source to resolve
+            let source = &input.input["HeatSourceWet"]["hb1"]["HeatSource"]["immersion"];
+            assert_eq!(source["schedule_unit"], "soc");
+            let control = &input.input["Control"][source["Control"].as_str().unwrap()];
+            assert_eq!(control["type"], "RangeTimeControl");
+            assert_eq!(
+                control["schedule_lower"]["day"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_f64().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![1.0; 14]
+            );
+        }
+
+        #[rstest]
+        fn test_battery_without_charging_sources_keeps_its_charge_control() {
+            // Given a heat battery charged by a direct electric element at a rated power
+            let project_dict = project(Some(json!({"rated_charge_power": 15.0})));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            let _ = create_charging_pattern(&mut input);
+            // Then it still gets the single charge control, unchanged
+            assert_eq!(input.input["HeatSourceWet"]["hb1"]["ControlCharge"], "HeatBattery_Control");
+            assert_eq!(input.input["Control"]["HeatBattery_Control"]["type"], "ChargeControl");
+        }
     }
     mod create_space_heat_distribution {
         use super::*;
