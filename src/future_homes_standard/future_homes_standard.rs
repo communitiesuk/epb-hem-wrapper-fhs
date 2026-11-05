@@ -7705,6 +7705,42 @@ mod tests {
         }
     }
 
+    mod load_smart_air_brick_opening {
+        use super::*;
+
+        #[rstest]
+        fn test_series_length_and_range() -> anyhow::Result<()> {
+            // When the standardised opening series is loaded
+            let ratios = load_smart_air_brick_opening()?;
+            let total_steps = simtime().total_steps();
+            // Then it holds one ratio per timestep of the year, each fully closed to fully open
+            assert_eq!(ratios.len(), total_steps);
+            assert!(ratios.iter().all(|&r| r >= 0.0));
+            assert!(ratios.iter().all(|&r| r <= 1.0));
+            Ok(())
+        }
+
+        #[rstest]
+        fn test_annual_and_monthly_means_pinned() -> anyhow::Result<()> {
+            // When the standardised opening series is loaded
+            let ratios = load_smart_air_brick_opening()?;
+            // Then its annual mean is unchanged. The mean is what drives the modelled saving, the
+            // core reducing infiltration in proportion to (1 - ratio), so a regenerated series
+            // that moves it changes every result and has to say so
+            assert!((ratios.iter().sum::<f64>() / ratios.len() as f64 - 0.293866).abs() < 1e-6);
+            // And so is the seasonal shape, which a series rebuilt in the wrong calendar order
+            // would lose while leaving the annual mean intact. January is the least ventilated
+            // month and September the most
+            let steps_per_day = 48;
+            let january = &ratios[..31 * steps_per_day];
+            let september = &ratios[243 * steps_per_day..273 * steps_per_day];
+            assert!((january.iter().sum::<f64>() / january.len() as f64 - 0.1243).abs() < 1e-4);
+            assert!((september.iter().sum::<f64>() / september.len() as f64 - 0.5599).abs() < 1e-4);
+
+            Ok(())
+        }
+    
+    }
     mod create_space_heat_distribution {
         use super::*;
 
