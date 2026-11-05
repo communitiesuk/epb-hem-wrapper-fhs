@@ -31,7 +31,7 @@ pub(crate) fn apply_schema_validation(input: &Value) -> Result<(), SchemaValidat
     // Drop parent's unevaluated properties errors explained by child's unevaluated properties error
     let reportable_errors: Vec<&ValidationError> = validation_errors
         .iter()
-        .filter(|error| !error.is_unreliable_unevaluated_properties(&*validation_errors))
+        .filter(|error| !error.is_unreliable_unevaluated_properties(&validation_errors))
         .collect();
 
     // Suppression only ever removes errors explained by another, so it cannot empty a
@@ -143,28 +143,16 @@ mod tests {
             validation_error("/Appliances/Fridge-Freezer", "", false),
             validation_error("/Appliances/Fridge", "", false),
         ];
-        assert_eq!(
-            errors[0].is_unreliable_unevaluated_properties(&errors),
-            true
-        );
-        assert_eq!(
-            errors[1].is_unreliable_unevaluated_properties(&errors),
-            false
-        );
-        assert_eq!(
-            errors[2].is_unreliable_unevaluated_properties(&errors),
-            false
-        );
+        assert!(errors[0].is_unreliable_unevaluated_properties(&errors),);
+        assert!(!errors[1].is_unreliable_unevaluated_properties(&errors),);
+        assert!(!errors[2].is_unreliable_unevaluated_properties(&errors),);
     }
 
     #[test]
     // unit test for the Rust only
     fn test_is_unreliable_unevaluated_properties_returns_false_given_no_child_errors() {
         let errors = vec![validation_error("/Appliances", "", true)];
-        assert_eq!(
-            errors[0].is_unreliable_unevaluated_properties(&errors),
-            false
-        );
+        assert!(!errors[0].is_unreliable_unevaluated_properties(&errors),);
     }
 
     #[fixture]
@@ -760,7 +748,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let error_message =
             "Unevaluated properties are not allowed ('SomeOtherTopLevelProperty' was unexpected)";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_partially(result, &[error_message]);
     }
 
     #[rstest]
@@ -772,7 +760,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let error_message =
             "Unevaluated properties are not allowed ('NumberOfSanitaryAccommodations' was unexpected)";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_partially(result, &[error_message]);
     }
 
     #[rstest]
@@ -789,7 +777,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         let error_message =
             "/General: Unevaluated properties are not allowed ('storey_of_dwelling' was unexpected)";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_partially(result, &[error_message]);
     }
 
     #[rstest]
@@ -941,7 +929,7 @@ mod tests {
         project["Appliances"]["Fridge-Freezer"] = json!("Not Installed");
         let result = apply_schema_validation(&project);
         let error_message = "/Appliances: {'required':['Fridge','Fridge-Freezer']";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message]);
+        contains_expected_schema_validation_errors_partially(result, &[error_message]);
     }
 
     #[rstest]
@@ -1464,7 +1452,7 @@ mod tests {
         // is jsonschema's wording and can change when it is upgraded
         let result = apply_schema_validation(&project);
         let error_message = "HeatSourceWet/hb1/rated_charge_power";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+        contains_expected_schema_validation_errors_partially(result, &[error_message])
     }
 
     #[rstest]
@@ -1479,7 +1467,7 @@ mod tests {
         project["HeatSourceWet"] = json!({"hb1": heat_battery});
         let result = apply_schema_validation(&project);
         let error_message = "'temp_min_useful' is a required property";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+        contains_expected_schema_validation_errors_partially(result, &[error_message])
     }
 
     #[rstest]
@@ -1569,7 +1557,7 @@ mod tests {
         let result = apply_schema_validation(&project);
         // validation message in Python is true should not be valid under {}
         let error_message = "/Zone/zone 1/BuildingElement/ground/vents_open_during_airtightness_test: {} is not allowed for true";
-        contains_expected_schema_validation_errors_partially(result, &mut [error_message])
+        contains_expected_schema_validation_errors_partially(result, &[error_message])
     }
 
     #[rstest]

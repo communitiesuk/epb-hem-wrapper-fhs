@@ -160,7 +160,8 @@ fn run_fhs_preprocessing(
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
     let input = BufReader::new(
-        File::open(input_file_path).expect(&format!("Failed to open file: {:?}", input_file_path)),
+        File::open(input_file_path)
+            .unwrap_or_else(|_| panic!("Failed to open file: {:?}", input_file_path)),
     );
 
     println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
