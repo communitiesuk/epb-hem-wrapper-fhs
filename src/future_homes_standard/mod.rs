@@ -308,7 +308,7 @@ fn do_fhs_postprocessing(
             notional,
             output_mode,
             custom_energy_supply_factors,
-            todo!("Provide generation curtailed data for alpha 9 migration"),
+            &results.output.core.generation_curtailed,
         )?;
     } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         let OutputSummary {
