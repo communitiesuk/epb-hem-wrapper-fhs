@@ -558,9 +558,6 @@ mod tests {
         let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
         project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
         project["ExternalConditions"]["shading_segments"] = shading_segments;
-        // TODO complete when functions are implemented during migration to 1.0.0a4
-        // initial_preprocessing(&mut project);
-        // final_preprocessing(&mut project);
 
         let mut project = InputForProcessing { input: project };
 
