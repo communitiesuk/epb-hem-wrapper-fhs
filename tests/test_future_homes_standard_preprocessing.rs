@@ -37,11 +37,11 @@ fn test_fhs_preprocessing_output_against_provided_results() {
     let demo_file_names = [
         "demo_FHS",
         "DESN-H-End-02-ESH-cMEV",
-        "DESN-F-MS-02-ESH-cMEV.json",
+        "DESN-F-MS-02-ESH-cMEV",
         "DESN-H-End-02-HP-iMEV-pre-heat",
         "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
-        "DESN-H-End-02-HP-MVHR-basement.json",
-        "DESN-H-End-02-HN-cMEV.json",
+        "DESN-H-End-02-HP-MVHR-basement",
+        "DESN-H-End-02-HN-cMEV",
     ];
 
     let mut total_difference_count = 0;
@@ -159,7 +159,9 @@ fn run_fhs_preprocessing(
 ) {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
-    let input = BufReader::new(File::open(input_file_path).unwrap());
+    let input = BufReader::new(
+        File::open(input_file_path).expect(&format!("Failed to open file: {:?}", input_file_path)),
+    );
 
     println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
     let result = run_wrappers(
