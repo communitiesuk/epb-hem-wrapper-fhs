@@ -6953,8 +6953,163 @@ mod tests {
         }
     }
 
-    // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
+    mod create_appliance_gains {
+        use super::*;
+        // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
 
+        #[rstest]
+        fn test_priority_assigned_by_descending_kwh_per_cycle() {
+            // Given an electric-only assessment where the cooking defaults give
+            // known kWh/cycle values:
+            //     Hobs = 0.72, Oven = 0.59, Kettle = 0.10, Microwave = 0.08
+            // Sorted by kWh/cycle descending (the spec-correct ordering used for
+            // smart-control prioritisation):
+            //     Hobs, Oven, Kettle, Microwave
+            // Sorted by the second character of the appliance name descending
+            // (the previous, defective ordering) would give:
+            //     Oven ('v'), Hobs ('o'), Microwave ('i'), Kettle ('e')
+            // so the two orderings disagree and this test pins the correct one.
+
+            let project_dict = json!({
+                "ApplianceGains": {},
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {
+                    // disable non-cooking appliances so the priority assertion
+                    // only covers the four cooking entries above.
+                    // This fixture drives create_appliance_gains directly rather
+                    // than going through apply_schema_validation, so it can opt
+                    // out of Otherdevices; a real input file cannot, because the
+                    // schema rejects that name.
+                    "Fridge": "Not Installed",
+                    "Freezer": "Not Installed",
+                    "Fridge-Freezer": "Not Installed",
+                    "Otherdevices": "Not Installed",
+                    "Dishwasher": "Not Installed",
+                    "Clothes_washing": "Not Installed",
+                    "Clothes_drying": "Not Installed",
+                },
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            let daily_uniform = [1.0 / 24.0; 24];
+            let appliance_propensities = AppliancePropensities::<AsDataFile> {
+                hour: std::array::from_fn(|i| i),
+                occupied: Default::default(),
+                cleaning_washing_machine: Default::default(),
+                cleaning_tumble_dryer: Default::default(),
+                cleaning_dishwasher: Default::default(),
+                cooking_electric_oven: daily_uniform,
+                cooking_microwave: daily_uniform,
+                cooking_kettle: daily_uniform,
+                cooking_gas_cooker: daily_uniform,
+                consumer_electronics: Default::default(),
+                state: Default::default(),
+            }
+            .normalise();
+            let tfa = 100.;
+            let n_occupants = 5.;
+            let _ = create_appliance_gains(&mut input, tfa, n_occupants, &appliance_propensities)
+                .unwrap();
+            // Then priorities are assigned in descending order of kWh/cycle
+            assert_eq!(input.input["ApplianceGains"]["Hobs"]["priority"], 0);
+            assert_eq!(input.input["ApplianceGains"]["Oven"]["priority"], 1);
+            assert_eq!(input.input["ApplianceGains"]["Kettle"]["priority"], 2);
+            assert_eq!(input.input["ApplianceGains"]["Microwave"]["priority"], 3);
+        }
+
+        #[rstest]
+        fn test_continuous_appliance_excluded_from_priority_sort() {
+            // Continuously running appliances (Fridge, Freezer, Fridge-Freezer,
+            // Otherdevices) are modelled as a yearlong flat-W schedule rather
+            // than as discrete events and have no kWh-per-cycle figure. The
+            // priority sort is only meaningful for cyclic appliances, so this
+            // test pins the invariant that a continuous appliance lands in
+            // ApplianceGains as a scheduled entry with NO priority field and
+            // is not silently assigned a kWh-per-cycle figure from a preceding
+            // cyclic appliance.
+            let project_dict = json!({
+                "ApplianceGains": {},
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {
+                    // one continuous appliance to verify its handling
+                    "Fridge": "Default",
+                    // disable the other continuous appliances so the assertion
+                    // is sharply on Fridge alone.
+                    // This fixture drives create_appliance_gains directly rather
+                    // than going through apply_schema_validation, so it can opt
+                    // out of Otherdevices; a real input file cannot, because the
+                    // schema rejects that name.
+                    "Freezer": "Not Installed",
+                    "Fridge-Freezer": "Not Installed",
+                    "Otherdevices": "Not Installed",
+                    "Dishwasher": "Not Installed",
+                    "Clothes_washing": "Not Installed",
+                    "Clothes_drying": "Not Installed",
+                },
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            let daily_uniform = [1.0 / 24.0; 24];
+            let appliance_propensities = AppliancePropensities::<AsDataFile> {
+                hour: std::array::from_fn(|i| i),
+                occupied: Default::default(),
+                cleaning_washing_machine: Default::default(),
+                cleaning_tumble_dryer: Default::default(),
+                cleaning_dishwasher: Default::default(),
+                cooking_electric_oven: daily_uniform,
+                cooking_microwave: daily_uniform,
+                cooking_kettle: daily_uniform,
+                cooking_gas_cooker: daily_uniform,
+                consumer_electronics: Default::default(),
+                state: Default::default(),
+            }
+            .normalise();
+            let tfa = 100.;
+            let n_occumpants = 5.;
+            // When create_appliance_gains is called
+            let _ = create_appliance_gains(&mut input, tfa, n_occumpants, &appliance_propensities)
+                .unwrap();
+            // Then the continuous appliance is present in ApplianceGains as a
+            // scheduled entry but carries no priority field
+            let fridge_gains = &input.input["ApplianceGains"]["Fridge"];
+            assert!(fridge_gains["schedule"].is_object());
+            assert!(!fridge_gains.as_object().unwrap().contains_key("priority"));
+            // And cyclic appliances are still prioritised normally (kWh/cycle
+            // descending: Hobs 0.72, Oven 0.59, Kettle 0.10, Microwave 0.08)
+            assert_eq!(input.input["ApplianceGains"]["Hobs"]["priority"], 0);
+            assert_eq!(input.input["ApplianceGains"]["Oven"]["priority"], 1);
+            assert_eq!(input.input["ApplianceGains"]["Kettle"]["priority"], 2);
+            assert_eq!(input.input["ApplianceGains"]["Microwave"]["priority"], 3);
+        }
+    }
+
+    mod appliance_cooking_defaults {
+        use super::*;
+        #[rstest]
+        fn test_kettle_not_installed_is_removed() {
+            // Given an input that declares the Kettle as "Not Installed" (the
+            // opt-out the input schema now permits)
+            // When create_appliance_gains is called
+            let project_dict = json!({
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {"Kettle": "Not Installed"},
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When appliance and cooking defaults are applied
+            let tfa = 100.;
+            let n_occupants = 2.;
+            let _ = appliance_cooking_defaults(&mut input, tfa, n_occupants);
+            // Then the Kettle is removed from the Appliances section
+            assert!(!input.input["Appliances"]
+                .as_object()
+                .unwrap()
+                .contains_key("Kettle"));
+        }
+    }
     mod appliance_kwh_cycle_loading_factor {
         use super::*;
 
@@ -7364,21 +7519,22 @@ mod tests {
 
         // NB. this test is written in the Python, erroneously, as "test_unknown_heat_control_type"
         #[rstest]
-        #[ignore = "as part of alpha 9 migration"]
         fn test_schedule(whole_dwelling_zone: JsonValue) {
             let schedule = weekend_heating_schedule(&whole_dwelling_zone).unwrap();
 
             let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
             expected_schedule.extend(vec![None; 17]); // unoccupied
-            expected_schedule.extend(vec![Some(20.2); 27]); // both occupied
-            expected_schedule.extend(vec![None; 4]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 28]); // both occupied
+            expected_schedule.extend(vec![None; 3]); // unoccupied
 
             assert_eq!(schedule.to_vec(), expected_schedule);
         }
     }
 
     mod create_heating_pattern {
-        use super::*;
+        use indexmap::map::MutableEntryKey;
+
+use super::*;
 
         #[fixture]
         fn input() -> InputForProcessing {
@@ -7400,7 +7556,6 @@ mod tests {
         }
 
         #[rstest]
-        #[ignore = "as part of alpha 9 migration"]
         fn test_heating_pattern_for_combi_boiler(mut input: InputForProcessing) {
             // Given a dwelling with a combi boiler heating system
             // When create heating pattern is called
@@ -7510,7 +7665,7 @@ mod tests {
                             20.2,
                             20.2,
                             20.2,
-                            null,
+                            20.2,
                             null,
                             null,
                             null,
@@ -7522,6 +7677,26 @@ mod tests {
             assert_eq!(
                 input.input["SpaceHeatSystem"]["boiler"]["Control"],
                 "HeatingPattern_boiler"
+            );
+        }
+
+        #[rstest]
+        fn test_separate_temp_control_omits_advanced_start(mut input: InputForProcessing) {
+            // SeparateTempControl uses a fixed weekday schedule that does not model
+            // an advance, so advanced_start must not be attached to the Control.
+            input.input["HeatingControlType"] = json!("SeparateTempControl");
+            create_heating_pattern(&mut input).unwrap();
+            assert!(!input.input["Control"]["HeatingPattern_boiler"].as_object().unwrap().contains_key("advanced_start"));
+        }
+        #[rstest]
+        fn test_separate_time_and_temp_control_sets_advanced_start(mut input: InputForProcessing) {
+            // SeparateTimeAndTempControl bakes the advance into the schedule and
+            // expects the simulation engine to apply the matching advanced_start.
+            input.input["HeatingControlType"] = json!("SeparateTimeAndTempControl");
+            create_heating_pattern(&mut input).unwrap();
+            assert_eq!(
+                input.input["Control"]["HeatingPattern_boiler"]["advanced_start"],
+                json!(2.0)
             );
         }
     }
@@ -7868,8 +8043,14 @@ mod tests {
             // When the charging pattern is created
             let _ = create_charging_pattern(&mut input);
             // Then it still gets the single charge control, unchanged
-            assert_eq!(input.input["HeatSourceWet"]["hb1"]["ControlCharge"], "HeatBattery_Control");
-            assert_eq!(input.input["Control"]["HeatBattery_Control"]["type"], "ChargeControl");
+            assert_eq!(
+                input.input["HeatSourceWet"]["hb1"]["ControlCharge"],
+                "HeatBattery_Control"
+            );
+            assert_eq!(
+                input.input["Control"]["HeatBattery_Control"]["type"],
+                "ChargeControl"
+            );
         }
     }
     mod create_space_heat_distribution {
