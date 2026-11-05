@@ -8610,5 +8610,396 @@ mod tests {
                 75.33249413626568
             );
         }
+        #[rstest]
+        fn test_hw_average_applied_to_heatpump_hwonly_in_smart_tank(mut input: InputForProcessing) {
+            input.input["HotWaterSource"] = json!({
+                "tank": {"type": "SmartHotWaterTank", "HeatSource": {"hp": {"type": "HeatPump_HWOnly"}}}
+            });
+            let tfa = 100.0;
+            let n_occupants = 2.;
+            let cold_water_feed_temps = vec![10.0; 8760];
+            // When the hot water use pattern is created
+            create_hot_water_use_pattern(&mut input, tfa, n_occupants, &cold_water_feed_temps)
+                .unwrap();
+            // Then the expected vol_hw_daily_average is set on the HW-only heat pump, as for a
+            // storage tank (the value depends on occupancy, not tank type)
+            assert_relative_eq!(
+                input.input["HotWaterSource"]["tank"]["HeatSource"]["hp"]["vol_hw_daily_average"]
+                    .as_f64()
+                    .unwrap(),
+                75.33249413626568
+            );
+        }
+    }
+    mod split_internal_partitions {
+        use super::*;
+
+        fn project_dict(building_elements: serde_json::Value) -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "whole dwelling": {
+                            "BuildingElement": building_elements
+                        }
+                    },
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_vertical_wall_splits_into_two_faces_at_same_pitch() {
+            //Given a full-construction internal wall (areal heat capacity already numeric, as
+            // create_thermal_penetration runs immediately before split_internal_partitions)
+            let mut input = project_dict(json!({
+                    "internal wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 20.0,
+                    "pitch": 90.0,
+                    "thermal_resistance_construction": 0.74,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When the partitions are split
+            let _ = split_internal_partitions(&mut input).unwrap();
+            // Then two faces are produced, both vertical, sharing the full area, with halved
+            // resistance and halved areal heat capacity and an unchanged mass distribution class
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 2);
+
+            let names = [
+                "_split_partition_internal wall",
+                "_split_partition_opposite_internal wall",
+            ];
+            for name in names {
+                assert!(elements.contains_key(name));
+            }
+            for face in elements.values() {
+                assert_eq!(face["pitch"].as_f64().unwrap(), 90.0);
+                assert_eq!(face["area"].as_f64().unwrap(), 20.0);
+                assert_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.37
+                );
+                assert_eq!(face["areal_heat_capacity"].as_f64().unwrap(), 25000.0);
+                assert_eq!(face["mass_distribution_class"].as_str().unwrap(), "I");
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+        }
+
+        #[rstest]
+        fn test_horizontal_partition_opposite_face_points_the_other_way() {
+            // Given a horizontal internal floor/ceiling entered at pitch 0
+            let mut input = project_dict(json!(
+            {
+                "floor/ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": true,
+                    }
+            }));
+            // When the partition is split
+            let _ = split_internal_partitions(&mut input);
+            // Then the near face keeps pitch 0 and the opposite face points down at pitch 180
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(
+                elements["_split_partition_floor/ceiling"]["pitch"]
+                    .as_f64()
+                    .unwrap(),
+                0.
+            );
+            assert_eq!(
+                elements["_split_partition_opposite_floor/ceiling"]["pitch"]
+                    .as_f64()
+                    .unwrap(),
+                180.
+            );
+            assert_relative_eq!(
+                elements["_split_partition_floor/ceiling"]["areal_heat_capacity"]
+                    .as_f64()
+                    .unwrap(),
+                55000.0,
+                epsilon = 1e-7
+            );
+            assert_relative_eq!(
+                elements["_split_partition_opposite_floor/ceiling"]["areal_heat_capacity"]
+                    .as_f64()
+                    .unwrap(),
+                55000.0,
+                epsilon = 1e-7
+            );
+            assert!(!elements["_split_partition_floor/ceiling"]
+                .as_object()
+                .unwrap()
+                .contains_key("is_adjacent_space_within_dwelling"));
+            assert!(!elements["_split_partition_opposite_floor/ceiling"]
+                .as_object()
+                .unwrap()
+                .contains_key("is_adjacent_space_within_dwelling"));
+        }
+
+        #[rstest]
+        fn test_u_value_partition_split_by_half_construction_resistance() {
+            // Given a horizontal internal partition specified by U-value rather than thermal
+            // resistance. The U-value bundles in pitch-dependent surface resistances, so it cannot
+            // be split by simple doubling; it must first be converted to the construction resistance.
+            let mut input = project_dict(json!({
+                "ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 20.0,
+                    "pitch": 0,
+                    // Chosen so the construction resistance (U-value with the pitch-0 upward
+                    // surface resistances removed) is 0.74, i.e. 0.37 per half-thickness face.
+                    "u_value": 1.136181,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When the partition is split
+            let _ = split_internal_partitions(&mut input).unwrap();
+            // Then the U-value is replaced by half the construction resistance on each face.
+            // Both faces carry the same half-resistance (the conversion uses the full element's pitch),
+            // and no U-value remains for hem-core to re-strip surface resistances from.
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 2);
+            for face in elements.values() {
+                assert!(face.get("u_value").is_none());
+                assert_relative_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.3699998762514523,
+                    epsilon = 1e-7
+                );
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+        }
+
+        #[rstest]
+        fn test_split_conserves_resistance_and_heat_capacity() {
+            // Given a full-construction partition specified by thermal resistance
+            let mut input = project_dict(
+                json!({"partition": json!({
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area":18.0,
+                    "pitch":90,
+                    "thermal_resistance_construction":0.8,
+                    "areal_heat_capacity":120000,
+                    "mass_distribution_class":"I",
+                    "is_adjacent_space_within_dwelling":true,
+                })}),
+            );
+            // When the partition is split into two half-thickness faces
+            let _ = split_internal_partitions(&mut input).unwrap();
+            let faces = input.all_building_elements().unwrap();
+            assert_eq!(faces.len(), 2);
+            // Then each face retains the full net area
+            for face in faces.values() {
+                assert_relative_eq!(face["area"].as_f64().unwrap(), 18.0);
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+            // And total heat capacity (area x areal_heat_capacity) is conserved across the two
+            // faces
+            let total_capacity: f64 = faces
+                .values()
+                .map(|face| {
+                    face["area"].as_f64().unwrap() * face["areal_heat_capacity"].as_f64().unwrap()
+                })
+                .sum();
+            assert_relative_eq!(total_capacity, 18.0 * 120000.0);
+            // And the two faces in series reproduce the original construction resistance (each
+            // carries half), so the partition's conductance is unchanged - this is the vertical-wall invariance
+            let series_resistance: f64 = faces
+                .values()
+                .map(|face| face["thermal_resistance_construction"].as_f64().unwrap())
+                .sum();
+            assert_relative_eq!(series_resistance, 0.8);
+        }
+
+        #[rstest]
+        fn test_u_value_split_conserves_construction_resistance_in_series() {
+            // Given a full-construction partition specified by U-value
+            let original = json!({
+                "type": "BuildingElementAdjacentConditionedSpace",
+                "area": 18.0,
+                "pitch": 90,
+                "u_value": 1.25,
+                "areal_heat_capacity": 120000,
+                "mass_distribution_class": "I",
+                "is_adjacent_space_within_dwelling": true,
+            });
+            let mut input = project_dict(json!({"partition": original.clone()}));
+            // When the partition is split into two half-thickness faces
+            let _ = split_internal_partitions(&mut input).unwrap();
+            let faces = input.all_building_elements().unwrap();
+            assert_eq!(faces.len(), 2);
+            for face in faces.values() {
+                assert_relative_eq!(
+                    face["area"].as_f64().unwrap(),
+                    original["area"].as_f64().unwrap()
+                );
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+            // Then each face carries half the construction resistance recovered from the U-value
+            // (1/1.25 with the vertical-wall surface resistances removed = 0.6275134), and the
+            // two in series reproduce the full construction resistance.
+            for face in faces.values() {
+                assert_relative_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.3137566901679913,
+                    epsilon = 1e-7
+                );
+            }
+            let series_resistance: f64 = faces
+                .values()
+                .map(|face| face["thermal_resistance_construction"].as_f64().unwrap())
+                .sum();
+            assert_relative_eq!(
+                series_resistance,
+                0.6275133803359826,
+                epsilon = 1e-7
+            );
+        }
+
+        #[rstest]
+        fn test_existing_split_name_raises() {
+            // Given a partition whose split partition name is already taken by another element
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+                "_split_partition_wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+            }));
+            // When the partitions are split, the name clash is reported rather than silently overwritten
+            let error = split_internal_partitions(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Cannot split internal partition 'wall': an element named '_split_partition_wall' already exists"
+            );
+        }
+
+        #[rstest]
+        fn test_existing_opposite_face_name_raises() {
+            // Given a partition whose opposite-face name is already taken by another element
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+                "_split_partition_opposite_wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+            }));
+            // When the partitions are split, the name clash is reported rather than silently overwritten
+            let error = split_internal_partitions(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Cannot split internal partition 'wall': an element named '_split_partition_opposite_wall' already exists"
+            );
+        }
+
+        #[rstest]
+        fn test_adjacent_space_is_not_within_dwelling() {
+            // Given a partition to another dwelling, only the internal face should be returned.
+            let mut input = project_dict(json!({
+                "party_ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": false,
+                },
+                "party_floor": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": false,
+                },
+            }));
+            let _ = split_internal_partitions(&mut input).unwrap();
+
+            let elements = input.all_building_elements().unwrap();
+            assert!(elements.contains_key("_split_partition_party_ceiling"));
+            assert!(elements.contains_key("_split_partition_party_floor"));
+            assert!(!elements.contains_key("_split_partition_opposite_party_ceiling"));
+            assert!(!elements.contains_key("_split_partition_opposite_party_floor"));
+        }
+
+        #[rstest]
+        fn test_other_element_types_are_untouched() {
+            // Given a non-partition element (an external opaque wall)
+            let opaque = json!({
+                "type": "BuildingElementOpaque",
+                "area": 30.0,
+                "pitch": 90,
+                "thermal_resistance_construction": 1.0,
+                "areal_heat_capacity": 50000,
+                "mass_distribution_class": "I",
+            });
+            let mut input = project_dict(json!({"ext wall": opaque.clone()}));
+            // When the partitions are split
+            let _ = split_internal_partitions(&mut input).unwrap();
+            // Then the opaque element is left exactly as it was
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 1);
+            assert_eq!(elements["ext wall"], &opaque);
+        }
+
+        #[rstest]
+        fn test_create_thermal_penetration_passes_numeric_capacity_through() {
+            // Given a partition whose areal heat capacity is a number (not a qualitative class)
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 90000,
+                    "mass_distribution_class": "I: Mass concentrated at internal side",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When create_thermal_penetration runs
+            create_thermal_penetration(&mut input).unwrap();
+            // Then the numeric capacity is left unchanged while the mass class is still abbreviated
+            let elements = input.all_building_elements().unwrap();
+            let wall = elements.get("wall").unwrap();
+            assert_eq!(wall["areal_heat_capacity"], json!(90000));
+            assert_eq!(wall["mass_distribution_class"], json!("I"));
+        }
     }
 }
