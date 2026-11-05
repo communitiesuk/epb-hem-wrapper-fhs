@@ -5,7 +5,9 @@ use crate::future_homes_standard::hw_events::{
 };
 use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
-    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing, JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME, json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
+    json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
+    HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
+    JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
 };
 use crate::future_homes_standard::project_lookups::OFFPEAK_END_HOUR;
 use crate::future_homes_standard::smart_air_brick_validation::{
@@ -25,8 +27,8 @@ use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, Input, TransparentBuildingElement,
-    TransparentBuildingElementJsonValue,
+    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, HeatSourceWetDetails, Input,
+    SpaceHeatSystemDetails, TransparentBuildingElement, TransparentBuildingElementJsonValue,
 };
 use home_energy_model::output_writer::OutputWriter;
 use home_energy_model::ArcStr;
@@ -1486,23 +1488,26 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
 ///
 ///  These devices charge on a 7-hour off-peak electricity tariff (Economy 7), so their
 /// electricity costs must be split between off-peak and on-peak rates for EER calculation.
-pub(crate) fn has_offpeak_electricity_devices(input: &InputForProcessing) -> anyhow::Result<bool> {
-    for space_heat_system in input.space_heat_system_keys()? {
-        if let Some(system) = input.space_heat_system_for_key(&space_heat_system)? {
-            if let Some(type_str) = system.get("type").and_then(JsonValue::as_str) {
-                if type_str == "ElecStorageHeater" {
-                    return Ok(true);
-                }
+pub(crate) fn has_offpeak_electricity_devices(input: &Input) -> anyhow::Result<bool> {
+
+    if let Some(space_heat_system) = input.space_heat_system() {
+        if space_heat_system
+            .values()
+            .any(|shs| matches!(shs, SpaceHeatSystemDetails::ElectricStorageHeater { .. }))
+            {
+                return Ok(true);
             }
+    }
+
+    if let Some(heat_source_wet) = input.heat_source_wet() {
+        if heat_source_wet
+            .values()
+            .any(|hsw| matches!(hsw, HeatSourceWetDetails::HeatBattery { .. }))
+        {
+            return Ok(true);
         }
     }
-    if input
-        .heat_source_wet()?
-        .values()
-        .any(|hsw| hsw.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"))
-    {
-        return Ok(true);
-    }
+
     Ok(false)
 }
 
@@ -4426,25 +4431,22 @@ fn shading_factor(
             .map(|x| x.to_vec()),
     );
 
-    
-    
-        let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
+    let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
 
-        time.iter()
-            .map(|t_it| {
-                conditions.direct_shading_reduction_factor(
-                    base_height,
-                    height,
-                    width,
-                    tilt,
-                    orientation,
-                    Some(window_shading_expanded.as_slice()),
-                    t_it,
-                )
-            })
-            .collect()
-    }
-
+    time.iter()
+        .map(|t_it| {
+            conditions.direct_shading_reduction_factor(
+                base_height,
+                height,
+                width,
+                tilt,
+                orientation,
+                Some(window_shading_expanded.as_slice()),
+                t_it,
+            )
+        })
+        .collect()
+}
 
 fn top_up_lighting(
     input: &InputForProcessing,
@@ -7611,11 +7613,9 @@ mod tests {
         use rstest::rstest;
         use serde_json::json;
 
-        use crate::{
-            future_homes_standard::{
-                future_homes_standard::{create_smart_air_brick_pattern, simtime},
-                input::InputForProcessing,
-            },
+        use crate::future_homes_standard::{
+            future_homes_standard::{create_smart_air_brick_pattern, simtime},
+            input::InputForProcessing,
         };
 
         fn input(ground_overides: Option<serde_json::Value>) -> InputForProcessing {
@@ -7690,7 +7690,9 @@ mod tests {
         fn test_flag_ignored_on_a_floor_the_core_would_not_honour() {
             // Given the flag on a solid ground floor rather than a suspended one, which the schema
             // does not allow but the function should not depend on that
-            let mut input = input(Some(json!({"smart_air_bricks": true, "floor_type": "Slab_no_edge_insulation"})));
+            let mut input = input(Some(
+                json!({"smart_air_bricks": true, "floor_type": "Slab_no_edge_insulation"}),
+            ));
             // When the smart air brick pattern is created
             let _ = create_smart_air_brick_pattern(&mut input);
             // Then nothing is attached, matching the conditions the core applies when it honours
@@ -7701,7 +7703,6 @@ mod tests {
                 .unwrap()
                 .contains_key("Control_smart_air_brick"));
         }
-
     }
 
     mod create_space_heat_distribution {

@@ -4,6 +4,7 @@ use crate::future_homes_standard::sleeved_dhn_validation::validate_sleeved_dhn;
 use crate::future_homes_standard::storeys_validation::validate_storeys_in_building_and_dwelling;
 use crate::future_homes_standard::window_validation::{
     validate_existence_of_window, validate_window_base_height_within_ventilation_zone,
+    validate_window_part_mid_height_within_window,
 };
 use crate::future_homes_standard::{FhsComplianceWrapper, FhsIndividualCalcWrapper};
 use anyhow::bail;
@@ -198,7 +199,19 @@ pub fn run_wrappers(
             validate_existence_of_window(&input_for_processing)?;
             // Validate dwelling windows are above the ventilation zone base height
             validate_window_base_height_within_ventilation_zone(&input_for_processing)?;
+            // Validate each window part's mid-height lies within its glazed element
+            validate_window_part_mid_height_within_window(&input_for_processing)?;
 
+            // TODO include the extra validation below as part of 1.0.0a9 migration
+
+            // // Validate each heat battery's charging sources. Before the mode branch, because the
+            // // notional building replaces the wet heat sources, so a later check would pass the
+            // // notional modes and fail the actual ones on the same input file
+            // validate_heat_battery_charging(&input_for_processing)?;
+            // // Validate at most one floor has smart air bricks. Before the mode branch, because notional
+            // // preprocessing strips the flag and a later check would pass the notional modes and fail the
+            // // actual ones on the same input file
+            // validate_smart_air_brick_floors(&input_for_processing)?;
             Ok(input_for_processing)
         }
 
@@ -287,7 +300,7 @@ pub fn run_wrappers(
             detailed_output_heating_cooling: bool,
             custom_energy_supply_factors: &HashMap<CalculationKey, CustomEnergySourceFactors>,
         ) -> anyhow::Result<Option<HemResponse>> {
-                wrapper.apply_postprocessing(output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
+                wrapper.apply_postprocessing( output, results, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, custom_energy_supply_factors)
         }
 
         let custom_energy_supply_factors = inputs_by_key.iter().map(|(key, (_, factors))| (*key, factors.clone())).collect::<HashMap<_, _>>();

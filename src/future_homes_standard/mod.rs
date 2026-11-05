@@ -4,13 +4,13 @@ use crate::future_homes_standard::fhs_compliance_response::{
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
 use crate::future_homes_standard::input::InputForProcessing;
-use crate::future_homes_standard::metrics::Metrics;
+use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
 use crate::future_homes_standard::part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::project_lookups::by_fuel;
 use crate::{CalculationKey, FhsFlags};
 use crate::{CustomEnergySourceFactors, HemWrapper};
 use anyhow::anyhow;
-use future_homes_standard::apply_fhs_postprocessing;
+use future_homes_standard::{apply_fhs_postprocessing, has_offpeak_electricity_devices};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::Input;
 use home_energy_model::output::{Output, OutputCore, OutputSummary};
@@ -241,20 +241,17 @@ fn do_fhs_preprocessing(
 }
 
 fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metrics> {
-    // TODO: derive from the project once has_offpeak_electricity_devices is ported
-    let offpeak_electricity = false;
-    let _energy_by_fuel = by_fuel(
+    let offpeak_electricity = has_offpeak_electricity_devices(input)?;
+    let energy_by_fuel = by_fuel(
         input,
         &core_response.summary,
         &core_response.core,
         offpeak_electricity,
     )?;
 
-    todo!("can be re-enabled once energy_by_fuel is of updated type");
-
-    // Ok(Metrics {
-    //     eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
-    // })
+    Ok(Metrics {
+        eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
+    })
 }
 
 fn do_fhs_postprocessing(

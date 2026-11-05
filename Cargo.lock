@@ -174,12 +174,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1128,7 +1122,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-9"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=1_0_0a9#fceee2d7eb293ae8e9a2e7b432532200a8bc85fc"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=1_0_0a9#a334f7ba22c63b70eee0b17232fe65bb40be6df2"
 dependencies = [
  "accurate",
  "anyhow",
@@ -1136,7 +1130,6 @@ dependencies = [
  "arc-swap",
  "arcstr",
  "argmin",
- "arrayvec",
  "atomic_float",
  "bounded-vec-deque",
  "chrono",
@@ -3581,9 +3574,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
 dependencies = [
  "memchr",
 ]
