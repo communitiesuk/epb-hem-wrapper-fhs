@@ -412,10 +412,12 @@ mod tests {
                     "generation_to_consumption": 0,
                     "generation_to_grid": 0,
                     "generation_to_diverter": 0,
+                    "generation_curtailed": 0,
                     "generation_to_storage": 0,
                     "grid_to_consumption": 1100,
                     "grid_to_storage": 0,
                     "storage_to_consumption": 0,
+                    "storage_to_grid": 0,
                     "storage_efficiency": null,
                     "net_import": 1100,
                     "total_gross_import": 1100,
@@ -500,10 +502,12 @@ mod tests {
                     "generation_to_consumption": 0,
                     "generation_to_grid": 0,
                     "generation_to_diverter": 0,
+                    "generation_curtailed": 0,
                     "generation_to_storage": 0,
                     "grid_to_consumption": 1100,
                     "grid_to_storage": 0,
                     "storage_to_consumption": 0,
+                    "storage_to_grid": 0,
                     "storage_efficiency": null,
                     "net_import": 1100,
                     "total_gross_import": 1100,
@@ -590,10 +594,12 @@ mod tests {
                     "generation_to_consumption": 0,
                     "generation_to_grid": 0,
                     "generation_to_diverter": 0,
+                    "generation_curtailed": 0,
                     "generation_to_storage": 0,
                     "grid_to_consumption": 1100,
                     "grid_to_storage": 0,
                     "storage_to_consumption": 0,
+                    "storage_to_grid": 0,
                     "storage_efficiency": None::<f64>,
                     "net_import": 1100,
                     "total_gross_import": 1100,
@@ -643,9 +649,11 @@ mod tests {
             "energy_generated_consumed": energy_generated_consumed,
             "energy_to_storage": {},
             "energy_from_storage": {},
+            "storage_to_grid": {},
             "storage_from_grid": {},
             "battery_state_of_charge": {},
             "energy_diverted": {},
+            "generation_curtailed": {},
             "beta_factor": {},
             "zone_list": [],
             "zone_data": {
@@ -753,7 +761,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_without_custom_fuel(
         instant_elec_project: Input,
         instant_elec_output_summary: OutputSummary,
@@ -793,8 +800,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
-
     fn test_with_custom_fuel(
         heat_network_project: Input,
         heat_network_output_summary: OutputSummary,
@@ -834,7 +839,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_electricity_and_gas(
         electricity_and_gas_project: Input,
         electricity_and_gas_output_summary: OutputSummary,
@@ -884,7 +888,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_economy7_splits_electricity_by_timestep(instant_elec_project: Input) {
         // Given a project on Economy 7 with electricity consumption spread across on- and off-peak
         // timesteps. Two full days of half-hourly data (96 timesteps, step = 0.5h, start = 0.0h).
@@ -951,7 +954,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_economy7_pv_offset_split_by_time_of_day(instant_elec_project: Input) {
         // Given an Economy 7 dwelling with PV self-consumption and export.
         // Two full days of half-hourly data (96 timesteps, step = 0.5h, start = 0.0h).
@@ -1043,7 +1045,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_standard_electricity_pv_exceeds_eer_consumption(instant_elec_project: Input) {
         // Given an all-electric dwelling where self-consumed PV exceeds all EER-applicable
         // consumption. Net eer_energy should be negative and EER above 100.
@@ -1092,7 +1093,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "Ignored while migrating to 1.0.0a9"]
     fn test_standard_electricity_pv_offset(
         instant_elec_project: Input,
         instant_elec_output_summary: OutputSummary,
