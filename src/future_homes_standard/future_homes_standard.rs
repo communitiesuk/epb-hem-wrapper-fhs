@@ -8782,17 +8782,15 @@ mod tests {
         #[rstest]
         fn test_split_conserves_resistance_and_heat_capacity() {
             // Given a full-construction partition specified by thermal resistance
-            let mut input = project_dict(
-                json!({"partition": json!({
-                    "type": "BuildingElementAdjacentConditionedSpace",
-                    "area":18.0,
-                    "pitch":90,
-                    "thermal_resistance_construction":0.8,
-                    "areal_heat_capacity":120000,
-                    "mass_distribution_class":"I",
-                    "is_adjacent_space_within_dwelling":true,
-                })}),
-            );
+            let mut input = project_dict(json!({"partition": json!({
+                "type": "BuildingElementAdjacentConditionedSpace",
+                "area":18.0,
+                "pitch":90,
+                "thermal_resistance_construction":0.8,
+                "areal_heat_capacity":120000,
+                "mass_distribution_class":"I",
+                "is_adjacent_space_within_dwelling":true,
+            })}));
             // When the partition is split into two half-thickness faces
             let _ = split_internal_partitions(&mut input).unwrap();
             let faces = input.all_building_elements().unwrap();
@@ -8858,11 +8856,7 @@ mod tests {
                 .values()
                 .map(|face| face["thermal_resistance_construction"].as_f64().unwrap())
                 .sum();
-            assert_relative_eq!(
-                series_resistance,
-                0.6275133803359826,
-                epsilon = 1e-7
-            );
+            assert_relative_eq!(series_resistance, 0.6275133803359826, epsilon = 1e-7);
         }
 
         #[rstest]
@@ -9000,6 +8994,314 @@ mod tests {
             let wall = elements.get("wall").unwrap();
             assert_eq!(wall["areal_heat_capacity"], json!(90000));
             assert_eq!(wall["mass_distribution_class"], json!("I"));
+        }
+    }
+
+    mod standardise_hot_water_cylinder_init_temp {
+        use super::*;
+        use home_energy_model::input::ExternalConditionsInput;
+        use home_energy_model::{load_weather_data, WeatherFileType};
+        use std::io::Cursor;
+
+        fn preprocess_demo_file(demo_input: &str) -> JsonValue {
+            let mut project: JsonValue = serde_json::from_str(demo_input).unwrap();
+            let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+            let weather = ExternalConditionsInput::from(
+                load_weather_data(
+                    Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                    WeatherFileType::Epw,
+                )
+                .unwrap(),
+            );
+            project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+            project["ExternalConditions"]["shading_segments"] = shading_segments;
+
+            let mut project = InputForProcessing { input: project };
+            initial_preprocessing(&mut project).unwrap();
+            final_preprocessing(&mut project).unwrap();
+            project.input
+        }
+
+        #[test]
+        fn test_storage_tank_init_temp_standardised() {
+            // Given an input whose storage tank declares no initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS.json"
+            ));
+            // Then preprocessing sets the cylinder to start fully heated
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+        }
+
+        #[test]
+        fn test_smart_hot_water_tank_init_temp_standardised() {
+            // Given an input whose smart hot water tank declares no initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS_smart_hot_water_tank.json"
+            ));
+            // Then preprocessing sets the cylinder to start fully heated
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+        }
+
+        #[test]
+        fn test_preheated_tank_init_temp_preserved() {
+            // Given an input with a pre-heated tank declaring its initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/DESN-H-End-02-HP-iMEV-pre-heat.json"
+            ));
+            // Then preprocessing standardises the cylinder but leaves the
+            // pre-heated tank at its declared starting temperature
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+            assert_eq!(
+                project["PreHeatedWaterSource"]["preheated tank"]["init_temp"],
+                35.0
+            );
+        }
+    }
+
+    mod apply_fhs_postprocessing {
+        use super::super::{apply_fhs_postprocessing, final_preprocessing, initial_preprocessing};
+        use crate::future_homes_standard::input::InputForProcessing;
+        use approx::assert_relative_eq;
+        use home_energy_model::input::{ExternalConditionsInput, Input};
+        use home_energy_model::output_writer::OutputWriter;
+        use home_energy_model::{load_weather_data, ArcStr, WeatherFileType};
+        use indexmap::IndexMap;
+        use parking_lot::{Mutex, RwLock};
+        use rstest::{fixture, rstest};
+        use serde_json::{json, Value};
+        use std::io::{BufWriter, Cursor, Write};
+        use std::sync::Arc;
+
+        const TIME_STEPS: usize = 17520;
+        const TFA: f64 = 70.0;
+
+        #[fixture]
+        fn input() -> Input {
+            let mut project: Value = serde_json::from_str(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS.json"
+            ))
+            .unwrap();
+            let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+            let weather = ExternalConditionsInput::from(
+                load_weather_data(
+                    Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                    WeatherFileType::Epw,
+                )
+                .unwrap(),
+            );
+            project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+            project["ExternalConditions"]["shading_segments"] = shading_segments;
+
+            let mut input = InputForProcessing { input: project };
+            initial_preprocessing(&mut input).unwrap();
+            final_preprocessing(&mut input).unwrap();
+            input.input["Zone"]["whole dwelling"]["area"] = json!(TFA);
+            input.finalize().unwrap()
+        }
+
+        #[derive(Clone, Debug)]
+        struct FileWriter(Arc<RwLock<Vec<u8>>>);
+
+        impl FileWriter {
+            fn new() -> Self {
+                Self(Arc::new(RwLock::new(Vec::with_capacity(2usize.pow(14)))))
+            }
+        }
+
+        impl Write for FileWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write().extend_from_slice(buf);
+
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub(crate) struct InMemoryDirectoryOutputWriter {
+            input_filename: String,
+            files: Arc<Mutex<IndexMap<String, FileWriter>>>,
+        }
+
+        impl InMemoryDirectoryOutputWriter {
+            pub fn new(input_filename: &str) -> Self {
+                Self {
+                    input_filename: input_filename.split('.').next().unwrap().to_string(),
+                    files: Arc::new(Mutex::new(IndexMap::new())),
+                }
+            }
+
+            fn output_file_index(&self, location_key: &str, file_extension: &str) -> String {
+                format!(
+                    "{}__{}.{}",
+                    self.input_filename, location_key, file_extension
+                )
+            }
+
+            pub fn files(&self) -> IndexMap<String, String> {
+                self.files
+                    .lock()
+                    .iter()
+                    .map(|(k, v)| {
+                        let bytes = v.0.read();
+                        let string_content = String::from_utf8_lossy(&bytes).to_string();
+                        (k.clone(), string_content)
+                    })
+                    .collect()
+            }
+        }
+
+        impl OutputWriter for InMemoryDirectoryOutputWriter {
+            fn writer_for_location_key(
+                &self,
+                location_key: &str,
+                file_extension: &str,
+            ) -> anyhow::Result<impl Write> {
+                let key = self.output_file_index(location_key, file_extension);
+
+                let file_writer = self
+                    .files
+                    .lock()
+                    .entry(key)
+                    .or_insert_with(FileWriter::new)
+                    .clone();
+
+                // BufWriter prevents acquiring the RwLock on every byte chunk
+                Ok(BufWriter::with_capacity(2usize.pow(14), file_writer))
+            }
+        }
+
+        /// Run the postprocessing over one timestep of activity and return the summary rates.
+        ///
+        /// Arguments:
+        /// * `prefix`: output filename prefix, so two runs in one test do not overwrite each other.
+        fn postprocess(
+            input: &Input,
+            generated: f64,
+            curtailed: f64,
+            imported: f64,
+            notional: bool,
+            prefix: &str,
+        ) -> anyhow::Result<IndexMap<String, f64>> {
+            let zeros = vec![0.0; TIME_STEPS];
+            let series = |first_value: f64| {
+                let mut values = zeros.clone();
+                values[0] = first_value;
+                values
+            };
+
+            // Postprocessing adds an _unmet_demand supply of its own, so the core's series for it
+            // have to be present alongside those for the dwelling's supplies.
+            let mut energy_import = IndexMap::new();
+            let mut energy_export = IndexMap::new();
+            let mut results_end_user: IndexMap<ArcStr, IndexMap<ArcStr, Vec<f64>>> =
+                IndexMap::new();
+            let mut generation_curtailed = IndexMap::new();
+            for supply in input.energy_supply().keys() {
+                let is_electricity = supply.as_str() == "mains elec";
+                energy_import.insert(
+                    supply.clone(),
+                    if is_electricity {
+                        series(imported)
+                    } else {
+                        zeros.clone()
+                    },
+                );
+                energy_export.insert(supply.clone(), zeros.clone());
+                let mut end_users = IndexMap::new();
+                if is_electricity {
+                    end_users.insert("PV".into(), series(-generated));
+                }
+                results_end_user.insert(supply.clone(), end_users);
+                generation_curtailed.insert(
+                    supply.clone(),
+                    if is_electricity {
+                        series(curtailed)
+                    } else {
+                        zeros.clone()
+                    },
+                );
+            }
+            energy_import.insert("_unmet_demand".into(), zeros.clone());
+            energy_export.insert("_unmet_demand".into(), zeros.clone());
+            results_end_user.insert("_unmet_demand".into(), IndexMap::new());
+            let timestep_array = (0..TIME_STEPS).map(|t| t as f64).collect::<Vec<f64>>();
+            generation_curtailed.insert("_unmet_demand".into(), zeros.clone());
+
+            let output_writer = InMemoryDirectoryOutputWriter::new(prefix);
+            apply_fhs_postprocessing(
+                input,
+                &output_writer,
+                &energy_import,
+                &energy_export,
+                &results_end_user,
+                &timestep_array,
+                notional,
+                "FHS",
+                &Default::default(),
+                &generation_curtailed,
+            )?;
+
+            let files = output_writer.files();
+            let summary = files
+                .get(&format!("{prefix}__FHS__postproc_summary.csv"))
+                .unwrap();
+            let mut reader = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .from_reader(summary.as_bytes());
+            reader
+                .records()
+                .skip(1)
+                .map(|record| {
+                    let record = record?;
+                    Ok((
+                        record.get(0).unwrap().to_owned(),
+                        record.get(2).unwrap().parse()?,
+                    ))
+                })
+                .collect()
+        }
+
+        #[rstest]
+        fn test_curtailed_generation_is_not_charged(input: Input) {
+            // Given a dwelling generating 100 kWh of which 30 kWh is curtailed by an export limit,
+            // and importing 10 kWh.
+            let rates =
+                postprocess(&input, 100.0, 30.0, 10.0, false, "curtailed_generation").unwrap();
+
+            // Then only the 70 kWh that reached a use is charged primary energy, at the on-site
+            // generation factor of 1.0, alongside the import at 1.969103316:
+            // (10 x 1.969103316 + 70 x 1.0) / 70 m2 = 1.2813004737142857
+            // Counting the curtailed 30 kWh as well would give 1.7098719022857143.
+            assert_relative_eq!(rates["DPER"], 1.2813004737142857);
+            // Emissions are unaffected by generation either way, the on-site generation emissions
+            // factor being zero: 10 x 0.086185206 / 70 m2
+            assert_relative_eq!(rates["DER"], 0.012312172285714287);
+        }
+
+        #[rstest]
+        fn test_curtailing_scores_the_same_as_not_generating(input: Input) {
+            // Given two dwellings importing the same energy, one generating 100 kWh and curtailing
+            // 30 kWh of it, the other generating only the 70 kWh that the first one used
+            let curtailing = postprocess(&input, 100.0, 30.0, 10.0, false, "curtailing").unwrap();
+            let smaller_array =
+                postprocess(&input, 70.0, 0.0, 10.0, false, "smaller_array").unwrap();
+            // Then neither is penalised for the energy that was spilled
+            assert_relative_eq!(curtailing["DPER"], smaller_array["DPER"]);
+            assert_relative_eq!(curtailing["DER"], smaller_array["DER"]);
+        }
+
+        #[rstest]
+        fn test_notional_labels_the_summary_rates(input: Input) {
+            // Given the postprocessing is run for the notional dwelling
+            let rates = postprocess(&input, 100.0, 30.0, 10.0, true, "notional").unwrap();
+
+            // Then the same rates are reported under the target names
+            assert_relative_eq!(rates["TPER"], 1.2813004737142857);
+            assert_relative_eq!(rates["TER"], 0.012312172285714287);
         }
     }
 }
