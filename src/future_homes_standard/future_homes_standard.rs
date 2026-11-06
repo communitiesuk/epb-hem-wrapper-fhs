@@ -9174,18 +9174,16 @@ mod tests {
             }
         }
 
-        /// Run the postprocessing over one timestep of activity and return the summary rates.
-        ///
-        /// Arguments:
-        /// * `prefix`: output filename prefix, so two runs in one test do not overwrite each other.
         fn postprocess(
             input: &Input,
             generated: f64,
             curtailed: f64,
             imported: f64,
-            notional: bool,
-            prefix: &str,
+            notional: Option<bool>,
+            prefix: Option<&str>,
         ) -> anyhow::Result<IndexMap<String, f64>> {
+            let notional = notional.unwrap_or(false);
+            let prefix = prefix.unwrap_or("dwelling");
             let zeros = vec![0.0; TIME_STEPS];
             let series = |first_value: f64| {
                 let mut values = zeros.clone();
@@ -9270,7 +9268,7 @@ mod tests {
             // Given a dwelling generating 100 kWh of which 30 kWh is curtailed by an export limit,
             // and importing 10 kWh.
             let rates =
-                postprocess(&input, 100.0, 30.0, 10.0, false, "curtailed_generation").unwrap();
+                postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailed_generation")).unwrap();
 
             // Then only the 70 kWh that reached a use is charged primary energy, at the on-site
             // generation factor of 1.0, alongside the import at 1.969103316:
@@ -9286,9 +9284,9 @@ mod tests {
         fn test_curtailing_scores_the_same_as_not_generating(input: Input) {
             // Given two dwellings importing the same energy, one generating 100 kWh and curtailing
             // 30 kWh of it, the other generating only the 70 kWh that the first one used
-            let curtailing = postprocess(&input, 100.0, 30.0, 10.0, false, "curtailing").unwrap();
+            let curtailing = postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailing")).unwrap();
             let smaller_array =
-                postprocess(&input, 70.0, 0.0, 10.0, false, "smaller_array").unwrap();
+                postprocess(&input, 70.0, 0.0, 10.0, None, Some("smaller_array")).unwrap();
             // Then neither is penalised for the energy that was spilled
             assert_relative_eq!(curtailing["DPER"], smaller_array["DPER"]);
             assert_relative_eq!(curtailing["DER"], smaller_array["DER"]);
@@ -9297,7 +9295,7 @@ mod tests {
         #[rstest]
         fn test_notional_labels_the_summary_rates(input: Input) {
             // Given the postprocessing is run for the notional dwelling
-            let rates = postprocess(&input, 100.0, 30.0, 10.0, true, "notional").unwrap();
+            let rates = postprocess(&input, 100.0, 30.0, 10.0, Some(true), Some("notional")).unwrap();
 
             // Then the same rates are reported under the target names
             assert_relative_eq!(rates["TPER"], 1.2813004737142857);
