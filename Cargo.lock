@@ -964,12 +964,12 @@ dependencies = [
 name = "home-energy-model-wrapper-fhs"
 version = "1.0.0-alpha-7"
 dependencies = [
+ "accurate",
  "anyhow",
  "approx",
  "bitflags",
  "clap",
  "csv",
- "fsum",
  "home-energy-model",
  "indexmap 2.14.2",
  "itertools 0.15.0",

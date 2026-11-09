@@ -13,9 +13,9 @@ use crate::future_homes_standard::smart_air_brick_validation::{
     smart_air_brick_floors, smart_air_brick_floors_mut,
 };
 use crate::CustomEnergySourceFactors;
+use accurate::{sum::Sum2, traits::*};
 use anyhow::{anyhow, bail};
 use csv::{Reader, WriterBuilder};
-use fsum::FSum;
 use home_energy_model::core::external_conditions::{
     create_external_conditions, ExternalConditions, WindowShadingObject,
 };
@@ -665,7 +665,12 @@ where
             supply_emis_result.export,
             supply_emis_oos_result.export,
             supply_pe_result.export,
-        ) = if FSum::with_all(energy_export[&energy_supply_key].iter()).value() < 0. {
+        ) = if energy_export[&energy_supply_key]
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>()
+            < 0.
+        {
             match fuel_code {
                 FuelType::Electricity => (
                     apply_energy_factor_series(
@@ -733,7 +738,12 @@ where
         // Calculate energy generated and associated emissions/PE
         let mut energy_generated = vec![0.; number_of_timesteps];
         for end_user_energy in results_end_user[&energy_supply_key].values() {
-            if FSum::with_all(end_user_energy.iter()).value() < 0. {
+            if end_user_energy
+                .iter()
+                .copied()
+                .sum_with_accumulator::<Sum2<_>>()
+                < 0.
+            {
                 for (t_idx, energy_generated_value) in energy_generated.iter_mut().enumerate() {
                     *energy_generated_value -= end_user_energy[t_idx];
                 }
@@ -752,7 +762,12 @@ where
             supply_emis_result.generated,
             supply_emis_oos_result.generated,
             supply_pe_result.generated,
-        ) = if FSum::with_all(energy_generated.iter()).value() > 0. {
+        ) = if energy_generated
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>()
+            > 0.
+        {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
             let generation_factors = EMIS_PE_FACTORS
                 .get(&String::from("generation"))
@@ -905,19 +920,15 @@ where
     //
     // Neither rate is floored, and this module never compares them against the notional's, so
     // nothing decided here depends on the sign.
-    let total_emissions_rate = FSum::with_all(
-        emis_results
-            .values()
-            .map(|emis| FSum::with_all(emis.total.iter()).value()),
-    )
-    .value()
+    let total_emissions_rate = emis_results
+        .values()
+        .map(|emis| emis.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .sum_with_accumulator::<Sum2<_>>()
         / tfa;
-    let total_pe_rate = FSum::with_all(
-        pe_results
-            .values()
-            .map(|pe| FSum::with_all(pe.total.iter()).value()),
-    )
-    .value()
+    let total_pe_rate = pe_results
+        .values()
+        .map(|pe| pe.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .sum_with_accumulator::<Sum2<_>>()
         / tfa;
 
     Ok(FinalRates {
@@ -2308,7 +2319,10 @@ impl AppliancePropensities<AsDataFile> {
             ]
             .into_iter()
             .map(|probabilities| -> [f64; 24] {
-                let sumcol = FSum::with_all(probabilities).value();
+                let sumcol = probabilities
+                    .iter()
+                    .copied()
+                    .sum_with_accumulator::<Sum2<_>>();
                 probabilities.map(|x| x / sumcol)
             })
             .collect::<Vec<_>>()

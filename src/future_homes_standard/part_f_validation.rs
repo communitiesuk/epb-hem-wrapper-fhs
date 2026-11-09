@@ -1,7 +1,7 @@
 pub(crate) mod part_f {
+    use accurate::{sum::Sum2, traits::*};
     use anyhow::{anyhow, bail};
     use approx::relative_eq;
-    use fsum::FSum;
     use home_energy_model::{
         compare_floats::max_of_2,
         core::units::{LITRES_PER_CUBIC_METRE, SECONDS_PER_HOUR},
@@ -86,7 +86,7 @@ pub(crate) mod part_f {
     }
 
     fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        let mut design_outdoor_air_flow_rate_sum = FSum::new();
+        let mut design_outdoor_air_flow_rate_sum = Sum2::zero();
 
         for vent in vents {
             let design_outdoor_air_flow_rate = vent.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?;
@@ -94,7 +94,7 @@ pub(crate) mod part_f {
             design_outdoor_air_flow_rate_sum += design_outdoor_air_flow_rate
         }
 
-        Ok(design_outdoor_air_flow_rate_sum.value())
+        Ok(design_outdoor_air_flow_rate_sum.sum())
     }
 
     fn sufficient_whole_dwelling_ventilation_rate_continuous(
@@ -178,7 +178,7 @@ pub(crate) mod part_f {
     }
 
     fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
-        let mut area_sum = FSum::new();
+        let mut area_sum = Sum2::zero();
 
         for vent in vents {
             let area = vent
@@ -191,7 +191,7 @@ pub(crate) mod part_f {
             area_sum += area;
         }
 
-        Ok(area_sum.value())
+        Ok(area_sum.sum())
     }
 
     #[allow(clippy::too_many_arguments)]

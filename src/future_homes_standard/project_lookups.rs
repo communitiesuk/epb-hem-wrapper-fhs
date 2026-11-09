@@ -1,7 +1,7 @@
 //! Functionality to support looking up information from the project input to help interpret returns
 //! from the core
+use accurate::{sum::Sum2, traits::*};
 use anyhow::bail;
-use fsum::FSum;
 use home_energy_model::input::{FuelType, Input, InputForCalcHtcHlp};
 use home_energy_model::output::{OutputCore, OutputSummary};
 use home_energy_model::ArcStr;
@@ -162,8 +162,10 @@ fn eer_energy_by_period(
     }
 
     Ok((
-        FSum::with_all(consumption_off_peak).value() - FSum::with_all(generation_off_peak).value(),
-        FSum::with_all(consumption_on_peak).value() - FSum::with_all(generation_on_peak).value(),
+        Sum2::zero().absorb(consumption_off_peak).sum()
+            - Sum2::zero().absorb(generation_off_peak).sum(),
+        Sum2::zero().absorb(consumption_on_peak).sum()
+            - Sum2::zero().absorb(generation_on_peak).sum(),
     ))
 }
 
@@ -187,7 +189,10 @@ fn eer_energy_by_period(
 ///         the core convention that export is negative demand, and all zeros for a supply
 ///         that exports nothing.
 fn export_credit_tariff(generation_to_grid: &[f64]) -> anyhow::Result<Option<Tariff>> {
-    let exported = -FSum::with_all(generation_to_grid.iter().copied()).value();
+    let exported = -generation_to_grid
+        .iter()
+        .copied()
+        .sum_with_accumulator::<Sum2<_>>();
     if exported > 0.0 {
         let (export_price, export_sc) = match tariff_lookup("electricity_exported_pv") {
             Ok(Some((export_price, export_sc))) => (export_price, export_sc),
@@ -309,14 +314,12 @@ pub(crate) fn by_fuel(
             // tariff, cancelling the overstatement in the gross delivered_energy figure.
             // output_core.energy_generated_consumed separates self-consumed from exported
             // generation, avoiding over-crediting exported electricity at the full import rate.
-            let self_consumed = FSum::with_all(
-                output_core
-                    .energy_generated_consumed
-                    .get(supply)
-                    .cloned()
-                    .unwrap_or_default(),
-            )
-            .value();
+            let self_consumed = output_core
+                .energy_generated_consumed
+                .get(supply)
+                .cloned()
+                .map(|x| x.sum_with_accumulator::<Sum2<_>>())
+                .unwrap_or_default();
             let mut tariffs = rates
                 .iter()
                 .map(|rate| Tariff {

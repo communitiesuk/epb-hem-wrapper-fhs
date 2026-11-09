@@ -1,6 +1,6 @@
 #![allow(unused)]
 use crate::future_homes_standard::project_lookups::{FuelOutput, Tariff};
-use fsum::FSum;
+use accurate::{sum::Sum2, traits::*};
 use serde::Serialize;
 use std::sync::Arc;
 use strum_macros::Display;
@@ -62,26 +62,23 @@ pub(crate) fn energy_efficiency_rating(total_floor_area: f64, by_fuel: &[FuelOut
         };
     }
 
-    let total_cost = FSum::with_all(
-        by_fuel
-            .iter()
-            .flat_map(|fuel_output| fuel_output.tariffs.iter())
-            .flat_map(
-                |Tariff {
-                     standing_charge,
-                     unit_price,
-                     eer_energy,
-                 }| {
-                    if let (Some(standing_charge), Some(unit_price)) = (standing_charge, unit_price)
-                    {
-                        Some(*standing_charge + *unit_price / PENCE_PER_POUND * *eer_energy)
-                    } else {
-                        None
-                    }
-                },
-            ),
-    )
-    .value();
+    let total_cost = by_fuel
+        .iter()
+        .flat_map(|fuel_output| fuel_output.tariffs.iter())
+        .flat_map(
+            |Tariff {
+                 standing_charge,
+                 unit_price,
+                 eer_energy,
+             }| {
+                if let (Some(standing_charge), Some(unit_price)) = (standing_charge, unit_price) {
+                    Some(*standing_charge + *unit_price / PENCE_PER_POUND * *eer_energy)
+                } else {
+                    None
+                }
+            },
+        )
+        .sum_with_accumulator::<Sum2<_>>();
 
     let energy_cost_factor = ENERGY_COST_DEFLATOR * total_cost / (total_floor_area + 45.);
     let eer = if energy_cost_factor >= 3.5 {

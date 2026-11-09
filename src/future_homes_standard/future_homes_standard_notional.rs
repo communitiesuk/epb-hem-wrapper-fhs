@@ -17,9 +17,9 @@ use crate::future_homes_standard::sleeved_dhn_validation::HeatNetworkType;
 use crate::future_homes_standard::ventilation::{
     create_background_vents, create_mechanical_ventilation,
 };
+use accurate::{sum::Sum2, traits::*};
 use anyhow::{anyhow, bail};
 use approx::relative_eq;
-use fsum::FSum;
 use home_energy_model::compare_floats::max_of_2;
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
@@ -533,7 +533,7 @@ fn edit_glazing_for_glazing_limit(
     input: &mut InputForProcessing,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let mut area_sum = FSum::new();
+    let mut area_sum = Sum2::zero();
     for el in input.all_transparent_building_elements()? {
         let height = el
             .get("height")
@@ -546,7 +546,7 @@ fn edit_glazing_for_glazing_limit(
 
         area_sum += height * width
     }
-    let total_glazing_area = area_sum.value();
+    let total_glazing_area = area_sum.sum();
 
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
@@ -575,7 +575,7 @@ fn edit_glazing_for_glazing_limit(
                 &window_rooflight_element,
             )?;
 
-            let mut area_sum = FSum::new();
+            let mut area_sum = Sum2::zero();
             for wall_roof in same_orientation.values() {
                 let area = wall_roof
                     .get("area")
@@ -584,7 +584,7 @@ fn edit_glazing_for_glazing_limit(
 
                 area_sum += area
             }
-            let wall_roof_area_total = area_sum.value();
+            let wall_roof_area_total = area_sum.sum();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
                 if let Some(area) = wall_roof_val.get("area").and_then(Value::as_f64) {
@@ -815,9 +815,9 @@ fn edit_add_heatnetwork_heating(
         )]
     } else {
         let length = custom_energy_supply_factors.len() as f64;
-        let mut emissions_sum = FSum::new();
-        let mut out_of_scope_sum = FSum::new();
-        let mut primary_energy_sum = FSum::new();
+        let mut emissions_sum = Sum2::zero();
+        let mut out_of_scope_sum = Sum2::zero();
+        let mut primary_energy_sum = Sum2::zero();
 
         for factor in custom_energy_supply_factors.values() {
             emissions_sum += factor.emissions_factor_kg_co2e_k_wh;
@@ -829,11 +829,11 @@ fn edit_add_heatnetwork_heating(
         [(
             NOTIONAL_HEAT_NETWORK_NAME.into(),
             CustomEnergySourceFactor {
-                emissions_factor_kg_co2e_k_wh: emissions_sum.value() / length,
+                emissions_factor_kg_co2e_k_wh: emissions_sum.sum() / length,
                 emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions: out_of_scope_sum
-                    .value()
+                    .sum()
                     / length,
-                primary_energy_factor_k_wh_k_wh_delivered: primary_energy_sum.value() / length,
+                primary_energy_factor_k_wh_k_wh_delivered: primary_energy_sum.sum() / length,
             },
         )]
     }
@@ -1600,7 +1600,10 @@ fn calc_design_capacity(
         })
         .collect();
 
-    let design_capacity_overall = FSum::with_all(design_capacity_map.values()).value();
+    let design_capacity_overall = design_capacity_map
+        .values()
+        .copied()
+        .sum_with_accumulator::<Sum2<_>>();
 
     Ok((design_capacity_map, design_capacity_overall))
 }
@@ -1647,9 +1650,15 @@ fn notional_inverter_peak_power<'a>(
 ) -> IndexMap<&'a str, f64> {
     let total_notional = max_of_2(
         min_peak_power_kw,
-        FSum::with_all(inverter_peak_power_actual.values()).value(),
+        inverter_peak_power_actual
+            .values()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>(),
     );
-    let total_panels = FSum::with_all(peak_power_panels.values()).value();
+    let total_panels = peak_power_panels
+        .values()
+        .copied()
+        .sum_with_accumulator::<Sum2<_>>();
 
     // Panel peak power is a required input with a positive minimum, so the total cannot be zero.
     // Dividing before multiplying keeps a single array on exactly the total.
@@ -1690,7 +1699,7 @@ fn add_solar_pv(
             let mut peak_power_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
             let mut inverter_ac_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
             let mut inverter_dc_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
-            let mut total_peak_power = FSum::new();
+            let mut total_peak_power = Sum2::zero();
 
             for (name, panel) in on_site_generation {
                 let peak_power = panel
@@ -1725,7 +1734,7 @@ fn add_solar_pv(
             // If the calculated peak_kW is less than the actual total power,
             // scale the actual values down to match the peak by applying a scaling factor.
             // The scaling factor is capped at a minimum of 1.0 to avoid scaling up.
-            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power.value());
+            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power.sum());
 
             let inverter_peak_power_ac = notional_inverter_peak_power(
                 &peak_power_panels,
@@ -3646,8 +3655,8 @@ mod tests {
         add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
         let notional = &test_input.input["OnSiteGeneration"].as_object().unwrap();
 
-        let mut ac_sum = FSum::new();
-        let mut dc_sum = FSum::new();
+        let mut ac_sum = Sum2::zero();
+        let mut dc_sum = Sum2::zero();
 
         for array in notional.values() {
             let ac_val = array["inverter_peak_power_ac"].as_f64().unwrap();
@@ -3657,7 +3666,7 @@ mod tests {
             dc_sum += dc_val;
         }
 
-        (ac_sum.value(), dc_sum.value())
+        (ac_sum.sum(), dc_sum.sum())
     }
 
     #[rstest]
@@ -3724,14 +3733,12 @@ mod tests {
             2.76
         );
         assert_relative_eq!(
-            FSum::with_all(
-                notional
-                    .as_object()
-                    .unwrap()
-                    .values()
-                    .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap()),
-            )
-            .value(),
+            notional
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap())
+                .sum_with_accumulator::<Sum2<_>>(),
             3.68
         );
     }
@@ -3809,14 +3816,12 @@ mod tests {
             5.4
         );
         assert_relative_eq!(
-            FSum::with_all(
-                notional
-                    .as_object()
-                    .unwrap()
-                    .values()
-                    .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap()),
-            )
-            .value(),
+            notional
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap())
+                .sum_with_accumulator::<Sum2<_>>(),
             9.
         );
     }

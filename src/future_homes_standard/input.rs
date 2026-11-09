@@ -1,6 +1,6 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
+use accurate::{sum::Sum2, traits::*};
 use anyhow::anyhow;
-use fsum::FSum;
 use home_energy_model::core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
@@ -230,7 +230,7 @@ impl InputForProcessing {
             })
             .collect::<JsonAccessResult<Vec<_>>>()?;
 
-        Ok(FSum::with_all(areas).value())
+        Ok(Sum2::zero().absorb(areas).sum())
     }
 
     pub fn area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {
