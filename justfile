@@ -1,7 +1,12 @@
 unit:
     cargo test --lib
 
-e2e: e2e-preproc e2e-postproc e2e-actual
+e2e:
+    cargo test --release --no-fail-fast \
+        --test test_future_homes_standard_preprocessing \
+        --test test_future_homes_standard_postproc \
+        --test test_future_homes_standard_actual \
+        -- --nocapture
 
 e2e-preproc:
     cargo test --test test_future_homes_standard_preprocessing --release -- --nocapture
