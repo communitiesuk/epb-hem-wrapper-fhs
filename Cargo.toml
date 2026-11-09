@@ -39,9 +39,6 @@ walkdir = "2.5.0"
 # don't build doctests for now
 doctest = false
 
-[workspace]
-members = ["fhs-compliance-lambda"]
-
 [[bin]]
 name = "future-homes-standard"
 path = "src/main.rs"
