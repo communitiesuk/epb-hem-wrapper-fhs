@@ -7007,8 +7007,7 @@ mod tests {
             .normalise();
             let tfa = 100.;
             let n_occupants = 5.;
-            let _ = create_appliance_gains(&mut input, tfa, n_occupants, &appliance_propensities)
-                .unwrap();
+            create_appliance_gains(&mut input, tfa, n_occupants, &appliance_propensities).unwrap();
             // Then priorities are assigned in descending order of kWh/cycle
             assert_eq!(input.input["ApplianceGains"]["Hobs"]["priority"], 0);
             assert_eq!(input.input["ApplianceGains"]["Oven"]["priority"], 1);
@@ -7067,8 +7066,7 @@ mod tests {
             let tfa = 100.;
             let n_occumpants = 5.;
             // When create_appliance_gains is called
-            let _ = create_appliance_gains(&mut input, tfa, n_occumpants, &appliance_propensities)
-                .unwrap();
+            create_appliance_gains(&mut input, tfa, n_occumpants, &appliance_propensities).unwrap();
             // Then the continuous appliance is present in ApplianceGains as a
             // scheduled entry but carries no priority field
             let fridge_gains = &input.input["ApplianceGains"]["Fridge"];
@@ -7968,7 +7966,7 @@ mod tests {
                 input: project_dict,
             };
             // When the charging pattern is created
-            let _ = create_charging_pattern(&mut input).unwrap();
+            create_charging_pattern(&mut input).unwrap();
             // Then the source has its own control on the off-peak window, expressed as states of
             // charge: a PCM battery only charges above its phase change temperature, so a
             // temperature band would cap the heat source below the point it has to exceed
@@ -8662,7 +8660,7 @@ mod tests {
                 }
             }));
             // When the partitions are split
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
             // Then two faces are produced, both vertical, sharing the full area, with halved
             // resistance and halved areal heat capacity and an unchanged mass distribution class
             let elements = input.all_building_elements().unwrap();
@@ -8762,7 +8760,7 @@ mod tests {
                 }
             }));
             // When the partition is split
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
             // Then the U-value is replaced by half the construction resistance on each face.
             // Both faces carry the same half-resistance (the conversion uses the full element's pitch),
             // and no U-value remains for hem-core to re-strip surface resistances from.
@@ -8792,7 +8790,7 @@ mod tests {
                 "is_adjacent_space_within_dwelling":true,
             })}));
             // When the partition is split into two half-thickness faces
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
             let faces = input.all_building_elements().unwrap();
             assert_eq!(faces.len(), 2);
             // Then each face retains the full net area
@@ -8832,7 +8830,7 @@ mod tests {
             });
             let mut input = project_dict(json!({"partition": original.clone()}));
             // When the partition is split into two half-thickness faces
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
             let faces = input.all_building_elements().unwrap();
             assert_eq!(faces.len(), 2);
             for face in faces.values() {
@@ -8944,7 +8942,7 @@ mod tests {
                     "is_adjacent_space_within_dwelling": false,
                 },
             }));
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
 
             let elements = input.all_building_elements().unwrap();
             assert!(elements.contains_key("_split_partition_party_ceiling"));
@@ -8966,7 +8964,7 @@ mod tests {
             });
             let mut input = project_dict(json!({"ext wall": opaque.clone()}));
             // When the partitions are split
-            let _ = split_internal_partitions(&mut input).unwrap();
+            split_internal_partitions(&mut input).unwrap();
             // Then the opaque element is left exactly as it was
             let elements = input.all_building_elements().unwrap();
             assert_eq!(elements.len(), 1);
@@ -9267,8 +9265,15 @@ mod tests {
         fn test_curtailed_generation_is_not_charged(input: Input) {
             // Given a dwelling generating 100 kWh of which 30 kWh is curtailed by an export limit,
             // and importing 10 kWh.
-            let rates =
-                postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailed_generation")).unwrap();
+            let rates = postprocess(
+                &input,
+                100.0,
+                30.0,
+                10.0,
+                None,
+                Some("curtailed_generation"),
+            )
+            .unwrap();
 
             // Then only the 70 kWh that reached a use is charged primary energy, at the on-site
             // generation factor of 1.0, alongside the import at 1.969103316:
@@ -9284,7 +9289,8 @@ mod tests {
         fn test_curtailing_scores_the_same_as_not_generating(input: Input) {
             // Given two dwellings importing the same energy, one generating 100 kWh and curtailing
             // 30 kWh of it, the other generating only the 70 kWh that the first one used
-            let curtailing = postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailing")).unwrap();
+            let curtailing =
+                postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailing")).unwrap();
             let smaller_array =
                 postprocess(&input, 70.0, 0.0, 10.0, None, Some("smaller_array")).unwrap();
             // Then neither is penalised for the energy that was spilled
@@ -9295,7 +9301,8 @@ mod tests {
         #[rstest]
         fn test_notional_labels_the_summary_rates(input: Input) {
             // Given the postprocessing is run for the notional dwelling
-            let rates = postprocess(&input, 100.0, 30.0, 10.0, Some(true), Some("notional")).unwrap();
+            let rates =
+                postprocess(&input, 100.0, 30.0, 10.0, Some(true), Some("notional")).unwrap();
 
             // Then the same rates are reported under the target names
             assert_relative_eq!(rates["TPER"], 1.2813004737142857);
