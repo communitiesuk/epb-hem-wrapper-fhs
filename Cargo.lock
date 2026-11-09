@@ -969,7 +969,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "home-energy-model"
 version = "1.0.0-alpha-9"
-source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=1_0_0a9#a334f7ba22c63b70eee0b17232fe65bb40be6df2"
+source = "git+https://github.com/communitiesuk/epb-home-energy-model.git?branch=1_0_0a9#cdf102c6eaa6d273d52fce5824d9ee5d920699bf"
 dependencies = [
  "accurate",
  "anyhow",

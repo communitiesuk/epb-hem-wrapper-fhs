@@ -45,9 +45,8 @@ use home_energy_model::input::{
     CustomEnergySourceFactor, EcoDesignController, WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
-use home_energy_model::ArcStr;
+use home_energy_model::{ArcStr, ParkingLotMutex, ParkingLotRwLock};
 use indexmap::IndexMap;
-use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -1206,14 +1205,14 @@ fn calc_daily_hw_demand(
         })
         .collect();
 
-    let wwhrs: IndexMap<String, Arc<Mutex<WwhrsInstantaneous>>> = if let Some(
+    let wwhrs: IndexMap<String, Arc<ParkingLotMutex<WwhrsInstantaneous>>> = if let Some(
         waste_water_heat_recovery,
     ) = input.wwhrs()?
     {
         let notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
         [(
             NOTIONAL_WWHRS.to_string(),
-            Arc::new(Mutex::new(WwhrsInstantaneous::new(
+            Arc::new(ParkingLotMutex::new(WwhrsInstantaneous::new(
                 notional_wwhrs.flow_rates.clone(),
                 notional_wwhrs.system_a_efficiencies.clone(),
                 cold_water_sources
@@ -1284,9 +1283,9 @@ fn calc_daily_hw_demand(
         "hw cylinder".into(),
         HotWaterSource::Wildcard(Arc::new(MockHotWaterSource)),
     )]);
-    let energy_supply: Arc<RwLock<EnergySupply>> = {
+    let energy_supply: Arc<ParkingLotRwLock<EnergySupply>> = {
         let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
-        Arc::new(RwLock::new(EnergySupplyBuilder::new(
+        Arc::new(ParkingLotRwLock::new(EnergySupplyBuilder::new(
             serde_json::from_value(electricity_supply.and_then(|map| map.get("fuel")).ok_or_else(|| anyhow!("FHS Notional wrapper expected existence of energy supply with key '{ENERGY_SUPPLY_NAME_ELECTRICITY}'"))?.to_owned())?,
             simtime.total_steps(),
         ).with_export_capable(electricity_supply.is_some_and(|map| map.get("is_export_capable").and_then(|v| v.as_bool()).unwrap_or(true))).build()))
