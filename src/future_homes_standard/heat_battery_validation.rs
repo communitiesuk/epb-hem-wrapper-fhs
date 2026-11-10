@@ -15,7 +15,7 @@ use serde_json::Value;
 /// building replaces the wet heat sources wholesale, so a heat battery does not survive into the
 /// notional modes, and a check made during preprocessing would refuse an input in the actual
 /// modes while accepting it in the notional ones. One input file has to get one verdict.
-fn validate_heat_battery_charging(input: InputForProcessing) -> anyhow::Result<()> {
+pub(crate) fn validate_heat_battery_charging(input: &InputForProcessing) -> anyhow::Result<()> {
     let heat_batteries = input.heat_batteries_with_charging_sources()?;
     for (battery_name, battery) in &heat_batteries {
         let charging_sources = input.heat_battery_charging_sources(battery_name.clone())?;
@@ -23,7 +23,7 @@ fn validate_heat_battery_charging(input: InputForProcessing) -> anyhow::Result<(
 
         for (source_name, source) in charging_sources {
             if source.get("type").and_then(Value::as_str) == Some("HeatSourceWet") {
-                validate_hydronic_source(&input, battery_name, battery, &source_name, &source)?;
+                validate_hydronic_source(input, battery_name, battery, &source_name, &source)?;
             }
         }
     }
@@ -169,7 +169,7 @@ mod tests {
                 .clone(),
         );
         // When validation is called
-        assert!(validate_heat_battery_charging(input).is_ok());
+        assert!(validate_heat_battery_charging(&input).is_ok());
         // Then no error is raised
     }
 
@@ -185,7 +185,7 @@ mod tests {
                 .clone(),
         );
         // When validation is called
-        assert!(validate_heat_battery_charging(input).is_ok());
+        assert!(validate_heat_battery_charging(&input).is_ok());
         // Then no error is raised, there being no charging sources to check
     }
 
@@ -206,7 +206,7 @@ mod tests {
         // When validation is called, then it is rejected: every source is given the same off-peak
         // window, so two are active over the same timesteps, and the core requires charging
         // sources not to overlap
-        let result = validate_heat_battery_charging(input);
+        let result = validate_heat_battery_charging(&input);
         let error = result.unwrap_err().to_string();
         assert_eq!(
             error,
@@ -230,7 +230,7 @@ mod tests {
             .clone(),
         );
         // When validation is called, then it is rejected: no schema can express a cross-reference
-        let result = validate_heat_battery_charging(input);
+        let result = validate_heat_battery_charging(&input);
         let error = result.unwrap_err().to_string();
         assert!(error.contains("names heat source 'NoSuchPump', which is not in HeatSourceWet"));
     }
@@ -249,7 +249,7 @@ mod tests {
             .clone(),
         );
         // When validation is called, then it is rejected: a battery cannot charge from a battery
-        let result = validate_heat_battery_charging(input);
+        let result = validate_heat_battery_charging(&input);
         let error = result.unwrap_err().to_string();
         assert!(error.contains("which is itself a heat battery"));
     }
@@ -269,7 +269,7 @@ mod tests {
             .clone(),
         );
         // When validation is called
-        let _result = validate_heat_battery_charging(input);
+        let _result = validate_heat_battery_charging(&input);
         // Then it warns rather than rejecting: below the phase change the battery still stores
         // sensible heat, so the configuration is degraded rather than impossible
     }
@@ -288,7 +288,7 @@ mod tests {
             .clone(),
         );
         // When validation is called
-        let result = validate_heat_battery_charging(input);
+        let result = validate_heat_battery_charging(&input);
         // Then nothing is warned about
         assert!(result.is_ok());
     }
@@ -317,7 +317,7 @@ mod tests {
             .remove("phase_transition_temperature_upper");
 
         // When validation is called
-        let result = validate_heat_battery_charging(input);
+        let result = validate_heat_battery_charging(&input);
         // Then no error is raised and nothing is warned about, there being no phase change to
         // compare the circuit against
         assert!(result.is_ok());

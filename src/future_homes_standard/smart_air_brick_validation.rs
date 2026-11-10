@@ -54,8 +54,8 @@ pub(crate) fn smart_air_brick_floors_mut(
 /// building has fixed air bricks, so notional preprocessing strips the flag before any
 /// mode-specific step could count it, and a check made later would refuse the input in the
 /// actual modes while accepting it in the notional ones. One input file has to get one verdict.
-fn validate_smart_air_brick_floors(input: InputForProcessing) -> anyhow::Result<()> {
-    let mut declared_on: Vec<_> = smart_air_brick_floors(&input)?.keys().cloned().collect();
+pub(crate) fn validate_smart_air_brick_floors(input: &InputForProcessing) -> anyhow::Result<()> {
+    let mut declared_on: Vec<_> = smart_air_brick_floors(input)?.keys().cloned().collect();
     if declared_on.len() > 1 {
         anyhow::bail!(
             "Only one floor of the dwelling may have smart air bricks, but they are declared on {}.",
@@ -119,7 +119,7 @@ mod tests {
         let project = project(vec![suspended_floor(json!({"smart_air_bricks": true}))]);
 
         // When validation is called
-        assert!(validate_smart_air_brick_floors(project).is_ok());
+        assert!(validate_smart_air_brick_floors(&project).is_ok());
         // Then no error is raised
     }
 
@@ -129,7 +129,7 @@ mod tests {
         let project = project(vec![suspended_floor(json!({})), suspended_floor(json!({}))]);
 
         // When validation is called
-        assert!(validate_smart_air_brick_floors(project).is_ok());
+        assert!(validate_smart_air_brick_floors(&project).is_ok());
         // Then no error is raised, the limit being on smart air bricks and not on floors
     }
 
@@ -142,7 +142,7 @@ mod tests {
         ]);
 
         // When validation is called
-        let error = validate_smart_air_brick_floors(project).unwrap_err();
+        let error = validate_smart_air_brick_floors(&project).unwrap_err();
 
         // Then an error is raised naming the floors. The core models one smart air brick system
         // per zone and the schema allows one zone, so this would otherwise be caught part way
@@ -166,7 +166,7 @@ mod tests {
         ]);
 
         // When validation is called
-        assert!(validate_smart_air_brick_floors(project).is_ok());
+        assert!(validate_smart_air_brick_floors(&project).is_ok());
 
         // Then no error is raised: only the suspended floor counts, matching the conditions the
         // core applies when it honours the control, so an input is never refused over elements
