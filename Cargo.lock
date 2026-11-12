@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "home-energy-model-wrapper-fhs"
-version = "1.0.0-alpha-7"
+version = "1.0.0-alpha-9"
 dependencies = [
  "accurate",
  "anyhow",
