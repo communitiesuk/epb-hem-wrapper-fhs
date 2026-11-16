@@ -3617,7 +3617,7 @@ fn window_treatment(input: &mut InputForProcessing) -> anyhow::Result<()> {
                 .and_then(|treatment_type| treatment_type.as_str())
             {
                 let treatment_controls_are_manual = treatment
-                    .get("WindowTreatmentControl")
+                    .get("controls")
                     .and_then(|window_control| window_control.as_str())
                     .is_some_and(|window_control_type| window_control_type.starts_with("manual"));
                 match treatment_type {
