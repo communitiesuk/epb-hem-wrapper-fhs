@@ -1,16 +1,16 @@
 use crate::future_homes_standard::fhs_compliance_response::{
     CalculatedComplianceResult, FhsComplianceResponse,
 };
-use crate::future_homes_standard::fhs_part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::future_homes_standard::{calc_tfa, final_preprocessing};
 use crate::future_homes_standard::future_homes_standard_notional::apply_fhs_notional_preprocessing;
 use crate::future_homes_standard::input::InputForProcessing;
 use crate::future_homes_standard::metrics::{energy_efficiency_rating, Metrics};
+use crate::future_homes_standard::part_f_validation::part_f::validate_dwelling_ventilation;
 use crate::future_homes_standard::project_lookups::by_fuel;
 use crate::{CalculationKey, FhsFlags};
 use crate::{CustomEnergySourceFactors, HemWrapper};
 use anyhow::anyhow;
-use future_homes_standard::apply_fhs_postprocessing;
+use future_homes_standard::{apply_fhs_postprocessing, has_offpeak_electricity_devices};
 use future_homes_standard_fee::{apply_fhs_fee_postprocessing, apply_fhs_fee_preprocessing};
 use home_energy_model::input::Input;
 use home_energy_model::output::{Output, OutputCore, OutputSummary};
@@ -25,23 +25,25 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use tracing::error;
 
-mod fhs_appliance;
+mod appliance;
 mod fhs_compliance_response;
-mod fhs_hw_events;
-mod fhs_imev_scheduler;
-mod fhs_part_f_validation;
 pub mod fhs_schema_validation;
-pub(crate) mod fhs_sleeved_dhn_validation;
-pub(crate) mod fhs_storeys_validation;
-pub(crate) mod fhs_ventilation;
-pub(crate) mod fhs_window_validation;
 #[allow(clippy::module_inception)]
 pub mod future_homes_standard;
 pub(crate) mod future_homes_standard_fee;
 pub(crate) mod future_homes_standard_notional;
+pub(crate) mod heat_battery_validation;
+mod hw_events;
+mod imev_scheduler;
 pub(crate) mod input;
 pub(crate) mod metrics;
+mod part_f_validation;
 pub(crate) mod project_lookups;
+pub(crate) mod sleeved_dhn_validation;
+pub(crate) mod smart_air_brick_validation;
+pub(crate) mod storeys_validation;
+pub(crate) mod ventilation;
+pub(crate) mod window_validation;
 
 /// A HEM wrapper for all single calculations using the FHS wrapper.
 pub struct FhsIndividualCalcWrapper;
@@ -219,7 +221,6 @@ fn do_fhs_preprocessing(
                 .ok_or_else(|| anyhow!("Expected NumberOfWetRooms to be provided"))?,
             input.number_of_bathrooms()?,
             input.number_of_utility_rooms()?,
-            input.number_of_sanitary_accommodations()?,
             input.storeys_in_dwelling()?,
             input.kitchen_extractor_hood_external()?,
         )?;
@@ -240,7 +241,13 @@ fn do_fhs_preprocessing(
 }
 
 fn metric_postprocessing(input: &Input, core_response: &Output) -> anyhow::Result<Metrics> {
-    let energy_by_fuel = by_fuel(input, &core_response.summary)?;
+    let offpeak_electricity = has_offpeak_electricity_devices(input)?;
+    let energy_by_fuel = by_fuel(
+        input,
+        &core_response.summary,
+        &core_response.core,
+        offpeak_electricity,
+    )?;
 
     Ok(Metrics {
         eer: energy_efficiency_rating(core_response.summary.total_floor_area, &energy_by_fuel),
@@ -301,6 +308,7 @@ fn do_fhs_postprocessing(
             notional,
             output_mode,
             custom_energy_supply_factors,
+            &results.output.core.generation_curtailed,
         )?;
     } else if flags.intersects(FhsFlags::FHS_FEE | FhsFlags::FHS_FEE_NOTIONAL) {
         let OutputSummary {

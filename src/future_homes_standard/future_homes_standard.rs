@@ -1,51 +1,69 @@
-use crate::future_homes_standard::fhs_appliance::FhsAppliance;
-use crate::future_homes_standard::fhs_hw_events::{
+use crate::future_homes_standard::appliance::FhsAppliance;
+use crate::future_homes_standard::hw_events::{
     reset_events_and_provide_drawoff_generator, HotWaterEventGenerator,
 };
-use crate::future_homes_standard::fhs_imev_scheduler::create_imev_pattern;
+use crate::future_homes_standard::imev_scheduler::create_imev_pattern;
 use crate::future_homes_standard::input::{
     json_error, set_control_max_name_for_heat_source, set_control_min_name_for_heat_source,
     HotWaterSourceDetailsForProcessing, HotWaterSourceDetailsJsonMap, InputForProcessing,
-    JsonAccessResult,
+    JsonAccessResult, SMART_AIR_BRICK_CONTROL_NAME,
+};
+use crate::future_homes_standard::project_lookups::OFFPEAK_END_HOUR;
+use crate::future_homes_standard::smart_air_brick_validation::{
+    smart_air_brick_floors, smart_air_brick_floors_mut,
 };
 use crate::CustomEnergySourceFactors;
+use accurate::{sum::Sum2, traits::*};
 use anyhow::{anyhow, bail};
-use arcstr::ArcStr;
 use csv::{Reader, WriterBuilder};
+use home_energy_model::core::external_conditions::{
+    create_external_conditions, ExternalConditions, WindowShadingObject,
+};
+use home_energy_model::core::schedule::WaterScheduleEventType;
+use home_energy_model::core::simulation_time::SimulationTime;
+use home_energy_model::core::space_heat_demand::building_element::convert_uvalue_to_resistance;
 use home_energy_model::core::units::{
     Orientation360, DAYS_IN_MONTH, DAYS_PER_YEAR, HOURS_PER_DAY, WATTS_PER_KILOWATT,
 };
-use home_energy_model::hem_core::external_conditions::{
-    create_external_conditions, ExternalConditions, WindowShadingObject,
-};
-use home_energy_model::hem_core::simulation_time::SimulationTime;
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, Input, TransparentBuildingElement,
-    TransparentBuildingElementJsonValue, WaterHeatingEventType,
+    CustomEnergySourceFactor, EnergySupplyDetails, FuelType, HeatSourceWetDetails, Input,
+    SpaceHeatSystemDetails, TransparentBuildingElement, TransparentBuildingElementJsonValue,
 };
 use home_energy_model::output_writer::OutputWriter;
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use itertools::{izip, Itertools};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
+use std::borrow::Borrow;
 use std::convert::Into;
+use std::hash::Hash;
 use std::io::{BufReader, Cursor, Read};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 const HOURS_TO_END_DEC: f64 = 8760.;
 
 pub(crate) const ENERGY_SUPPLY_NAME_GAS: &str = "mains gas";
 pub(crate) const ENERGY_SUPPLY_NAME_ELECTRICITY: &str = "mains elec";
-const APPL_OBJ_NAME: &str = "appliances";
-const ELEC_COOK_OBJ_NAME: &str = "Eleccooking";
-const GAS_COOK_OBJ_NAME: &str = "Gascooking";
 
-const CLOTHES_WASHING_APPLIANCE: &str = "Clothes_washing";
-const CLOTHES_DRYING_APPLIANCE: &str = "Clothes_drying";
-const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = [CLOTHES_WASHING_APPLIANCE, CLOTHES_DRYING_APPLIANCE];
+// Todo - Python uses a strEnum for appliances - consider using something similar?
+const LAUNDRY_APPLIANCE_NAMES: [&str; 2] = ["Clothes_washing", "Clothes_drying"];
 
+const APPLIANCE_TYPES: [&str; 11] = [
+    "Fridge",
+    "Freezer",
+    "Fridge-Freezer",
+    "Otherdevices",
+    "Dishwasher",
+    "Clothes_washing",
+    "Clothes_drying",
+    "Oven",
+    "Hobs",
+    "Microwave",
+    "Kettle",
+];
 pub(super) const LIVING_ROOM_SETPOINT_FHS: f64 = 21.0;
 pub(super) const REST_OF_DWELLING_SETPOINT_FHS: f64 = 20.0;
 
@@ -64,10 +82,21 @@ const HW_SETPOINT_MAX: f64 = 60.0;
 const OCCUPANT_WAKING_HR: usize = 7;
 const OCCUPANT_SLEEPING_HR: usize = 23;
 
+/// Report an input that is accepted but unlikely to be what was intended.
+///
+/// Kept as the single point of emission so the channel can change without touching call
+/// sites. A log record only reaches someone reading stderr, so a consumer driving the wrapper
+/// programmatically cannot act on it; a structured channel alongside the log is expected, and
+/// this is where it belongs when it arrives.
+fn _warn_about_input(message: &str) {
+    // Todo: Decide how we handle warnings
+    eprintln!("Warning: {}", message);
+}
+
 /// Apply initial pre-processing required for all modes
 pub(crate) fn initial_preprocessing(
     input: &mut InputForProcessing,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<IndexMap<ArcStr, CustomEnergySourceFactor>> {
     create_hot_water_demand(input)?;
     create_zone_area(input)?;
     create_hot_water_distribution(input)?;
@@ -100,6 +129,7 @@ pub(crate) fn final_preprocessing(
     create_water_heating_pattern(input)?;
     create_heating_pattern(input)?;
     create_charging_pattern(input)?;
+    create_smart_air_brick_pattern(input)?;
     create_evaporative_losses(input, tfa, n_occupants, &EVAP_PROFILE_DATA)?;
     create_cold_water_losses(input, tfa, n_occupants, &COLD_WATER_LOSS_PROFILE_DATA)?;
     create_lighting_gains(input, tfa, n_occupants)?;
@@ -138,6 +168,7 @@ pub(crate) fn final_preprocessing(
     create_vent_opening_schedule(input)?;
     window_treatment(input)?;
     create_thermal_penetration(input)?;
+    split_internal_partitions(input)?;
     create_heating(input)?;
     create_infiltration_ventilation(input)?;
     calc_sfp_mech_vent(input)?;
@@ -243,6 +274,7 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
             space_heat_system["state_of_charge_init"] = json!(1.0);
         }
     }
+    let build_type = input.build_type()?;
     if let Some(heat_source_wet) = input.heat_source_wet_mut()? {
         for heat_source in heat_source_wet.values_mut() {
             if let Some((Some(source_type), battery_type, backup_ctrl_type)) =
@@ -264,15 +296,53 @@ fn apply_defaults(input: &mut InputForProcessing) -> anyhow::Result<()> {
                 })
             {
                 {
-                    if source_type == "HeatBattery" && battery_type.is_some_and(|bt| bt == "pcm") {
-                        heat_source["temp_init"] = heat_source
-                            .get("max_temperature")
-                            .ok_or_else(|| anyhow!("max_temperature not found in heat source"))?
-                            .clone();
+                    if source_type == "HeatBattery" {
+                        match battery_type.as_deref() {
+                            Some("pcm") => {
+                                heat_source["temp_init"] = heat_source
+                                    .get("max_temperature")
+                                    .ok_or_else(|| {
+                                        anyhow!("max_temperature not found in heat source")
+                                    })?
+                                    .clone();
+                            }
+                            Some("dry_core") => {
+                                heat_source["state_of_charge_init"] = json!(1.0);
+                            }
+                            _ => {}
+                        }
                     }
                 }
+
                 if source_type == "HeatPump" && backup_ctrl_type.is_some_and(|bct| bct != "None") {
                     heat_source["time_delay_backup"] = json!(1.0);
+                }
+                if source_type == "HIU" {
+                    // Building-level distribution losses are the daily pipework heat
+                    // loss within an apartment block up to the dwelling boundary, so
+                    // they apply to flats only: a flat must supply a value, and a house
+                    // may not (a house has no building-level network, so its losses are
+                    // set to zero). The flats-only treatment is an FHS methodology
+                    // choice rather than a value derived from a standard, mirroring the
+                    // notional building, which applies a fixed building-level loss to
+                    // flats and none to houses.
+                    let has_losses = heat_source
+                        .get("building_level_distribution_losses")
+                        .is_some();
+                    match build_type.as_str() {
+                        "flat" => {
+                            if !has_losses {
+                                bail!("building_level_distribution_losses is required for an HIU heat source in a flat");
+                            }
+                        }
+                        "house" => {
+                            if has_losses {
+                                bail!("building_level_distribution_losses is not permitted for an HIU heat source in a house");
+                            }
+                            heat_source["building_level_distribution_losses"] = json!(0);
+                        }
+                        _ => bail!("Unexpected build_type: {}", build_type),
+                    }
                 }
             }
         }
@@ -291,7 +361,7 @@ static EMIS_PE_FACTORS: LazyLock<IndexMap<String, FactorData>> = LazyLock::new(|
     let mut factors: IndexMap<String, FactorData> = Default::default();
 
     let mut factors_reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
-        "./FHS_emisPEfactors_05-08-2024.csv"
+        "./emisPEfactors_05-08-2024.csv"
     ))));
     for factor_data in factors_reader.deserialize() {
         let factor_data: FactorData = factor_data.expect("Reading the PE factors file failed.");
@@ -309,7 +379,7 @@ static EMIS_PE_FACTORS_ELEC: LazyLock<IndexMap<usize, ElectricityFactorData>> =
         let mut emis_pe_factors_elec: IndexMap<usize, ElectricityFactorData> = Default::default();
 
         let mut factors_reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
-            "./FHS_emisPEfactors_elec.csv"
+            "./emisPEfactors_elec.csv"
         ))));
 
         for factor_data in factors_reader.deserialize() {
@@ -375,13 +445,14 @@ fn apply_energy_factor_series(energy_data: &[f64], factors: &Vec<f64>) -> anyhow
 pub fn apply_fhs_postprocessing(
     input: &Input,
     output_writer: &impl OutputWriter,
-    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
-    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
-    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
+    energy_import: &IndexMap<ArcStr, Vec<f64>>,
+    energy_export: &IndexMap<ArcStr, Vec<f64>>,
+    results_end_user: &IndexMap<ArcStr, IndexMap<ArcStr, Vec<f64>>>,
     timestep_array: &[f64],
     notional: bool,
     output_mode: &str,
     custom_energy_supply_factors: &CustomEnergySourceFactors,
+    generation_curtailed: &IndexMap<ArcStr, Vec<f64>>,
 ) -> anyhow::Result<()> {
     let no_of_timesteps = timestep_array.len();
 
@@ -398,6 +469,7 @@ pub fn apply_fhs_postprocessing(
         results_end_user,
         no_of_timesteps,
         custom_energy_supply_factors,
+        generation_curtailed,
     )?;
 
     // Write results to output files
@@ -433,14 +505,18 @@ pub fn apply_fhs_postprocessing(
     Ok(())
 }
 
-pub(super) fn calc_final_rates(
+pub(super) fn calc_final_rates<T>(
     input: &Input,
-    energy_import: &IndexMap<Arc<str>, Vec<f64>>,
-    energy_export: &IndexMap<Arc<str>, Vec<f64>>,
-    results_end_user: &IndexMap<Arc<str>, IndexMap<Arc<str>, Vec<f64>>>,
+    energy_import: &IndexMap<T, Vec<f64>>,
+    energy_export: &IndexMap<T, Vec<f64>>,
+    results_end_user: &IndexMap<T, IndexMap<T, Vec<f64>>>,
     number_of_timesteps: usize,
-    custom_energy_supply_factors: &IndexMap<Arc<str>, CustomEnergySourceFactor>,
-) -> anyhow::Result<FinalRates> {
+    custom_energy_supply_factors: &IndexMap<T, CustomEnergySourceFactor>,
+    generation_curtailed: &IndexMap<T, Vec<f64>>,
+) -> anyhow::Result<FinalRates>
+where
+    T: ToString + Hash + Eq + Clone + Borrow<ArcStr>,
+{
     // For each EnergySupply object:
     // look up relevant factors for import/export from csv or custom factors
     // from input file
@@ -449,9 +525,9 @@ pub(super) fn calc_final_rates(
     // Applying factors in this way rather than applying a net export factor to
     // exported energy accounts for energy generated and used on site and also
     // accounts for battery storage losses
-    let mut emis_results: IndexMap<String, FhsCalculationResult> = Default::default();
-    let mut emis_oos_results: IndexMap<String, FhsCalculationResult> = Default::default();
-    let mut pe_results: IndexMap<String, FhsCalculationResult> = Default::default();
+    let mut emis_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
+    let mut emis_oos_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
+    let mut pe_results: IndexMap<ArcStr, FhsCalculationResult> = Default::default();
 
     for (energy_supply_key, energy_supply_details) in input
         .energy_supply()
@@ -469,9 +545,9 @@ pub(super) fn calc_final_rates(
             .or_default();
         let supply_pe_result = pe_results.entry(energy_supply_key.clone()).or_default();
 
-        let fuel_code = energy_supply_details.fuel;
+        let fuel_code = energy_supply_details.fuel();
 
-        let energy_supply_key: Arc<str> = energy_supply_key.as_str().into();
+        let energy_supply_key: ArcStr = energy_supply_key;
 
         // Get emissions/PE factors for import/export
         let (emis_factor_import_export, emis_oos_factor_import_export, pe_factor_import_export) =
@@ -521,7 +597,7 @@ pub(super) fn calc_final_rates(
             };
 
         // Calculate energy imported and associated emissions/PE
-        if fuel_code == FuelType::Electricity {
+        if FuelType::Electricity == fuel_code {
             supply_emis_result.import = apply_energy_factor_series(
                 &energy_import[&energy_supply_key],
                 &emis_factor_import_export,
@@ -534,7 +610,7 @@ pub(super) fn calc_final_rates(
                 &energy_import[&energy_supply_key],
                 &pe_factor_import_export,
             )?;
-        } else if fuel_code == FuelType::UnmetDemand {
+        } else if FuelType::UnmetDemand == fuel_code {
             // unmet demand is calculated as a special case where it is only the increase in unmet
             // demand between timesteps that should be accounted for, not the raw number
 
@@ -574,11 +650,27 @@ pub(super) fn calc_final_rates(
 
         // If there is any export, Calculate energy exported and associated emissions/PE
         // Note that by convention, exported energy is negative
+        // The credit uses the factor for the timestep in which the energy is exported, and
+        // energy_export covers battery discharge to the grid as well as generation exported
+        // directly. That is neutral only because the electricity factors hold a single value for
+        // every timestep of the year: were they to vary by time of day, charging a battery in a
+        // low-factor timestep and exporting in a high-factor one would earn a credit for trading
+        // against the grid rather than for anything about the dwelling.
+        // The energy efficiency rating derives its credit from generation to grid, which is
+        // generation surplus alone, so battery export is credited here but not there. That
+        // difference is inert while the wrapper enables no battery grid export, the two quantities
+        // then being equal, and whether it is right is unsettled rather than decided: the grid
+        // does not distinguish exported energy by its source.
         (
             supply_emis_result.export,
             supply_emis_oos_result.export,
             supply_pe_result.export,
-        ) = if energy_export[&energy_supply_key].iter().sum::<f64>() < 0. {
+        ) = if energy_export[&energy_supply_key]
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>()
+            < 0.
+        {
             match fuel_code {
                 FuelType::Electricity => (
                     apply_energy_factor_series(
@@ -646,18 +738,36 @@ pub(super) fn calc_final_rates(
         // Calculate energy generated and associated emissions/PE
         let mut energy_generated = vec![0.; number_of_timesteps];
         for end_user_energy in results_end_user[&energy_supply_key].values() {
-            if end_user_energy.iter().sum::<f64>() < 0. {
+            if end_user_energy
+                .iter()
+                .copied()
+                .sum_with_accumulator::<Sum2<_>>()
+                < 0.
+            {
                 for (t_idx, energy_generated_value) in energy_generated.iter_mut().enumerate() {
                     *energy_generated_value -= end_user_energy[t_idx];
                 }
             }
         }
 
+        // Exclude generation curtailed by an export power limit. The core offers surplus
+        // generation to self-consumption, storage and the diverter before applying the cap, so
+        // curtailed energy reaches no use at all, whereas results_end_user records generation
+        // before the cap. Counting it would charge primary energy for energy never delivered.
+        let curtailed = &generation_curtailed[&energy_supply_key];
+        for t_idx in 0..number_of_timesteps {
+            energy_generated[t_idx] -= curtailed[t_idx];
+        }
         (
             supply_emis_result.generated,
             supply_emis_oos_result.generated,
             supply_pe_result.generated,
-        ) = if energy_generated.iter().sum::<f64>() > 0. {
+        ) = if energy_generated
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>()
+            > 0.
+        {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
             let generation_factors = EMIS_PE_FACTORS
                 .get(&String::from("generation"))
@@ -669,7 +779,7 @@ pub(super) fn calc_final_rates(
                 ..
             } = generation_factors;
 
-            if fuel_code == FuelType::UnmetDemand {
+            if FuelType::UnmetDemand == fuel_code {
                 // unmet demand is calculated as a special case where it is only the increase in unmet
                 // demand between timesteps that should be accounted for, not the raw number
 
@@ -721,22 +831,20 @@ pub(super) fn calc_final_rates(
         // Calculate unregulated energy demand and associated emissions/PE
         let mut energy_unregulated = vec![0.; number_of_timesteps];
         for (end_user_name, end_user_energy) in results_end_user[&energy_supply_key].iter() {
-            if [APPL_OBJ_NAME, ELEC_COOK_OBJ_NAME, GAS_COOK_OBJ_NAME]
-                .contains(&end_user_name.as_ref())
-            {
+            if APPLIANCE_TYPES.contains(&end_user_name.to_string().as_str()) {
                 for (t_idx, energy_unregulated_value) in energy_unregulated.iter_mut().enumerate() {
                     *energy_unregulated_value += end_user_energy[t_idx];
                 }
             }
         }
-        if fuel_code == FuelType::Electricity {
+        if FuelType::Electricity == fuel_code {
             supply_emis_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &emis_factor_import_export)?;
             supply_emis_oos_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &emis_oos_factor_import_export)?;
             supply_pe_result.unregulated =
                 apply_energy_factor_series(&energy_unregulated, &pe_factor_import_export)?;
-        } else if fuel_code == FuelType::UnmetDemand {
+        } else if FuelType::UnmetDemand == fuel_code {
             // unmet demand is calculated as a special case where it is only the increase in unmet
             // demand between timesteps that should be accounted for, not the raw number
 
@@ -802,15 +910,25 @@ pub(super) fn calc_final_rates(
     }
 
     let tfa = calc_tfa_from_finalised_input(input);
+    // Calculate summary results.
+    //
+    // Either rate can come out negative, which is a valid outcome rather than a fault. These
+    // rates cover regulated energy only, so the unregulated total is subtracted above, and that
+    // subtraction is what takes a well performing dwelling below zero: both dwellings pinned in
+    // the end-to-end tests are positive if it is left in. The export credit contributes but does
+    // not decide it, and a dwelling can be negative while importing more than it exports.
+    //
+    // Neither rate is floored, and this module never compares them against the notional's, so
+    // nothing decided here depends on the sign.
     let total_emissions_rate = emis_results
         .values()
-        .map(|emis| emis.total.iter().sum::<f64>())
-        .sum::<f64>()
+        .map(|emis| emis.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .sum_with_accumulator::<Sum2<_>>()
         / tfa;
     let total_pe_rate = pe_results
         .values()
-        .map(|pe| pe.total.iter().sum::<f64>())
-        .sum::<f64>()
+        .map(|pe| pe.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .sum_with_accumulator::<Sum2<_>>()
         / tfa;
 
     Ok(FinalRates {
@@ -825,9 +943,9 @@ pub(super) fn calc_final_rates(
 pub(super) struct FinalRates {
     pub(super) emission_rate: f64,
     pub(super) primary_energy_rate: f64,
-    pub(super) emissions_results: IndexMap<String, FhsCalculationResult>,
-    pub(super) emissions_out_of_scope_results: IndexMap<String, FhsCalculationResult>,
-    pub(super) primary_energy_results: IndexMap<String, FhsCalculationResult>,
+    pub(super) emissions_results: IndexMap<ArcStr, FhsCalculationResult>,
+    pub(super) emissions_out_of_scope_results: IndexMap<ArcStr, FhsCalculationResult>,
+    pub(super) primary_energy_results: IndexMap<ArcStr, FhsCalculationResult>,
 }
 
 #[derive(Default)]
@@ -860,7 +978,7 @@ fn write_postproc_file(
     output_writer: &impl OutputWriter,
     output_mode: &str,
     file_name: &str,
-    results: IndexMap<String, FhsCalculationResult>,
+    results: IndexMap<ArcStr, FhsCalculationResult>,
     no_of_timesteps: usize,
 ) -> anyhow::Result<()> {
     let file_location = format!("{output_mode}__postproc_{file_name}");
@@ -1307,8 +1425,8 @@ fn weekend_heating_schedule(zone: &JsonValue) -> anyhow::Result<[Option<f64>; 48
     // 08:30 - 22:00
     let mut heating_weekend = Vec::with_capacity(48);
     heating_weekend.extend(repeat_n(false, 17));
-    heating_weekend.extend(repeat_n(true, 27));
-    heating_weekend.extend(repeat_n(false, 4));
+    heating_weekend.extend(repeat_n(true, 28));
+    heating_weekend.extend(repeat_n(false, 3));
     let heating_weekend: [bool; 48] = heating_weekend.try_into().unwrap();
 
     let setpoint = calc_zone_setpoint_fhs(zone)?;
@@ -1335,28 +1453,71 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
         for space_heat_system in space_heat_systems {
             let ctrlname = format!("HeatingPattern_{space_heat_system}");
             input.set_control_string_for_space_heat_system(&space_heat_system, &ctrlname)?;
-            input.add_control(&ctrlname, json!({
-                    "type": "SetpointTimeControl",
-                    "start_day": 0,
-                    "time_series_step": 0.5,
-                    "schedule": {
-                        "main": [{"repeat": 53, "value": "week"}],
-                        "week": [
-                            {"repeat": 5, "value": "weekday"},
-                            {"repeat": 2, "value": "weekend"},
-                        ],
-                        "weekday": weekday_heating_schedule(
-                            &json!(input.specific_zone(&zone_key)?), temp_setback, advanced_start, input.input.get("HeatingControlType").and_then(JsonValue::as_str).ok_or_else(|| anyhow!("HeatingControlType must be a valid string"))?
-                        )?.to_vec(),
-                        "weekend": weekend_heating_schedule(&json!(input.specific_zone(&zone_key)?))?.to_vec(),
-                    },
-                    "setpoint_min": temp_setback,
-                    "advanced_start": advanced_start,
-                }))?;
+            let heating_control_type = input
+                .input
+                .get("HeatingControlType")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| anyhow!("HeatingControlType must be a valid string"))?
+                .to_owned();
+            let mut control = json!({
+                "type": "SetpointTimeControl",
+                "start_day": 0,
+                "time_series_step": 0.5,
+                "schedule": {
+                    "main": [{"repeat": 53, "value": "week"}],
+                    "week": [
+                        {"repeat": 5, "value": "weekday"},
+                        {"repeat": 2, "value": "weekend"},
+                    ],
+                    "weekday": weekday_heating_schedule(
+                        &json!(input.specific_zone(&zone_key)?),
+                        temp_setback,
+                        advanced_start,
+                        &heating_control_type,
+                    )?.to_vec(),
+                    "weekend": weekend_heating_schedule(
+                        &json!(input.specific_zone(&zone_key)?)
+                    )?.to_vec(),
+                },
+                "setpoint_min": temp_setback,
+            });
+            // Only the SeparateTimeAndTempControl weekday schedule models the
+            // advance; attaching advanced_start under SeparateTempControl
+            // would silently apply a 2-hour preheat absent from the schedule.
+            if heating_control_type == "SeparateTimeAndTempControl" {
+                control["advanced_start"] = json!(advanced_start);
+            }
+            input.add_control(&ctrlname, control)?;
         }
     }
 
     Ok(())
+}
+
+/// Return True if the project contains electric storage heaters or heat batteries.
+///
+///  These devices charge on a 7-hour off-peak electricity tariff (Economy 7), so their
+/// electricity costs must be split between off-peak and on-peak rates for EER calculation.
+pub(crate) fn has_offpeak_electricity_devices(input: &Input) -> anyhow::Result<bool> {
+    if let Some(space_heat_system) = input.space_heat_system() {
+        if space_heat_system
+            .values()
+            .any(|shs| matches!(shs, SpaceHeatSystemDetails::ElectricStorageHeater { .. }))
+        {
+            return Ok(true);
+        }
+    }
+
+    if let Some(heat_source_wet) = input.heat_source_wet() {
+        if heat_source_wet
+            .values()
+            .any(|hsw| matches!(hsw, HeatSourceWetDetails::HeatBattery { .. }))
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Create charging control schedules for thermal storage systems.
@@ -1367,8 +1528,9 @@ fn create_heating_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> 
 fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
     // 00:00 until 07:00 off-peak charging
     let mut charging_offpeak = Vec::with_capacity(48);
-    charging_offpeak.extend(repeat_n(true, 14));
-    charging_offpeak.extend(repeat_n(false, 48 - 14));
+    let offpeak_steps = (OFFPEAK_END_HOUR / SIMTIME_STEP) as usize;
+    charging_offpeak.extend(repeat_n(true, offpeak_steps));
+    charging_offpeak.extend(repeat_n(false, 48 - offpeak_steps));
 
     // Electric storage heaters (SpaceHeatSystem)
     for zone_key in input.zone_keys()? {
@@ -1407,34 +1569,179 @@ fn create_charging_pattern(input: &mut InputForProcessing) -> anyhow::Result<()>
     }
 
     // Heat batteries (HeatSourceWet)
-    // In addition any heat battery "HeatSourceWet" must have a ControlCharge
-    for (heat_source_key, heat_source_wet) in input.heat_source_wet()? {
-        if heat_source_wet
-            .get("type")
-            .and_then(JsonValue::as_str)
-            .is_some_and(|type_str| type_str == "HeatBattery")
-        {
-            let hb_ctrlname = "HeatBattery_Control";
-            input
-                .heat_source_wet_by_key_mut(&heat_source_key)?
-                .insert("ControlCharge".into(), json!(&hb_ctrlname));
-            input.add_control(
-                hb_ctrlname,
-                json!({
-                    "type": "ChargeControl",
-                    "start_day": 0,
-                    "time_series_step": 0.5,
-                    "logic_type": "heat_battery",
-                    "charge_level": 1,
-                    "schedule": {
-                        "main": [{"value": "day", "repeat": 365}],
-                        "day": charging_offpeak,
-                    },
-                }),
-            )?;
+    // A heat battery charges either from named charging sources, each with its own control, or
+    // from a direct electric element at a rated power with a single ControlCharge. The core
+    // model forbids both at once, so only one is set here.
+    for heat_source_key in input.heat_source_wet_keys()? {
+        let (is_heat_battery, has_charging_sources) = {
+            let heat_source_wet = input.heat_source_wet_by_key(&heat_source_key)?;
+            (
+                heat_source_wet.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"),
+                heat_source_wet.get("HeatSource").is_some(),
+            )
+        };
+        if is_heat_battery {
+            if has_charging_sources {
+                create_heat_battery_charging_source_controls(
+                    input,
+                    &heat_source_key,
+                    &charging_offpeak,
+                )?;
+            } else {
+                let hb_ctrlname = "HeatBattery_Control";
+                input
+                    .heat_source_wet_by_key_mut(&heat_source_key)?
+                    .insert("ControlCharge".into(), json!(hb_ctrlname));
+                input.add_control(
+                    hb_ctrlname,
+                    json!({
+                        "type": "ChargeControl",
+                        "start_day": 0,
+                        "time_series_step": 0.5,
+                        "logic_type": "heat_battery",
+                        "charge_level": 1,
+                        "schedule": {
+                            "main": [{"value": "day", "repeat": 365}],
+                            "day": charging_offpeak,
+                        },
+                    }),
+                )?;
+            }
         }
     }
 
+    Ok(())
+}
+
+/// Give a heat battery's charging source its control, on the off-peak window.
+///
+/// The pattern is the same off-peak window used when a battery charges from a direct electric
+/// element, so a hydronically-charged battery is timed no differently. Setpoints are states of
+/// charge rather than temperatures: a PCM battery only charges once the source exceeds its
+/// phase change temperature, so a temperature band would have to be held below the flow
+/// temperature and would cap the heat source below the point it has to exceed.
+///
+/// In the window the band runs from a full charge to a full charge, which starts charging
+/// whenever the battery is short of full and stops it once full - the same intent as the
+/// charge_level of 1 used for direct electric charging. Outside it both are None, the core's
+/// convention for a control that is off, which cannot start charging at all rather than
+/// setting a target it is already at.
+///
+/// That a battery declares at most one charging source, and that a hydronic source names a heat
+/// source which exists and is not itself a battery, are guaranteed by input validation, which
+/// runs before the wrapper branches by mode.
+fn create_heat_battery_charging_source_controls(
+    input: &mut InputForProcessing,
+    heat_source_key: &str,
+    charging_offpeak: &[bool],
+) -> anyhow::Result<()> {
+    let charge_when_off_peak = charging_offpeak
+        .iter()
+        .map(|&off_peak| off_peak.then_some(1.0))
+        .collect::<Vec<Option<f64>>>();
+
+    let controls = {
+        let heat_source_wet = input.heat_source_wet_by_key_mut(heat_source_key)?;
+        let charging_sources = heat_source_wet
+            .get_mut("HeatSource")
+            .and_then(JsonValue::as_object_mut)
+            .ok_or_else(|| {
+                anyhow!("Heat battery '{heat_source_key}' has a HeatSource that is not an object")
+            })?;
+        let mut controls = Vec::with_capacity(charging_sources.len());
+
+        for (source_name, source) in charging_sources.iter_mut() {
+            let control_name = format!("HeatBattery_{heat_source_key}_{source_name}_Control");
+            source["Control"] = json!(control_name);
+            source["schedule_unit"] = json!("soc");
+            let schedule = json!({
+                "main": [{"value": "day", "repeat": 365}],
+                "day": charge_when_off_peak.clone(),
+            });
+            controls.push((
+                control_name,
+                json!({
+                    "type": "RangeTimeControl",
+                    "start_day": 0,
+                    "time_series_step": 0.5,
+                    "schedule_lower": schedule.clone(),
+                    "schedule_upper": schedule,
+                }),
+            ));
+        }
+
+        controls
+    };
+
+    for (control_name, control) in controls {
+        input.add_control(&control_name, control)?;
+    }
+
+    Ok(())
+}
+
+///Return the standardised half-hourly smart air brick opening ratios for the year.
+///
+///    One value per timestep, 0 fully closed to 1 fully open. Derived from manufacturer field
+///    data for a typical dwelling: real observations mapped onto the calendar year by month, day
+///    and half-hour, with the gaps filled from the mean of the same half-hour in the same month.
+///
+///    What the values drive, since it is the closed time rather than the open time that matters:
+///    the core reduces infiltration through the lower facade in proportion to (1 - ratio) at each
+///    timestep, relative to the vents' state during the airtightness test. The annual mean of
+///    this series is 0.294, so its mean closed fraction is 0.71, close to the 0.7 of the
+///    representative case the core's reduction factor was calibrated on, itself scaled up from
+///    the 11.3% airtightness improvement measured in the BRE Airex ECO4 trial (2024).
+///
+///    The effect on any one dwelling is not fixed by this series alone. It also scales with the
+///    share of the ground floor that has smart air bricks and with the lower facade's share of
+///    total leakage, so a dwelling whose closed time matches the representative case will not
+///    necessarily see the same saving.
+#[derive(Deserialize)]
+#[serde(rename = "lowercase")]
+struct SmartAirBrickOpeningRow {
+    #[serde(alias = "Timestep")]
+    _timestep: f64,
+    vent_open_ratio: f64,
+}
+
+fn load_smart_air_brick_opening() -> anyhow::Result<Vec<f64>> {
+    let mut reader = Reader::from_reader(BufReader::new(Cursor::new(include_str!(
+        "./smart_air_brick_opening.csv"
+    ))));
+    let ratios = reader
+        .deserialize::<SmartAirBrickOpeningRow>()
+        .map(|row| row.map(|row| row.vent_open_ratio))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let total_steps = simtime().total_steps();
+    if ratios.len() != total_steps {
+        bail!(
+            "smart_air_brick_opening.csv holds {} opening ratios, but the simulation has {total_steps} timesteps.",
+            ratios.len()
+        );
+    }
+
+    Ok(ratios)
+}
+
+///Attach the standardised opening schedule to the dwelling's smart air brick floor.
+///
+///    A smart air brick modulates on measured underfloor humidity and temperature, so the
+///    opening pattern is not an assessor input: a compliance assessment applies one standardised
+///    schedule.
+///
+///    Which elements qualify is decided by smart_air_brick_floors, so that this and the check that
+///    at most one floor carries them cannot drift apart. That there is at most one is guaranteed by
+///    input validation, which runs before the wrapper branches by mode.
+fn create_smart_air_brick_pattern(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    if smart_air_brick_floors(input)?.is_empty() {
+        return Ok(());
+    }
+    input.add_control_smart_air_brick(load_smart_air_brick_opening()?)?;
+    for building_element in smart_air_brick_floors_mut(input)?.into_values() {
+        building_element["Control_smart_air_brick"] = SMART_AIR_BRICK_CONTROL_NAME.into();
+    }
     Ok(())
 }
 
@@ -1602,38 +1909,15 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
         .flat_map(|value| value.as_object_mut())
         .map(HotWaterSourceDetailsJsonMap)
     {
-        if hw_source.is_storage_tank() {
-            for heat_source in hw_source.all_heat_sources_mut()? {
-                set_control_max_name_for_heat_source(heat_source, hw_max_temp)?;
-
-                let heat_source_type = heat_source.get("type").ok_or_else(|| {
-                    json_error("Type field missing from storage tank heat source")
-                })?;
-
-                if heat_source_type != "SolarThermalSystem" {
-                    set_control_min_name_for_heat_source(heat_source, hw_min_temp)?;
-                }
-            }
-        } else if hw_source.is_smart_hot_water_tank() {
-            hw_source.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
-
-            for heat_source in hw_source.all_heat_sources_mut()? {
-                set_control_max_name_for_heat_source(
-                    heat_source,
-                    hw_smart_hot_water_tank_max_soc_name,
-                )?;
-
-                let heat_source_type = heat_source.get("type").ok_or_else(|| {
-                    json_error("Type field missing from smart hot water tank heat source")
-                })?;
-
-                if heat_source_type != "SolarThermalSystem" {
-                    set_control_min_name_for_heat_source(
-                        heat_source,
-                        hw_smart_hot_water_tank_min_soc_name,
-                    )?;
-                }
-            }
+        if hw_source.is_storage_tank() || hw_source.is_smart_hot_water_tank() {
+            apply_tank_heat_source_controls(
+                &mut hw_source,
+                hw_smart_hot_water_tank_temp_max_name,
+                hw_smart_hot_water_tank_max_soc_name,
+                hw_smart_hot_water_tank_min_soc_name,
+                hw_max_temp,
+                hw_min_temp,
+            )?;
         } else if hw_source.is_combi_boiler()
             || hw_source.is_heat_battery()
             || hw_source.is_point_of_use()
@@ -1647,20 +1931,56 @@ fn create_water_heating_pattern(input: &mut InputForProcessing) -> anyhow::Resul
     }
 
     if input.has_preheated_water_source()? {
-        for heat_source in input.all_preheated_tank_heat_source_values_mut()? {
-            let heat_source = heat_source
-                .as_object_mut()
-                .ok_or_else(|| json_error("Heat source on pre heated tank was not an object"))?;
+        // A pre-heated tank represents an upstream source at its own user-declared
+        // temperature, so (unlike the dwelling's hot water cylinder) its init_temp and
+        // temp_usable are left as entered; only the availability controls are standardised.
+        let preheated_tank = input
+            .preheated_tank_mut()?
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("Preheated tank is not an object"))?;
+        let mut preheated_tank = HotWaterSourceDetailsJsonMap(preheated_tank);
+        apply_tank_heat_source_controls(
+            &mut preheated_tank,
+            hw_smart_hot_water_tank_temp_max_name,
+            hw_smart_hot_water_tank_max_soc_name,
+            hw_smart_hot_water_tank_min_soc_name,
+            hw_max_temp,
+            hw_min_temp,
+        )?;
+    }
 
-            heat_source.insert("Controlmax".into(), hw_max_temp.into());
+    Ok(())
+}
+/// Assign the standard water-heating availability controls to a storage or
+/// smart hot water tank.
+///
+/// Smart tanks are driven by state-of-charge controls and carry a maximum
+/// setpoint control on the tank itself; storage tanks use temperature setpoint
+/// controls. Solar thermal heat sources stay always-available, so they get no
+/// minimum control. Applies to both HotWaterSource cylinders and pre-heated
+/// tanks, which share the same tank handling.
+fn apply_tank_heat_source_controls(
+    tank: &mut impl HotWaterSourceDetailsForProcessing,
+    hw_smart_hot_water_tank_temp_max_name: &str,
+    hw_smart_hot_water_tank_max_soc_name: &str,
+    hw_smart_hot_water_tank_min_soc_name: &str,
+    hw_max_temp: &str,
+    hw_min_temp: &str,
+) -> anyhow::Result<()> {
+    let (control_max, control_min) = if tank.is_smart_hot_water_tank() {
+        tank.set_temp_setpnt_max(hw_smart_hot_water_tank_temp_max_name);
+        (
+            hw_smart_hot_water_tank_max_soc_name,
+            hw_smart_hot_water_tank_min_soc_name,
+        )
+    } else {
+        (hw_max_temp, hw_min_temp)
+    };
 
-            let heat_source_type = heat_source
-                .get("type")
-                .ok_or_else(|| json_error("Type field missing from pre heated tank heat source"))?;
-
-            if heat_source_type != "SolarThermalSystem" {
-                heat_source.insert("Controlmin".into(), hw_min_temp.into());
-            }
+    for heat_source in tank.all_heat_sources_mut()? {
+        set_control_max_name_for_heat_source(heat_source, control_max)?;
+        if heat_source.get("type").and_then(|v| v.as_str()) != Some("SolarThermalSystem") {
+            set_control_min_name_for_heat_source(heat_source, control_min)?;
         }
     }
 
@@ -1999,7 +2319,10 @@ impl AppliancePropensities<AsDataFile> {
             ]
             .into_iter()
             .map(|probabilities| -> [f64; 24] {
-                let sumcol = probabilities.iter().sum::<f64>();
+                let sumcol = probabilities
+                    .iter()
+                    .copied()
+                    .sum_with_accumulator::<Sum2<_>>();
                 probabilities.map(|x| x / sumcol)
             })
             .collect::<Vec<_>>()
@@ -2490,8 +2813,8 @@ fn create_appliance_gains(
 
     // Assign priority to those with a kWhcycle value, in reverse order
     for (priority, appliance) in appliance_kwhcycle
-        // the Python behaviour differs here as it sorts by index 1 (2nd letter) of the appliance key string,
-        // in the Rust we've implemented what we think is the intended behaviour and reported the bug to DESNZ
+        // Assign priority by descending kWh-per-cycle so the largest single-cycle
+        // demand is shed first under smart-control prioritisation.
         .sorted_by(|_, v1, _, v2| v1.total_cmp(v2).reverse())
         .enumerate()
     {
@@ -2591,7 +2914,6 @@ struct ClothesUseData {
 }
 struct ApplianceCookingDemand {
     mean_annual_demand: f64,
-    _mean_annual_events: f64,
     mean_event_demand: f64,
     fuel: Option<ArcStr>,
     event_count: f64,
@@ -2608,7 +2930,6 @@ fn cooking_demand(
     };
     let oven = ApplianceCookingDemand {
         mean_annual_demand: 285.14,
-        _mean_annual_events: 441.11,
         mean_event_demand: 0.762,
         fuel: oven_fuel,
         event_count: Default::default(),
@@ -2621,7 +2942,6 @@ fn cooking_demand(
     };
     let hobs = ApplianceCookingDemand {
         mean_annual_demand: 352.53,
-        _mean_annual_events: 520.86,
         mean_event_demand: 0.810,
         fuel: hobs_fuel,
         event_count: Default::default(),
@@ -2633,7 +2953,6 @@ fn cooking_demand(
     };
     let microwave = ApplianceCookingDemand {
         mean_annual_demand: 44.11,
-        _mean_annual_events: 710.65,
         mean_event_demand: 0.0772,
         fuel: microwave_fuel,
         event_count: Default::default(),
@@ -2645,7 +2964,6 @@ fn cooking_demand(
     };
     let kettle = ApplianceCookingDemand {
         mean_annual_demand: 173.03,
-        _mean_annual_events: 1782.5,
         mean_event_demand: 0.0985,
         fuel: kettle_fuel,
         event_count: Default::default(),
@@ -2776,6 +3094,9 @@ fn appliance_cooking_defaults(
         ]),
     };
 
+    // Kettle and Microwave are always added as defaults below, so an input
+    // need not declare them. They appear in the input schema only so a user
+    // can pin them ("Default") or opt out ("Not Installed").
     let mut additional_cooking_defaults = IndexMap::from([
         ("Kettle", json!({"kWh_per_cycle": 0.1})),
         ("Microwave", json!({"kWh_per_cycle": 0.08})),
@@ -2900,7 +3221,7 @@ fn appliance_kwh_cycle_loading_factor(
 
         (
             loading_factor,
-            if appliance_key == CLOTHES_DRYING_APPLIANCE {
+            if appliance_key == "Clothes_drying" {
                 let residual_moisture_adjustment = get_residual_moisture_adjustment(input)?;
                 kwh_cycle * residual_moisture_adjustment
             } else {
@@ -2948,7 +3269,7 @@ fn get_kwh_per_cycle(appliance: &JsonValue, appliance_name: &str) -> anyhow::Res
 
 fn get_residual_moisture_adjustment(input: &InputForProcessing) -> anyhow::Result<f64> {
     if let Some(spin_eff_class) = input
-        .appliance_with_key(CLOTHES_WASHING_APPLIANCE)?
+        .appliance_with_key("Clothes_washing")?
         .and_then(|appliance| appliance.get("spin_dry_efficiency_class"))
         .and_then(|s| s.as_str())
     {
@@ -3066,11 +3387,11 @@ pub(super) fn create_hot_water_use_pattern(
     // Add daily average hot water use to combi boiler and hot water only heat pump (HWOHP) objects,
     // if present
     // TODO (from Python) This is probably only valid if HWOHP is the only heat source for the
-    // storage tank. Make this more robust/flexible in future.
+    // tank. Make this more robust/flexible in future.
     for hot_water_source in input.hot_water_source_mut()?.values_mut() {
         let source_type = hot_water_source.get("type").and_then(|t| t.as_str());
         match source_type {
-            Some("StorageTank") => {
+            Some("StorageTank") | Some("SmartHotWaterTank") => {
                 if let Some(heat_sources) = hot_water_source
                     .get_mut("HeatSource")
                     .and_then(JsonValue::as_object_mut)
@@ -3145,7 +3466,7 @@ pub(super) fn create_hot_water_use_pattern(
             // TODO (from Python) - implies 2 uses of the same IES may overlap, could check them separately
             hw_event_gen.overlap_check(
                 &mut hourly_events,
-                &[WaterHeatingEventType::Bath, WaterHeatingEventType::Shower],
+                &[WaterScheduleEventType::Bath, WaterScheduleEventType::Shower],
                 event_start,
                 duration,
             );
@@ -3153,7 +3474,7 @@ pub(super) fn create_hot_water_use_pattern(
                 .get_mut(event_start.floor() as usize)
                 .unwrap()
                 .push(HourlyHotWaterEvent {
-                    event_type: WaterHeatingEventType::Shower,
+                    event_type: WaterScheduleEventType::Shower,
                     start: event_start,
                     end: event_start + duration / 60.,
                 });
@@ -3370,20 +3691,6 @@ fn create_heating(input: &mut InputForProcessing) -> anyhow::Result<()> {
         }
     }
 
-    if let Some(wet_heat_sources) = input.optional_root_object_mut("WetHeatSource")? {
-        for heat_source in wet_heat_sources.values_mut() {
-            if heat_source
-                .get("type")
-                .and_then(JsonValue::as_str)
-                .is_some_and(|type_str| type_str == "HeatBattery")
-            {
-                if let Some(heat_source) = heat_source.as_object_mut() {
-                    heat_source.insert("heat_battery_location".into(), json!("internal"));
-                }
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -3401,13 +3708,17 @@ fn create_infiltration_ventilation(input: &mut InputForProcessing) -> anyhow::Re
 
 static COLOUR_TO_SOLAR_ABSORPTION_MAP: LazyLock<IndexMap<&'static str, f64>> =
     LazyLock::new(|| [("Light", 0.3), ("Intermediate", 0.6), ("Dark", 0.9)].into());
+
+// Areal heat capacity by thermal mass class, in J/(m²·K) as required by hem-core.
+// Values reflect the full depth of each element rather than truncating to the
+// first 100 mm, so they are higher than the surface-layer figures.
 static AREAL_HEAT_MAP: LazyLock<IndexMap<&'static str, usize>> = LazyLock::new(|| {
     [
-        ("Very light", 50000),
-        ("Light", 75000),
-        ("Medium", 110000),
-        ("Heavy", 175000),
-        ("Very heavy", 250000),
+        ("Very light", 240000),
+        ("Light", 450000),
+        ("Medium", 650000),
+        ("Heavy", 850000),
+        ("Very heavy", 1350000),
     ]
     .into()
 });
@@ -3459,22 +3770,33 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
         ]
         .contains(&element_type.as_str())
         {
-            let areal_heat_value = *AREAL_HEAT_MAP
-                .get(
-                    building_element
-                        .get("areal_heat_capacity")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            anyhow!("Building element areal heat capacity was not a string.")
-                        })?,
-                )
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Building element areal heat capacity had unexpected value '{}'.",
-                        building_element["areal_heat_capacity"]
-                    )
-                })?;
-            building_element["areal_heat_capacity"] = json!(areal_heat_value);
+            // A numeric areal heat capacity (J/(m²·K)) may be supplied directly in place
+            // of a qualitative class; pass numeric values through unmapped. The schema only
+            // permits a numeric value on the partition-style types
+            // (BuildingElementAdjacentConditionedSpace and
+            // BuildingElementAdjacentUnconditionedSpace_Simple); for the other types listed
+            // here the value is always a class string, so the numeric passthrough is a no-op.
+            let areal_heat_value = building_element
+                .get("areal_heat_capacity")
+                .ok_or_else(|| anyhow!("Building element areal heat capacity was not found."))?;
+
+            building_element["areal_heat_capacity"] = match areal_heat_value {
+                JsonValue::String(areal_heat_class) => {
+                    if let Some(mapped_value) = AREAL_HEAT_MAP.get(areal_heat_class.as_str()) {
+                        json!(mapped_value)
+                    } else {
+                        bail!(
+                            "Unrecognised areal heat capacity class '{}'.",
+                            areal_heat_class
+                        );
+                    }
+                }
+                JsonValue::Number(n) => {
+                    json!(n)
+                }
+                _ => bail!("Building element areal heat capacity must be a string or number."),
+            };
+
             let mass_distribution_value = MASS_DISTRIBUTION_MAP
                 .get(
                     building_element
@@ -3496,6 +3818,134 @@ pub(crate) fn create_thermal_penetration(input: &mut InputForProcessing) -> anyh
         }
     }
 
+    Ok(())
+}
+
+/// Return one half-thickness face of a full-construction internal partition.
+///    
+/// The construction is halved at its mid-plane: the construction resistance and areal heat
+/// capacity are halved, while the face area and mass distribution class are retained. `pitch`
+/// is set by the caller so the two faces can point in opposite directions for a horizontal
+/// partition.
+///
+/// When the partition is specified by U-value, the U-value cannot simply be doubled: it bundles
+/// in the inside and outside surface resistances, which depend on the heat-flow direction (and
+/// so on pitch). Halving the construction requires those surface resistances to be removed
+/// first. The U-value is therefore converted to the construction resistance at the full
+/// element's pitch, using the same convention hem-core applies, and that resistance is halved.
+/// hem-core then re-applies the correct per-face surface resistances when it builds each face.
+fn half_thickness_face(
+    building_element: serde_json::Value,
+    pitch: f64,
+) -> anyhow::Result<serde_json::Value> {
+    let mut face = building_element.clone();
+    face["pitch"] = json!(pitch);
+    face["areal_heat_capacity"] = json!(
+        building_element
+            .get("areal_heat_capacity")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Building element areal_heat_capacity is not a number"
+            ))?
+            / 2.0
+    );
+    if let Some(thermal_resistance_construction) =
+        building_element.get("thermal_resistance_construction")
+    {
+        let thermal_resistance_construction =
+            thermal_resistance_construction.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("Building element thermal_resistance_construction is not a number")
+            })?;
+        face["thermal_resistance_construction"] = json!(thermal_resistance_construction / 2.0);
+    } else if let Some(u_value) = building_element.get("u_value") {
+        let u_value = u_value
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("Building element u_value is not a number"))?;
+        let original_pitch = building_element
+            .get("pitch")
+            .and_then(|value| value.as_f64())
+            .ok_or_else(|| anyhow::anyhow!("Building element pitch is not a number"))?;
+        let thermal_resistance_construction = convert_uvalue_to_resistance(u_value, original_pitch);
+        face["thermal_resistance_construction"] = json!(thermal_resistance_construction / 2.0);
+        face.as_object_mut().unwrap().remove("u_value");
+    }
+    Ok(face)
+}
+
+/// Split each internal partition into the two half-thickness faces the engine expects.
+///
+/// A BuildingElementAdjacentConditionedSpace is entered once as the full construction. The
+/// Home Energy Model represents an internal partition as two half-thickness elements, one
+/// per face, so each partition is replaced by two faces: the near face keeps the entered
+/// pitch and the opposite face takes 180 - pitch (giving floor-up / ceiling-down for a
+/// horizontal partition; both faces stay vertical for a wall). Contributions scale linearly
+/// with area in the engine, so two faces of the entered area are equivalent to the single
+/// full-area element a user would otherwise enter by hand.
+///
+/// Single-zone assumption: both faces are placed in the element's own zone, since FHS is
+/// single-zone today and there is no adjacent zone to receive the opposite face. An explicit
+/// adjacent-zone input is deferred until multi-zone demos exist.
+///
+/// Must run after create_thermal_penetration so areal_heat_capacity is already numeric.
+pub(crate) fn split_internal_partitions(input: &mut InputForProcessing) -> anyhow::Result<()> {
+    for zone in input.zone_node_mut()?.values_mut() {
+        let building_elements = zone
+            .get_mut("BuildingElement")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| anyhow!("Zone BuildingElement node was not an object"))?;
+        let names: Vec<_> = building_elements.keys().cloned().collect();
+
+        for name in names {
+            let element_type = building_elements
+                .get(&name)
+                .and_then(|element| element.get("type"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("Building element type not found"))?;
+            if element_type != "BuildingElementAdjacentConditionedSpace" {
+                continue;
+            }
+
+            let new_name = format!("_split_partition_{name}");
+            let opposite_name = format!("_split_partition_opposite_{name}");
+            for existing_name_check in [&new_name, &opposite_name] {
+                if building_elements.contains_key(existing_name_check) {
+                    bail!(
+                        "Cannot split internal partition '{name}': an element named '{existing_name_check}' already exists"
+                    );
+                }
+            }
+            let mut building_element = building_elements
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| anyhow!("Building element '{name}' not found"))?;
+            let building_element_object = building_element
+                .as_object_mut()
+                .ok_or_else(|| anyhow!("Building element '{name}' was not an object"))?;
+            let is_adjacent_space_within_dwelling = building_element_object
+                .remove("is_adjacent_space_within_dwelling")
+                .and_then(|value| value.as_bool())
+                .ok_or_else(|| {
+                    anyhow!("Building element is_adjacent_space_within_dwelling not found")
+                })?;
+            let pitch = building_element_object
+                .get("pitch")
+                .and_then(|value| value.as_f64())
+                .ok_or_else(|| anyhow!("Building element pitch not found"))?;
+
+            let near_face = half_thickness_face(building_element.clone(), pitch)?;
+            let opposite_face = if is_adjacent_space_within_dwelling {
+                Some(half_thickness_face(building_element, 180.0 - pitch)?)
+            } else {
+                None
+            };
+
+            building_elements.remove(&name);
+            building_elements.insert(new_name, near_face);
+            if let Some(opposite_face) = opposite_face {
+                building_elements.insert(opposite_name, opposite_face);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -3867,6 +4317,7 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
             let width = get_field_as_f64(el, "width")?;
             let height = get_field_as_f64(el, "height")?;
             let base_height = get_field_as_f64(el, "base_height")?;
+            let pitch = get_field_as_f64(el, "pitch")?;
             let orientation = get_field_as_f64(el, "orientation360")?;
             let shading = el
                 .get("shading")
@@ -3882,6 +4333,7 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
                 base_height,
                 height,
                 width,
+                pitch,
                 Orientation360::from(orientation),
                 &shading,
             )?;
@@ -3913,11 +4365,13 @@ fn daylight_factor(input: &InputForProcessing, total_floor_area: f64) -> anyhow:
         .collect())
 }
 
+#[allow(unused)]
 fn shading_factor(
     input: &InputForProcessing,
     base_height: f64,
     height: f64,
     width: f64,
+    tilt: f64,
     orientation: Orientation360,
     shading: &[WindowShadingObject],
 ) -> anyhow::Result<Vec<f64>> {
@@ -3989,14 +4443,17 @@ fn shading_factor(
             .map(|x| x.to_vec()),
     );
 
+    let window_shading_expanded = ExternalConditions::window_shading_expand_reveals(shading);
+
     time.iter()
         .map(|t_it| {
             conditions.direct_shading_reduction_factor(
                 base_height,
                 height,
                 width,
+                tilt,
                 orientation,
-                Some(shading),
+                Some(window_shading_expanded.as_slice()),
                 t_it,
             )
         })
@@ -4074,7 +4531,7 @@ fn create_hot_water_demand(input: &mut InputForProcessing) -> anyhow::Result<()>
 /// reference it for the heat network. We extract out the custom energy factors to be used later.
 fn create_custom_energy_supply_factors(
     input: &mut InputForProcessing,
-) -> anyhow::Result<IndexMap<Arc<str>, CustomEnergySourceFactor>> {
+) -> anyhow::Result<IndexMap<ArcStr, CustomEnergySourceFactor>> {
     let mut custom_energy_supply_factors = IndexMap::new();
 
     let heat_source_wet_keys = input
@@ -4098,7 +4555,7 @@ fn create_custom_energy_supply_factors(
             .and_then(|v| v.as_object())
             .map(|v| {
                 (
-                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("name").and_then(|v| v.as_str()).map(ArcStr::from),
                     v.get("factor").and_then(|v| v.as_object()),
                     v.get("is_export_capable").and_then(|v| v.as_bool()),
                 )
@@ -4106,10 +4563,8 @@ fn create_custom_energy_supply_factors(
         {
             if is_heat_network {
                 // Extract custom energy factor
-                custom_energy_supply_factors.insert(
-                    Arc::<str>::from(name.to_string()),
-                    serde_json::from_value(json!(factor))?,
-                );
+                custom_energy_supply_factors
+                    .insert(name.clone(), serde_json::from_value(json!(factor))?);
                 // Create new top level EnergySupply
                 if input.energy_supplies_contain_key(&name)? {
                     bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply for HeatSourceWet '{heat_source_wet_key}' with the same name.");
@@ -4134,17 +4589,15 @@ fn create_custom_energy_supply_factors(
             .and_then(|v| v.as_object())
             .map(|v| {
                 (
-                    v.get("name").and_then(|v| v.as_str()).map(String::from),
+                    v.get("name").and_then(|v| v.as_str()).map(ArcStr::from),
                     v.get("factor").and_then(|v| v.as_object()),
                     v.get("is_export_capable").and_then(|v| v.as_bool()),
                 )
             })
         {
             // Extract custom energy factor
-            custom_energy_supply_factors.insert(
-                Arc::<str>::from(name.to_string()),
-                serde_json::from_value(json!(factor))?,
-            );
+            custom_energy_supply_factors
+                .insert(name.clone(), serde_json::from_value(json!(factor))?);
             // Create new top level EnergySupply
             if input.energy_supplies_contain_key(&name)? {
                 bail!("An EnergySupply named '{name}' already exists. Unable to add a custom EnergySupply_heat_network for HeatSourceWet '{heat_source_wet_key}' with the same name.");
@@ -4176,7 +4629,7 @@ pub(crate) fn remove_fhs_only_inputs(input: &mut InputForProcessing) -> anyhow::
 
 #[derive(Clone, Copy)]
 pub struct HourlyHotWaterEvent {
-    pub event_type: WaterHeatingEventType,
+    pub event_type: WaterScheduleEventType,
     pub start: f64,
     pub end: f64,
 }
@@ -4895,28 +5348,31 @@ mod tests {
         let valid_flowrate = check_shower_flowrate(&input);
         assert!(valid_flowrate.is_ok());
     }
+    // This would mean +/- 0.005 which would correspond to two decimal places of precision
+    const TWO_DECIMAL_PLACES: f64 = 5e-3;
+
     #[rstest]
     fn test_calc_1_occupant() {
         // test with on occupant and a range of floor areas
         assert_relative_eq!(
             1.075,
             calc_n_occupants(10., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.232,
             calc_n_occupants(20., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.433,
             calc_n_occupants(50., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
         assert_relative_eq!(
             1.437,
             calc_n_occupants(100., 1).unwrap(),
-            max_relative = 1e-2
+            epsilon = TWO_DECIMAL_PLACES
         );
     }
 
@@ -5393,9 +5849,10 @@ mod tests {
 
         #[rstest]
         fn test_preheated_tank_gets_controls(mut input: InputForProcessing) {
-            // Given a dwelling with a preheated tank (fed by a header tank)
+            // Given a dwelling with a StorageTank preheated tank (fed by a header tank)
             input.input["PreHeatedWaterSource"] = json!({
                 "preheated tank": {
+                    "type": "StorageTank",
                     "volume": 80.0,
                     "daily_losses": 1.68,
                     "ColdWaterSource": "header tank",
@@ -5413,17 +5870,61 @@ mod tests {
 
             // When water heating pattern is created
             create_water_heating_pattern(&mut input).unwrap();
-
-            // Then it receives identical controls to a StorageTank
+            let preheated_tank = &input.input["PreHeatedWaterSource"]["preheated tank"];
+            // Then it receives the same temperature setpoint controls as a hw-cylinder StorageTank
             assert_eq!(
-                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
-                    ["Controlmax"],
+                preheated_tank["HeatSource"]["immersion"]["Controlmax"],
                 "_HW_max_temp"
             );
             assert_eq!(
-                input.input["PreHeatedWaterSource"]["preheated tank"]["HeatSource"]["immersion"]
-                    ["Controlmin"],
+                preheated_tank["HeatSource"]["immersion"]["Controlmin"],
                 "_HW_min_temp"
+            );
+        }
+
+        #[rstest]
+        fn test_preheated_smart_tank_gets_controls(mut input: InputForProcessing) {
+            // Given a dwelling with a SmartHotWaterTank preheated tank (fed by a header tank)
+            input.input["PreHeatedWaterSource"] = json!({
+                "preheated tank": {
+                    "type": "SmartHotWaterTank",
+                    "volume": 80.0,
+                    "daily_losses": 1.68,
+                    "ColdWaterSource": "header tank",
+                    "init_temp": 35.0,
+                    "EnergySupply_pump": "mains elec",
+                    "power_pump_kW": 5.0,
+                    "max_flow_rate_pump_l_per_min": 1000.0,
+                    "temp_usable": 40.0,
+                    "HeatSource": {
+                        "immersion": {
+                            "type": "ImmersionHeater",
+                            "power": 3.0,
+                            "EnergySupply": "mains elec",
+                            "heater_position": 0.1,
+                        }
+                    },
+                }
+            });
+
+            // When water heating pattern is created
+            create_water_heating_pattern(&mut input).unwrap();
+
+            let preheated_tank = &input.input["PreHeatedWaterSource"]["preheated tank"];
+
+            // Then it receives the same state-of-charge controls as a hw-cylinder SmartHotWaterTank:
+            // a max setpoint control on the tank and min/max SoC controls on the heat source.
+            assert_eq!(
+                preheated_tank["temp_setpnt_max"],
+                "_HW_smart_hot_water_tank_temp_max"
+            );
+            assert_eq!(
+                preheated_tank["HeatSource"]["immersion"]["Controlmax"],
+                "_HW_smart_hot_water_tank_max_soc"
+            );
+            assert_eq!(
+                preheated_tank["HeatSource"]["immersion"]["Controlmin"],
+                "_HW_smart_hot_water_tank_min_soc"
             );
         }
     }
@@ -5842,11 +6343,13 @@ mod tests {
     mod apply_defaults {
         use super::*;
 
+        // We need to add the general key to each input to allow processing.
         #[test]
         fn test_adds_floor_pitch() {
             // Given a floor building element
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {"a": {"BuildingElement": {"floor": {"type": "BuildingElementGround"}}}},
                     "EnergySupply": {},
@@ -5868,6 +6371,7 @@ mod tests {
             // Given a floor building element
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {
                         "a": {"BuildingElement": {"floor": {"type": "BuildingElementOpaque", "pitch": 0}}}
@@ -5902,6 +6406,7 @@ mod tests {
             // Given a window building element with a flat pitch, indicating a skylight
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {
                         "a": {
@@ -5939,6 +6444,7 @@ mod tests {
             // Given a project dict with InfiltrationVentilation
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {},
@@ -5960,6 +6466,7 @@ mod tests {
             // Given a project dict with InfiltrationVentilation and one vent
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {"vent1": {}}},
                     "EnergySupply": {},
@@ -5981,6 +6488,7 @@ mod tests {
             // Given a project dict with InfiltrationVentilation and one mech vent
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}, "MechanicalVentilation": {"mechvent1": {}}},
                     "EnergySupply": {},
@@ -6002,6 +6510,7 @@ mod tests {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
@@ -6023,6 +6532,7 @@ mod tests {
             // Given a project dict with Energy supply and one ElectricBattery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "ElectricBattery": {}}},
@@ -6044,6 +6554,7 @@ mod tests {
             // Given a project dict with HotWaterDemand and one Bath
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {},
@@ -6065,6 +6576,7 @@ mod tests {
             // Given a project dict with Energy supply and gas fuel type
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "gas"}},
@@ -6086,6 +6598,7 @@ mod tests {
             // Given a project dict with Energy supply and electricity fuel type
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity"}},
@@ -6108,6 +6621,7 @@ mod tests {
             // Where the user has specified the value for is_export_capable
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "Zone": {},
                     "InfiltrationVentilation": {"Vents": {}},
                     "EnergySupply": {"supply1": {"fuel": "electricity", "is_export_capable": false}},
@@ -6129,6 +6643,7 @@ mod tests {
             // Given a electric storage heater
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
@@ -6146,10 +6661,105 @@ mod tests {
         }
 
         #[test]
+        fn test_adds_state_of_charge_init_for_dry_core_heat_batteries() {
+            // Given a dry core heat battery
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {
+                        "a": {"type": "HeatBattery", "battery_type": "dry_core"}
+                    },
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then a state_of_charge_init of 1.0 is added to the battery
+            assert_eq!(
+                input.input["HeatSourceWet"]["a"]["state_of_charge_init"],
+                json!(1.0)
+            );
+        }
+
+        #[test]
+        fn test_defaults_building_level_losses_to_zero_for_house_hiu() {
+            // Given a house with an HIU that omits building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {"a": {"type": "HIU"}},
+                }),
+            };
+            // When apply_defaults is called
+            apply_defaults(&mut input).unwrap();
+            // Then building_level_distribution_losses is set to 0
+            assert_eq!(
+                input.input["HeatSourceWet"]["a"]["building_level_distribution_losses"],
+                json!(0)
+            );
+        }
+
+        #[test]
+        fn test_raises_for_house_hiu_with_building_level_losses() {
+            // Given a house with an HIU that provides building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {
+                        "a": {"type": "HIU", "building_level_distribution_losses": 50}
+                    },
+                }),
+            };
+            // When apply_defaults is called, then it is rejected as not permitted for a house
+            let error = apply_defaults(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "building_level_distribution_losses is not permitted for an HIU heat source in a house"
+            );
+        }
+
+        #[test]
+        fn test_raises_for_flat_hiu_missing_building_level_losses() {
+            // Given a flat with an HIU that omits building_level_distribution_losses
+            let mut input = InputForProcessing {
+                input: json!({
+                    "General": {"build_type": "flat", "storeys_in_dwelling": 1},
+                    "InfiltrationVentilation": {"Vents": {}},
+                    "Zone": {},
+                    "EnergySupply": {},
+                    "HotWaterDemand": {},
+                    "SpaceHeatSystem": {},
+                    "HeatSourceWet": {"a": {"type": "HIU"}},
+                }),
+            };
+            // When apply_defaults is called, then an error is returned
+            let error = apply_defaults(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "building_level_distribution_losses is required for an HIU heat source in a flat"
+            );
+        }
+
+        #[test]
         fn test_adds_temp_init_for_heat_batteries() {
             // Given a heat battery
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
@@ -6171,6 +6781,7 @@ mod tests {
             // Given a heat pump with a backup_ctrl_type of not None
             let mut input = InputForProcessing {
                 input: json!({
+                    "General": {"build_type": "house", "storeys_in_dwelling": 1},
                     "InfiltrationVentilation": {"Vents": {}},
                     "Zone": {},
                     "EnergySupply": {},
@@ -6185,6 +6796,61 @@ mod tests {
             assert_eq!(
                 input.input["HeatSourceWet"]["a"]["time_delay_backup"],
                 json!(1.0)
+            );
+        }
+    }
+
+    mod create_thermal_penetration {
+        use super::*;
+
+        #[test]
+        fn test_maps_areal_heat_capacity_for_each_thermal_mass_class() {
+            let mut input = InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "a": {
+                            "BuildingElement": {
+                                "Very light": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Very light",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Light": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Light",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Medium": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Medium",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Heavy": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Heavy",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                                "Very heavy": {
+                                    "type": "BuildingElementGround",
+                                    "areal_heat_capacity": "Very heavy",
+                                    "mass_distribution_class": "D: Mass equally distributed",
+                                },
+                            }
+                        }
+                    }
+                }),
+            };
+
+            create_thermal_penetration(&mut input).unwrap();
+
+            let elements = &input.input["Zone"]["a"]["BuildingElement"];
+            assert_eq!(elements["Very light"]["areal_heat_capacity"], json!(240000));
+            assert_eq!(elements["Light"]["areal_heat_capacity"], json!(450000));
+            assert_eq!(elements["Medium"]["areal_heat_capacity"], json!(650000));
+            assert_eq!(elements["Heavy"]["areal_heat_capacity"], json!(850000));
+            assert_eq!(
+                elements["Very heavy"]["areal_heat_capacity"],
+                json!(1350000)
             );
         }
     }
@@ -6299,8 +6965,161 @@ mod tests {
         }
     }
 
-    // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
+    mod create_appliance_gains {
+        use super::*;
+        // test_empty_propensity_raises_zero_division_error skipped as our type constraints do not allow for empty propensities to be provided - error will be caught before this
 
+        #[rstest]
+        fn test_priority_assigned_by_descending_kwh_per_cycle() {
+            // Given an electric-only assessment where the cooking defaults give
+            // known kWh/cycle values:
+            //     Hobs = 0.72, Oven = 0.59, Kettle = 0.10, Microwave = 0.08
+            // Sorted by kWh/cycle descending (the spec-correct ordering used for
+            // smart-control prioritisation):
+            //     Hobs, Oven, Kettle, Microwave
+            // Sorted by the second character of the appliance name descending
+            // (the previous, defective ordering) would give:
+            //     Oven ('v'), Hobs ('o'), Microwave ('i'), Kettle ('e')
+            // so the two orderings disagree and this test pins the correct one.
+
+            let project_dict = json!({
+                "ApplianceGains": {},
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {
+                    // disable non-cooking appliances so the priority assertion
+                    // only covers the four cooking entries above.
+                    // This fixture drives create_appliance_gains directly rather
+                    // than going through apply_schema_validation, so it can opt
+                    // out of Otherdevices; a real input file cannot, because the
+                    // schema rejects that name.
+                    "Fridge": "Not Installed",
+                    "Freezer": "Not Installed",
+                    "Fridge-Freezer": "Not Installed",
+                    "Otherdevices": "Not Installed",
+                    "Dishwasher": "Not Installed",
+                    "Clothes_washing": "Not Installed",
+                    "Clothes_drying": "Not Installed",
+                },
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            let daily_uniform = [1.0 / 24.0; 24];
+            let appliance_propensities = AppliancePropensities::<AsDataFile> {
+                hour: std::array::from_fn(|i| i),
+                occupied: Default::default(),
+                cleaning_washing_machine: Default::default(),
+                cleaning_tumble_dryer: Default::default(),
+                cleaning_dishwasher: Default::default(),
+                cooking_electric_oven: daily_uniform,
+                cooking_microwave: daily_uniform,
+                cooking_kettle: daily_uniform,
+                cooking_gas_cooker: daily_uniform,
+                consumer_electronics: Default::default(),
+                state: Default::default(),
+            }
+            .normalise();
+            let tfa = 100.;
+            let n_occupants = 5.;
+            create_appliance_gains(&mut input, tfa, n_occupants, &appliance_propensities).unwrap();
+            // Then priorities are assigned in descending order of kWh/cycle
+            assert_eq!(input.input["ApplianceGains"]["Hobs"]["priority"], 0);
+            assert_eq!(input.input["ApplianceGains"]["Oven"]["priority"], 1);
+            assert_eq!(input.input["ApplianceGains"]["Kettle"]["priority"], 2);
+            assert_eq!(input.input["ApplianceGains"]["Microwave"]["priority"], 3);
+        }
+
+        #[rstest]
+        fn test_continuous_appliance_excluded_from_priority_sort() {
+            // Continuously running appliances (Fridge, Freezer, Fridge-Freezer,
+            // Otherdevices) are modelled as a yearlong flat-W schedule rather
+            // than as discrete events and have no kWh-per-cycle figure. The
+            // priority sort is only meaningful for cyclic appliances, so this
+            // test pins the invariant that a continuous appliance lands in
+            // ApplianceGains as a scheduled entry with NO priority field and
+            // is not silently assigned a kWh-per-cycle figure from a preceding
+            // cyclic appliance.
+            let project_dict = json!({
+                "ApplianceGains": {},
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {
+                    // one continuous appliance to verify its handling
+                    "Fridge": "Default",
+                    // disable the other continuous appliances so the assertion
+                    // is sharply on Fridge alone.
+                    // This fixture drives create_appliance_gains directly rather
+                    // than going through apply_schema_validation, so it can opt
+                    // out of Otherdevices; a real input file cannot, because the
+                    // schema rejects that name.
+                    "Freezer": "Not Installed",
+                    "Fridge-Freezer": "Not Installed",
+                    "Otherdevices": "Not Installed",
+                    "Dishwasher": "Not Installed",
+                    "Clothes_washing": "Not Installed",
+                    "Clothes_drying": "Not Installed",
+                },
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            let daily_uniform = [1.0 / 24.0; 24];
+            let appliance_propensities = AppliancePropensities::<AsDataFile> {
+                hour: std::array::from_fn(|i| i),
+                occupied: Default::default(),
+                cleaning_washing_machine: Default::default(),
+                cleaning_tumble_dryer: Default::default(),
+                cleaning_dishwasher: Default::default(),
+                cooking_electric_oven: daily_uniform,
+                cooking_microwave: daily_uniform,
+                cooking_kettle: daily_uniform,
+                cooking_gas_cooker: daily_uniform,
+                consumer_electronics: Default::default(),
+                state: Default::default(),
+            }
+            .normalise();
+            let tfa = 100.;
+            let n_occumpants = 5.;
+            // When create_appliance_gains is called
+            create_appliance_gains(&mut input, tfa, n_occumpants, &appliance_propensities).unwrap();
+            // Then the continuous appliance is present in ApplianceGains as a
+            // scheduled entry but carries no priority field
+            let fridge_gains = &input.input["ApplianceGains"]["Fridge"];
+            assert!(fridge_gains["schedule"].is_object());
+            assert!(!fridge_gains.as_object().unwrap().contains_key("priority"));
+            // And cyclic appliances are still prioritised normally (kWh/cycle
+            // descending: Hobs 0.72, Oven 0.59, Kettle 0.10, Microwave 0.08)
+            assert_eq!(input.input["ApplianceGains"]["Hobs"]["priority"], 0);
+            assert_eq!(input.input["ApplianceGains"]["Oven"]["priority"], 1);
+            assert_eq!(input.input["ApplianceGains"]["Kettle"]["priority"], 2);
+            assert_eq!(input.input["ApplianceGains"]["Microwave"]["priority"], 3);
+        }
+    }
+
+    mod appliance_cooking_defaults {
+        use super::*;
+        #[rstest]
+        fn test_kettle_not_installed_is_removed() {
+            // Given an input that declares the Kettle as "Not Installed" (the
+            // opt-out the input schema now permits)
+            // When create_appliance_gains is called
+            let project_dict = json!({
+                "EnergySupply": {"mains elec": {"fuel": "electricity"}},
+                "Appliances": {"Kettle": "Not Installed"},
+            });
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When appliance and cooking defaults are applied
+            let tfa = 100.;
+            let n_occupants = 2.;
+            let _ = appliance_cooking_defaults(&mut input, tfa, n_occupants);
+            // Then the Kettle is removed from the Appliances section
+            assert!(!input.input["Appliances"]
+                .as_object()
+                .unwrap()
+                .contains_key("Kettle"));
+        }
+    }
     mod appliance_kwh_cycle_loading_factor {
         use super::*;
 
@@ -6715,14 +7534,15 @@ mod tests {
 
             let mut expected_schedule: Vec<Option<f64>> = Vec::with_capacity(48);
             expected_schedule.extend(vec![None; 17]); // unoccupied
-            expected_schedule.extend(vec![Some(20.2); 27]); // both occupied
-            expected_schedule.extend(vec![None; 4]); // unoccupied
+            expected_schedule.extend(vec![Some(20.2); 28]); // both occupied
+            expected_schedule.extend(vec![None; 3]); // unoccupied
 
             assert_eq!(schedule.to_vec(), expected_schedule);
         }
     }
 
     mod create_heating_pattern {
+
         use super::*;
 
         #[fixture]
@@ -6854,19 +7674,41 @@ mod tests {
                             20.2,
                             20.2,
                             20.2,
-                            null,
+                            20.2,
                             null,
                             null,
                             null,
                         ],
                     },
                     "setpoint_min": 18.0,
-                    "advanced_start": 2.0,
                 })
             );
             assert_eq!(
                 input.input["SpaceHeatSystem"]["boiler"]["Control"],
                 "HeatingPattern_boiler"
+            );
+        }
+
+        #[rstest]
+        fn test_separate_temp_control_omits_advanced_start(mut input: InputForProcessing) {
+            // SeparateTempControl uses a fixed weekday schedule that does not model
+            // an advance, so advanced_start must not be attached to the Control.
+            input.input["HeatingControlType"] = json!("SeparateTempControl");
+            create_heating_pattern(&mut input).unwrap();
+            assert!(!input.input["Control"]["HeatingPattern_boiler"]
+                .as_object()
+                .unwrap()
+                .contains_key("advanced_start"));
+        }
+        #[rstest]
+        fn test_separate_time_and_temp_control_sets_advanced_start(mut input: InputForProcessing) {
+            // SeparateTimeAndTempControl bakes the advance into the schedule and
+            // expects the simulation engine to apply the matching advanced_start.
+            input.input["HeatingControlType"] = json!("SeparateTimeAndTempControl");
+            create_heating_pattern(&mut input).unwrap();
+            assert_eq!(
+                input.input["Control"]["HeatingPattern_boiler"]["advanced_start"],
+                json!(2.0)
             );
         }
     }
@@ -6954,6 +7796,275 @@ mod tests {
         }
     }
 
+    mod create_smart_air_brick_pattern {
+        use rstest::rstest;
+        use serde_json::json;
+
+        use crate::future_homes_standard::{
+            future_homes_standard::{create_smart_air_brick_pattern, simtime},
+            input::InputForProcessing,
+        };
+
+        fn input(ground_overides: Option<serde_json::Value>) -> InputForProcessing {
+            let mut ground = json!({
+                "type": "BuildingElementGround",
+                "floor_type": "Suspended_floor",
+                "area_per_perimeter_vent": 0.003,
+            });
+            if let Some(overides) = ground_overides {
+                for (k, v) in overides.as_object().unwrap() {
+                    ground[k] = v.clone();
+                }
+            }
+            let input_json = json!({
+                "Control": {},
+           "Zone": {
+               "zone 1": {
+                    "BuildingElement": {
+                        "ground": ground,
+                        "wall 0": {"type": "BuildingElementOpaque"},
+                    }
+                }
+            },});
+            InputForProcessing { input: input_json }
+        }
+
+        #[rstest]
+        fn test_standardised_schedule_attached_to_a_smart_air_brick_floor() {
+            //Given a suspended floor declaring smart air bricks
+            let mut input = input(Some(json!({"smart_air_bricks": true})));
+            //When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            //Then the floor references one standardised control, which the wrapper supplies
+            //rather than the assessor: a smart air brick modulates on measured underfloor
+            //conditions, so a compliance assessment cannot take the pattern as an input
+            let element = &input.input["Zone"]["zone 1"]["BuildingElement"]["ground"];
+            assert_eq!(element["Control_smart_air_brick"], "SmartAirBrick_Control");
+            let control = &input.input["Control"]["SmartAirBrick_Control"];
+            assert_eq!(control["type"], "SetpointTimeControl");
+            assert_eq!(control["time_series_step"], 0.5);
+            // And it carries one opening ratio per timestep of the year, within 0 to 1
+            let ratios = &control["schedule"]["main"];
+            assert_eq!(ratios.as_array().unwrap().len(), simtime().total_steps());
+            assert!(ratios
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.as_f64().unwrap() >= 0.0));
+            assert!(ratios
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.as_f64().unwrap() <= 1.0));
+        }
+
+        #[rstest]
+        fn test_no_control_without_smart_air_bricks() {
+            // Given a suspended floor with ordinary fixed air bricks
+            let mut input = input(None);
+            // When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            // Then no control is built and nothing references one, so a dwelling without them
+            // carries none of this in its preprocessed output
+            assert!(input.input["Control"].as_object().unwrap().is_empty());
+            assert!(!input.input["Zone"]["zone 1"]["BuildingElement"]["ground"]
+                .as_object()
+                .unwrap()
+                .contains_key("Control_smart_air_brick"));
+        }
+
+        #[rstest]
+        fn test_flag_ignored_on_a_floor_the_core_would_not_honour() {
+            // Given the flag on a solid ground floor rather than a suspended one, which the schema
+            // does not allow but the function should not depend on that
+            let mut input = input(Some(
+                json!({"smart_air_bricks": true, "floor_type": "Slab_no_edge_insulation"}),
+            ));
+            // When the smart air brick pattern is created
+            let _ = create_smart_air_brick_pattern(&mut input);
+            // Then nothing is attached, matching the conditions the core applies when it honours
+            // the control, so the two cannot disagree about which elements the feature is for
+            assert!(input.input["Control"].as_object().unwrap().is_empty());
+            assert!(!input.input["Zone"]["zone 1"]["BuildingElement"]["ground"]
+                .as_object()
+                .unwrap()
+                .contains_key("Control_smart_air_brick"));
+        }
+    }
+
+    mod load_smart_air_brick_opening {
+        use super::*;
+
+        #[rstest]
+        fn test_series_length_and_range() -> anyhow::Result<()> {
+            // When the standardised opening series is loaded
+            let ratios = load_smart_air_brick_opening()?;
+            let total_steps = simtime().total_steps();
+            // Then it holds one ratio per timestep of the year, each fully closed to fully open
+            assert_eq!(ratios.len(), total_steps);
+            assert!(ratios.iter().all(|&r| r >= 0.0));
+            assert!(ratios.iter().all(|&r| r <= 1.0));
+            Ok(())
+        }
+
+        #[rstest]
+        fn test_annual_and_monthly_means_pinned() {
+            // When the standardised opening series is loaded
+            let ratios = load_smart_air_brick_opening().unwrap();
+            // Then its annual mean is unchanged. The mean is what drives the modelled saving, the
+            // core reducing infiltration in proportion to (1 - ratio), so a regenerated series
+            // that moves it changes every result and has to say so
+            assert!((ratios.iter().sum::<f64>() / ratios.len() as f64 - 0.293866).abs() < 1e-6);
+            // And so is the seasonal shape, which a series rebuilt in the wrong calendar order
+            // would lose while leaving the annual mean intact. January is the least ventilated
+            // month and September the most
+            let steps_per_day = 48;
+            let january = &ratios[..31 * steps_per_day];
+            let september = &ratios[243 * steps_per_day..273 * steps_per_day];
+            assert!((january.iter().sum::<f64>() / january.len() as f64 - 0.1243).abs() < 1e-4);
+            assert!((september.iter().sum::<f64>() / september.len() as f64 - 0.5599).abs() < 1e-4);
+        }
+    }
+
+    mod create_heat_battery_charging_source {
+        use super::*;
+        use serde_json::json;
+
+        fn project(battery_extra: Option<serde_json::Value>) -> serde_json::Value {
+            let mut battery = json!({
+                "type": "HeatBattery",
+                "battery_type": "pcm",
+                "phase_transition_temperature_upper": 59,
+                "phase_transition_temperature_lower": 57,
+            });
+            let battery = battery.as_object_mut().unwrap();
+            if let Some(battery_extra) = battery_extra {
+                let battery_extra = battery_extra.as_object().unwrap();
+                for (k, v) in battery_extra {
+                    battery.insert(k.clone(), v.clone());
+                }
+            }
+            json!({
+                "Control": {},
+                "Zone": {"zone 1": {}},
+                "HeatSourceWet": {"hb1": battery, "HeatPump1": {"type": "HeatPump"}},
+            })
+        }
+
+        fn hydronic(overrides: Option<serde_json::Value>) -> serde_json::Value {
+            let mut result = json!({
+                "type": "HeatSourceWet",
+                "name": "HeatPump1",
+                "temp_flow_limit_upper": 65.0,
+            });
+            if let Some(overrides) = overrides {
+                let overrides = overrides.as_object().unwrap();
+                let result_obj = result.as_object_mut().unwrap();
+                for (k, v) in overrides {
+                    result_obj.insert(k.clone(), v.clone());
+                }
+            }
+            result
+        }
+
+        #[rstest]
+        fn test_charging_sources_get_off_peak_state_of_charge_controls() {
+            // Given a PCM heat battery charged by a heat pump
+            let project_dict = project(Some(json!({
+                "temp_min_useful": 40.0,
+                "HeatSource": {
+                    "hp_charging": hydronic(None)
+                }
+            })));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            create_charging_pattern(&mut input).unwrap();
+            // Then the source has its own control on the off-peak window, expressed as states of
+            // charge: a PCM battery only charges above its phase change temperature, so a
+            // temperature band would cap the heat source below the point it has to exceed
+            let source = &input.input["HeatSourceWet"]["hb1"]["HeatSource"]["hp_charging"];
+            assert_eq!(source["schedule_unit"], "soc");
+            let control = &input.input["Control"][source["Control"].as_str().unwrap()];
+            assert_eq!(control["type"], "RangeTimeControl");
+            assert_eq!(control["time_series_step"], 0.5);
+            let day = &control["schedule_lower"]["day"];
+            assert_eq!(day.as_array().unwrap().len(), 48);
+            assert_eq!(
+                day.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| !v.is_null())
+                    .count(),
+                14
+            );
+            assert_eq!(
+                day.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| v.is_null())
+                    .count(),
+                34
+            );
+            assert_eq!(control["schedule_upper"]["day"], *day);
+            // And the direct electric configuration is not also set, the core forbidding both
+            assert!(input.input["HeatSourceWet"]["hb1"]
+                .get("ControlCharge")
+                .is_none());
+        }
+
+        #[rstest]
+        fn test_direct_electric_charging_source_gets_a_control() {
+            // Given a battery charged by a direct electric source given as a charging source, rather
+            // than by the rated_charge_power configuration
+            let project_dict = project(Some(json!({
+                "temp_min_useful": 40.0,
+                "HeatSource": {"immersion": {"type": "DirectElectric", "rated_charge_power": 6.0}},
+            })));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            let _ = create_charging_pattern(&mut input);
+            // Then it is timed the same way as a hydronic source, and no cross-reference check
+            // applies, there being no named heat source to resolve
+            let source = &input.input["HeatSourceWet"]["hb1"]["HeatSource"]["immersion"];
+            assert_eq!(source["schedule_unit"], "soc");
+            let control = &input.input["Control"][source["Control"].as_str().unwrap()];
+            assert_eq!(control["type"], "RangeTimeControl");
+            assert_eq!(
+                control["schedule_lower"]["day"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_f64().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![1.0; 14]
+            );
+        }
+
+        #[rstest]
+        fn test_battery_without_charging_sources_keeps_its_charge_control() {
+            // Given a heat battery charged by a direct electric element at a rated power
+            let project_dict = project(Some(json!({"rated_charge_power": 15.0})));
+            let mut input = InputForProcessing {
+                input: project_dict,
+            };
+            // When the charging pattern is created
+            let _ = create_charging_pattern(&mut input);
+            // Then it still gets the single charge control, unchanged
+            assert_eq!(
+                input.input["HeatSourceWet"]["hb1"]["ControlCharge"],
+                "HeatBattery_Control"
+            );
+            assert_eq!(
+                input.input["Control"]["HeatBattery_Control"]["type"],
+                "ChargeControl"
+            );
+        }
+    }
     mod create_space_heat_distribution {
         use super::*;
 
@@ -7510,6 +8621,706 @@ mod tests {
                     .unwrap(),
                 75.33249413626568
             );
+        }
+        #[rstest]
+        fn test_hw_average_applied_to_heatpump_hwonly_in_smart_tank(mut input: InputForProcessing) {
+            input.input["HotWaterSource"] = json!({
+                "tank": {"type": "SmartHotWaterTank", "HeatSource": {"hp": {"type": "HeatPump_HWOnly"}}}
+            });
+            let tfa = 100.0;
+            let n_occupants = 2.;
+            let cold_water_feed_temps = vec![10.0; 8760];
+            // When the hot water use pattern is created
+            create_hot_water_use_pattern(&mut input, tfa, n_occupants, &cold_water_feed_temps)
+                .unwrap();
+            // Then the expected vol_hw_daily_average is set on the HW-only heat pump, as for a
+            // storage tank (the value depends on occupancy, not tank type)
+            assert_relative_eq!(
+                input.input["HotWaterSource"]["tank"]["HeatSource"]["hp"]["vol_hw_daily_average"]
+                    .as_f64()
+                    .unwrap(),
+                75.33249413626568
+            );
+        }
+    }
+    mod split_internal_partitions {
+        use super::*;
+
+        fn project_dict(building_elements: serde_json::Value) -> InputForProcessing {
+            InputForProcessing {
+                input: json!({
+                    "Zone": {
+                        "whole dwelling": {
+                            "BuildingElement": building_elements
+                        }
+                    },
+                }),
+            }
+        }
+
+        #[rstest]
+        fn test_vertical_wall_splits_into_two_faces_at_same_pitch() {
+            //Given a full-construction internal wall (areal heat capacity already numeric, as
+            // create_thermal_penetration runs immediately before split_internal_partitions)
+            let mut input = project_dict(json!({
+                    "internal wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 20.0,
+                    "pitch": 90.0,
+                    "thermal_resistance_construction": 0.74,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When the partitions are split
+            split_internal_partitions(&mut input).unwrap();
+            // Then two faces are produced, both vertical, sharing the full area, with halved
+            // resistance and halved areal heat capacity and an unchanged mass distribution class
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 2);
+
+            let names = [
+                "_split_partition_internal wall",
+                "_split_partition_opposite_internal wall",
+            ];
+            for name in names {
+                assert!(elements.contains_key(name));
+            }
+            for face in elements.values() {
+                assert_eq!(face["pitch"].as_f64().unwrap(), 90.0);
+                assert_eq!(face["area"].as_f64().unwrap(), 20.0);
+                assert_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.37
+                );
+                assert_eq!(face["areal_heat_capacity"].as_f64().unwrap(), 25000.0);
+                assert_eq!(face["mass_distribution_class"].as_str().unwrap(), "I");
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+        }
+
+        #[rstest]
+        fn test_horizontal_partition_opposite_face_points_the_other_way() {
+            // Given a horizontal internal floor/ceiling entered at pitch 0
+            let mut input = project_dict(json!(
+            {
+                "floor/ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": true,
+                    }
+            }));
+            // When the partition is split
+            let _ = split_internal_partitions(&mut input);
+            // Then the near face keeps pitch 0 and the opposite face points down at pitch 180
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(
+                elements["_split_partition_floor/ceiling"]["pitch"]
+                    .as_f64()
+                    .unwrap(),
+                0.
+            );
+            assert_eq!(
+                elements["_split_partition_opposite_floor/ceiling"]["pitch"]
+                    .as_f64()
+                    .unwrap(),
+                180.
+            );
+            assert_relative_eq!(
+                elements["_split_partition_floor/ceiling"]["areal_heat_capacity"]
+                    .as_f64()
+                    .unwrap(),
+                55000.0,
+                epsilon = 1e-7
+            );
+            assert_relative_eq!(
+                elements["_split_partition_opposite_floor/ceiling"]["areal_heat_capacity"]
+                    .as_f64()
+                    .unwrap(),
+                55000.0,
+                epsilon = 1e-7
+            );
+            assert!(!elements["_split_partition_floor/ceiling"]
+                .as_object()
+                .unwrap()
+                .contains_key("is_adjacent_space_within_dwelling"));
+            assert!(!elements["_split_partition_opposite_floor/ceiling"]
+                .as_object()
+                .unwrap()
+                .contains_key("is_adjacent_space_within_dwelling"));
+        }
+
+        #[rstest]
+        fn test_u_value_partition_split_by_half_construction_resistance() {
+            // Given a horizontal internal partition specified by U-value rather than thermal
+            // resistance. The U-value bundles in pitch-dependent surface resistances, so it cannot
+            // be split by simple doubling; it must first be converted to the construction resistance.
+            let mut input = project_dict(json!({
+                "ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 20.0,
+                    "pitch": 0,
+                    // Chosen so the construction resistance (U-value with the pitch-0 upward
+                    // surface resistances removed) is 0.74, i.e. 0.37 per half-thickness face.
+                    "u_value": 1.136181,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When the partition is split
+            split_internal_partitions(&mut input).unwrap();
+            // Then the U-value is replaced by half the construction resistance on each face.
+            // Both faces carry the same half-resistance (the conversion uses the full element's pitch),
+            // and no U-value remains for hem-core to re-strip surface resistances from.
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 2);
+            for face in elements.values() {
+                assert!(face.get("u_value").is_none());
+                assert_relative_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.3699998762514523,
+                    epsilon = 1e-7
+                );
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+        }
+
+        #[rstest]
+        fn test_split_conserves_resistance_and_heat_capacity() {
+            // Given a full-construction partition specified by thermal resistance
+            let mut input = project_dict(json!({"partition": json!({
+                "type": "BuildingElementAdjacentConditionedSpace",
+                "area":18.0,
+                "pitch":90,
+                "thermal_resistance_construction":0.8,
+                "areal_heat_capacity":120000,
+                "mass_distribution_class":"I",
+                "is_adjacent_space_within_dwelling":true,
+            })}));
+            // When the partition is split into two half-thickness faces
+            split_internal_partitions(&mut input).unwrap();
+            let faces = input.all_building_elements().unwrap();
+            assert_eq!(faces.len(), 2);
+            // Then each face retains the full net area
+            for face in faces.values() {
+                assert_relative_eq!(face["area"].as_f64().unwrap(), 18.0);
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+            // And total heat capacity (area x areal_heat_capacity) is conserved across the two
+            // faces
+            let total_capacity: f64 = faces
+                .values()
+                .map(|face| {
+                    face["area"].as_f64().unwrap() * face["areal_heat_capacity"].as_f64().unwrap()
+                })
+                .sum();
+            assert_relative_eq!(total_capacity, 18.0 * 120000.0);
+            // And the two faces in series reproduce the original construction resistance (each
+            // carries half), so the partition's conductance is unchanged - this is the vertical-wall invariance
+            let series_resistance: f64 = faces
+                .values()
+                .map(|face| face["thermal_resistance_construction"].as_f64().unwrap())
+                .sum();
+            assert_relative_eq!(series_resistance, 0.8);
+        }
+
+        #[rstest]
+        fn test_u_value_split_conserves_construction_resistance_in_series() {
+            // Given a full-construction partition specified by U-value
+            let original = json!({
+                "type": "BuildingElementAdjacentConditionedSpace",
+                "area": 18.0,
+                "pitch": 90,
+                "u_value": 1.25,
+                "areal_heat_capacity": 120000,
+                "mass_distribution_class": "I",
+                "is_adjacent_space_within_dwelling": true,
+            });
+            let mut input = project_dict(json!({"partition": original.clone()}));
+            // When the partition is split into two half-thickness faces
+            split_internal_partitions(&mut input).unwrap();
+            let faces = input.all_building_elements().unwrap();
+            assert_eq!(faces.len(), 2);
+            for face in faces.values() {
+                assert_relative_eq!(
+                    face["area"].as_f64().unwrap(),
+                    original["area"].as_f64().unwrap()
+                );
+                assert!(face.get("is_adjacent_space_within_dwelling").is_none());
+            }
+            // Then each face carries half the construction resistance recovered from the U-value
+            // (1/1.25 with the vertical-wall surface resistances removed = 0.6275134), and the
+            // two in series reproduce the full construction resistance.
+            for face in faces.values() {
+                assert_relative_eq!(
+                    face["thermal_resistance_construction"].as_f64().unwrap(),
+                    0.3137566901679913,
+                    epsilon = 1e-7
+                );
+            }
+            let series_resistance: f64 = faces
+                .values()
+                .map(|face| face["thermal_resistance_construction"].as_f64().unwrap())
+                .sum();
+            assert_relative_eq!(series_resistance, 0.6275133803359826, epsilon = 1e-7);
+        }
+
+        #[rstest]
+        fn test_existing_split_name_raises() {
+            // Given a partition whose split partition name is already taken by another element
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+                "_split_partition_wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+            }));
+            // When the partitions are split, the name clash is reported rather than silently overwritten
+            let error = split_internal_partitions(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Cannot split internal partition 'wall': an element named '_split_partition_wall' already exists"
+            );
+        }
+
+        #[rstest]
+        fn test_existing_opposite_face_name_raises() {
+            // Given a partition whose opposite-face name is already taken by another element
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+                "_split_partition_opposite_wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 50000,
+                    "mass_distribution_class": "I",
+                    "is_adjacent_space_within_dwelling": true,
+                },
+            }));
+            // When the partitions are split, the name clash is reported rather than silently overwritten
+            let error = split_internal_partitions(&mut input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Cannot split internal partition 'wall': an element named '_split_partition_opposite_wall' already exists"
+            );
+        }
+
+        #[rstest]
+        fn test_adjacent_space_is_not_within_dwelling() {
+            // Given a partition to another dwelling, only the internal face should be returned.
+            let mut input = project_dict(json!({
+                "party_ceiling": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": false,
+                },
+                "party_floor": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 12.0,
+                    "pitch": 0,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 110000,
+                    "mass_distribution_class": "D",
+                    "is_adjacent_space_within_dwelling": false,
+                },
+            }));
+            split_internal_partitions(&mut input).unwrap();
+
+            let elements = input.all_building_elements().unwrap();
+            assert!(elements.contains_key("_split_partition_party_ceiling"));
+            assert!(elements.contains_key("_split_partition_party_floor"));
+            assert!(!elements.contains_key("_split_partition_opposite_party_ceiling"));
+            assert!(!elements.contains_key("_split_partition_opposite_party_floor"));
+        }
+
+        #[rstest]
+        fn test_other_element_types_are_untouched() {
+            // Given a non-partition element (an external opaque wall)
+            let opaque = json!({
+                "type": "BuildingElementOpaque",
+                "area": 30.0,
+                "pitch": 90,
+                "thermal_resistance_construction": 1.0,
+                "areal_heat_capacity": 50000,
+                "mass_distribution_class": "I",
+            });
+            let mut input = project_dict(json!({"ext wall": opaque.clone()}));
+            // When the partitions are split
+            split_internal_partitions(&mut input).unwrap();
+            // Then the opaque element is left exactly as it was
+            let elements = input.all_building_elements().unwrap();
+            assert_eq!(elements.len(), 1);
+            assert_eq!(elements["ext wall"], &opaque);
+        }
+
+        #[rstest]
+        fn test_create_thermal_penetration_passes_numeric_capacity_through() {
+            // Given a partition whose areal heat capacity is a number (not a qualitative class)
+            let mut input = project_dict(json!({
+                "wall": {
+                    "type": "BuildingElementAdjacentConditionedSpace",
+                    "area": 10.0,
+                    "pitch": 90,
+                    "thermal_resistance_construction": 0.5,
+                    "areal_heat_capacity": 90000,
+                    "mass_distribution_class": "I: Mass concentrated at internal side",
+                    "is_adjacent_space_within_dwelling": true,
+                }
+            }));
+            // When create_thermal_penetration runs
+            create_thermal_penetration(&mut input).unwrap();
+            // Then the numeric capacity is left unchanged while the mass class is still abbreviated
+            let elements = input.all_building_elements().unwrap();
+            let wall = elements.get("wall").unwrap();
+            assert_eq!(wall["areal_heat_capacity"], json!(90000));
+            assert_eq!(wall["mass_distribution_class"], json!("I"));
+        }
+    }
+
+    mod standardise_hot_water_cylinder_init_temp {
+        use super::*;
+        use home_energy_model::input::ExternalConditionsInput;
+        use home_energy_model::{load_weather_data, WeatherFileType};
+        use std::io::Cursor;
+
+        fn preprocess_demo_file(demo_input: &str) -> JsonValue {
+            let mut project: JsonValue = serde_json::from_str(demo_input).unwrap();
+            let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+            let weather = ExternalConditionsInput::from(
+                load_weather_data(
+                    Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                    WeatherFileType::Epw,
+                )
+                .unwrap(),
+            );
+            project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+            project["ExternalConditions"]["shading_segments"] = shading_segments;
+
+            let mut project = InputForProcessing { input: project };
+            initial_preprocessing(&mut project).unwrap();
+            final_preprocessing(&mut project).unwrap();
+            project.input
+        }
+
+        #[test]
+        fn test_storage_tank_init_temp_standardised() {
+            // Given an input whose storage tank declares no initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS.json"
+            ));
+            // Then preprocessing sets the cylinder to start fully heated
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+        }
+
+        #[test]
+        fn test_smart_hot_water_tank_init_temp_standardised() {
+            // Given an input whose smart hot water tank declares no initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS_smart_hot_water_tank.json"
+            ));
+            // Then preprocessing sets the cylinder to start fully heated
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+        }
+
+        #[test]
+        fn test_preheated_tank_init_temp_preserved() {
+            // Given an input with a pre-heated tank declaring its initial temperature
+            let project = preprocess_demo_file(include_str!(
+                "../../examples/input/future_homes_standard/DESN-H-End-02-HP-iMEV-pre-heat.json"
+            ));
+            // Then preprocessing standardises the cylinder but leaves the
+            // pre-heated tank at its declared starting temperature
+            assert_eq!(project["HotWaterSource"]["hw cylinder"]["init_temp"], 60.0);
+            assert_eq!(
+                project["PreHeatedWaterSource"]["preheated tank"]["init_temp"],
+                35.0
+            );
+        }
+    }
+
+    mod apply_fhs_postprocessing {
+        use super::super::{apply_fhs_postprocessing, final_preprocessing, initial_preprocessing};
+        use crate::future_homes_standard::input::InputForProcessing;
+        use approx::assert_relative_eq;
+        use home_energy_model::input::{ExternalConditionsInput, Input};
+        use home_energy_model::output_writer::OutputWriter;
+        use home_energy_model::{load_weather_data, ArcStr, WeatherFileType};
+        use indexmap::IndexMap;
+        use parking_lot::{Mutex, RwLock};
+        use rstest::{fixture, rstest};
+        use serde_json::{json, Value};
+        use std::io::{BufWriter, Cursor, Write};
+        use std::sync::Arc;
+
+        const TIME_STEPS: usize = 17520;
+        const TFA: f64 = 70.0;
+
+        #[fixture]
+        fn input() -> Input {
+            let mut project: Value = serde_json::from_str(include_str!(
+                "../../examples/input/future_homes_standard/demo_FHS.json"
+            ))
+            .unwrap();
+            let shading_segments = project["ExternalConditions"]["shading_segments"].clone();
+            let weather = ExternalConditionsInput::from(
+                load_weather_data(
+                    Cursor::new(include_str!("./RAF_Bedford_01.epw")),
+                    WeatherFileType::Epw,
+                )
+                .unwrap(),
+            );
+            project["ExternalConditions"] = serde_json::to_value(weather).unwrap();
+            project["ExternalConditions"]["shading_segments"] = shading_segments;
+
+            let mut input = InputForProcessing { input: project };
+            initial_preprocessing(&mut input).unwrap();
+            final_preprocessing(&mut input).unwrap();
+            input.input["Zone"]["whole dwelling"]["area"] = json!(TFA);
+            input.finalize().unwrap()
+        }
+
+        #[derive(Clone, Debug)]
+        struct FileWriter(Arc<RwLock<Vec<u8>>>);
+
+        impl FileWriter {
+            fn new() -> Self {
+                Self(Arc::new(RwLock::new(Vec::with_capacity(2usize.pow(14)))))
+            }
+        }
+
+        impl Write for FileWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write().extend_from_slice(buf);
+
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub(crate) struct InMemoryDirectoryOutputWriter {
+            input_filename: String,
+            files: Arc<Mutex<IndexMap<String, FileWriter>>>,
+        }
+
+        impl InMemoryDirectoryOutputWriter {
+            pub fn new(input_filename: &str) -> Self {
+                Self {
+                    input_filename: input_filename.split('.').next().unwrap().to_string(),
+                    files: Arc::new(Mutex::new(IndexMap::new())),
+                }
+            }
+
+            fn output_file_index(&self, location_key: &str, file_extension: &str) -> String {
+                format!(
+                    "{}__{}.{}",
+                    self.input_filename, location_key, file_extension
+                )
+            }
+
+            pub fn files(&self) -> IndexMap<String, String> {
+                self.files
+                    .lock()
+                    .iter()
+                    .map(|(k, v)| {
+                        let bytes = v.0.read();
+                        let string_content = String::from_utf8_lossy(&bytes).to_string();
+                        (k.clone(), string_content)
+                    })
+                    .collect()
+            }
+        }
+
+        impl OutputWriter for InMemoryDirectoryOutputWriter {
+            fn writer_for_location_key(
+                &self,
+                location_key: &str,
+                file_extension: &str,
+            ) -> anyhow::Result<impl Write> {
+                let key = self.output_file_index(location_key, file_extension);
+
+                let file_writer = self
+                    .files
+                    .lock()
+                    .entry(key)
+                    .or_insert_with(FileWriter::new)
+                    .clone();
+
+                // BufWriter prevents acquiring the RwLock on every byte chunk
+                Ok(BufWriter::with_capacity(2usize.pow(14), file_writer))
+            }
+        }
+
+        fn postprocess(
+            input: &Input,
+            generated: f64,
+            curtailed: f64,
+            imported: f64,
+            notional: Option<bool>,
+            prefix: Option<&str>,
+        ) -> anyhow::Result<IndexMap<String, f64>> {
+            let notional = notional.unwrap_or(false);
+            let prefix = prefix.unwrap_or("dwelling");
+            let zeros = vec![0.0; TIME_STEPS];
+            let series = |first_value: f64| {
+                let mut values = zeros.clone();
+                values[0] = first_value;
+                values
+            };
+
+            // Postprocessing adds an _unmet_demand supply of its own, so the core's series for it
+            // have to be present alongside those for the dwelling's supplies.
+            let mut energy_import = IndexMap::new();
+            let mut energy_export = IndexMap::new();
+            let mut results_end_user: IndexMap<ArcStr, IndexMap<ArcStr, Vec<f64>>> =
+                IndexMap::new();
+            let mut generation_curtailed = IndexMap::new();
+            for supply in input.energy_supply().keys() {
+                let is_electricity = supply.as_str() == "mains elec";
+                energy_import.insert(
+                    supply.clone(),
+                    if is_electricity {
+                        series(imported)
+                    } else {
+                        zeros.clone()
+                    },
+                );
+                energy_export.insert(supply.clone(), zeros.clone());
+                let mut end_users = IndexMap::new();
+                if is_electricity {
+                    end_users.insert("PV".into(), series(-generated));
+                }
+                results_end_user.insert(supply.clone(), end_users);
+                generation_curtailed.insert(
+                    supply.clone(),
+                    if is_electricity {
+                        series(curtailed)
+                    } else {
+                        zeros.clone()
+                    },
+                );
+            }
+            energy_import.insert("_unmet_demand".into(), zeros.clone());
+            energy_export.insert("_unmet_demand".into(), zeros.clone());
+            results_end_user.insert("_unmet_demand".into(), IndexMap::new());
+            let timestep_array = (0..TIME_STEPS).map(|t| t as f64).collect::<Vec<f64>>();
+            generation_curtailed.insert("_unmet_demand".into(), zeros.clone());
+
+            let output_writer = InMemoryDirectoryOutputWriter::new(prefix);
+            apply_fhs_postprocessing(
+                input,
+                &output_writer,
+                &energy_import,
+                &energy_export,
+                &results_end_user,
+                &timestep_array,
+                notional,
+                "FHS",
+                &Default::default(),
+                &generation_curtailed,
+            )?;
+
+            let files = output_writer.files();
+            let summary = files
+                .get(&format!("{prefix}__FHS__postproc_summary.csv"))
+                .unwrap();
+            let mut reader = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .from_reader(summary.as_bytes());
+            reader
+                .records()
+                .skip(1)
+                .map(|record| {
+                    let record = record?;
+                    Ok((
+                        record.get(0).unwrap().to_owned(),
+                        record.get(2).unwrap().parse()?,
+                    ))
+                })
+                .collect()
+        }
+
+        #[rstest]
+        fn test_curtailed_generation_is_not_charged(input: Input) {
+            // Given a dwelling generating 100 kWh of which 30 kWh is curtailed by an export limit,
+            // and importing 10 kWh.
+            let rates = postprocess(
+                &input,
+                100.0,
+                30.0,
+                10.0,
+                None,
+                Some("curtailed_generation"),
+            )
+            .unwrap();
+
+            // Then only the 70 kWh that reached a use is charged primary energy, at the on-site
+            // generation factor of 1.0, alongside the import at 1.969103316:
+            // (10 x 1.969103316 + 70 x 1.0) / 70 m2 = 1.2813004737142857
+            // Counting the curtailed 30 kWh as well would give 1.7098719022857143.
+            assert_relative_eq!(rates["DPER"], 1.2813004737142857);
+            // Emissions are unaffected by generation either way, the on-site generation emissions
+            // factor being zero: 10 x 0.086185206 / 70 m2
+            assert_relative_eq!(rates["DER"], 0.012312172285714287);
+        }
+
+        #[rstest]
+        fn test_curtailing_scores_the_same_as_not_generating(input: Input) {
+            // Given two dwellings importing the same energy, one generating 100 kWh and curtailing
+            // 30 kWh of it, the other generating only the 70 kWh that the first one used
+            let curtailing =
+                postprocess(&input, 100.0, 30.0, 10.0, None, Some("curtailing")).unwrap();
+            let smaller_array =
+                postprocess(&input, 70.0, 0.0, 10.0, None, Some("smaller_array")).unwrap();
+            // Then neither is penalised for the energy that was spilled
+            assert_relative_eq!(curtailing["DPER"], smaller_array["DPER"]);
+            assert_relative_eq!(curtailing["DER"], smaller_array["DER"]);
+        }
+
+        #[rstest]
+        fn test_notional_labels_the_summary_rates(input: Input) {
+            // Given the postprocessing is run for the notional dwelling
+            let rates =
+                postprocess(&input, 100.0, 30.0, 10.0, Some(true), Some("notional")).unwrap();
+
+            // Then the same rates are reported under the target names
+            assert_relative_eq!(rates["TPER"], 1.2813004737142857);
+            assert_relative_eq!(rates["TER"], 0.012312172285714287);
         }
     }
 }

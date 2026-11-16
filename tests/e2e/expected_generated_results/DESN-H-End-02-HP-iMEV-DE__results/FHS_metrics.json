@@ -1,8 +1,8 @@
 {
     "eer": {
         "description": "Energy efficiency rating based on total energy costs for space/water heating, ventilation and lighting",
-        "grade": "D",
+        "grade": "B",
         "units": "Normalised cost, typically in range 0-100",
-        "value": 65.28777811667587
+        "value": 83.48128000602829
     }
 }

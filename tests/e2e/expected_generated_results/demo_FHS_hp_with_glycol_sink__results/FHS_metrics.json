@@ -3,6 +3,6 @@
         "description": "Energy efficiency rating based on total energy costs for space/water heating, ventilation and lighting",
         "grade": "E",
         "units": "Normalised cost, typically in range 0-100",
-        "value": 44.56673753234723
+        "value": 47.94406520443955
     }
 }

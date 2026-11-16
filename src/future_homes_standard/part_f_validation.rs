@@ -1,0 +1,2210 @@
+pub(crate) mod part_f {
+    use accurate::{sum::Sum2, traits::*};
+    use anyhow::{anyhow, bail};
+    use approx::relative_eq;
+    use home_energy_model::{
+        compare_floats::max_of_2,
+        core::units::{LITRES_PER_CUBIC_METRE, SECONDS_PER_HOUR},
+    };
+
+    use serde_json::Value as JsonValue;
+
+    fn litres_per_second_to_cubic_metres_per_hour(flow_rate_in_litres_per_second: f64) -> f64 {
+        flow_rate_in_litres_per_second * SECONDS_PER_HOUR as f64 / LITRES_PER_CUBIC_METRE as f64
+    }
+
+    pub fn minimum_whole_dwelling_ventilation_rate_continuous(
+        total_floor_area: f64,
+        bedrooms: usize,
+    ) -> f64 {
+        let ventilation_per_m2_floor_area = 0.3; // l/s.m2
+        let ventilation_rate_floor_area = total_floor_area * ventilation_per_m2_floor_area;
+
+        // See Table 1.3 Part F building regulations
+        let bedroom_ventilation_rate = 13 + bedrooms * 6; // l/s
+        litres_per_second_to_cubic_metres_per_hour(max_of_2(
+            ventilation_rate_floor_area,
+            bedroom_ventilation_rate as f64,
+        )) // m3/hr
+    }
+
+    pub fn minimum_kitchen_vent_flow_rate(is_kitchen_vent_external: bool) -> f64 {
+        // the property needs one large fan for cooking events
+        // 30+ l/s fan if it extracts to outside the dwelling, 60+ l/s fan otherwise
+        let min_kitchen_vent_flow_rate_external = 30.0;
+        let min_kitchen_vent_flow_rate_not_external = 60.0;
+
+        if is_kitchen_vent_external {
+            min_kitchen_vent_flow_rate_external
+        } else {
+            min_kitchen_vent_flow_rate_not_external
+        } // l/s
+    }
+
+    pub fn minimum_whole_dwelling_ventilation_rate_intermittent(
+        bathrooms: usize,
+        utility_rooms: usize,
+        is_kitchen_vent_external: bool,
+    ) -> f64 {
+        // Sanitary accommodations are excluded from the minimum extract rate: the
+        // Part F table 1.1 footnote permits purge ventilation (section 1.26) for
+        // them in place of a minimum extract rate.
+        let minimum_rate_per_kitchen = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l/s
+        let minimum_rate_per_bathroom = 15f64; // l/s
+        let minimum_rate_per_utility_room = 30f64; // l/s
+        let minimum_rate = bathrooms as f64 * minimum_rate_per_bathroom
+            + utility_rooms as f64 * minimum_rate_per_utility_room
+            + minimum_rate_per_kitchen; // Assume all dwellings have one kitchen
+        litres_per_second_to_cubic_metres_per_hour(minimum_rate) // m3/hr
+    }
+
+    pub fn minimum_background_ventilation_area_continuous(habitable_rooms: usize) -> f64 {
+        let minimum_equivalent_area_per_habitable_room = 40f64; // cm2
+        habitable_rooms as f64 * minimum_equivalent_area_per_habitable_room
+    }
+
+    pub fn minimum_background_ventilation_area_intermittent(
+        habitable_rooms: usize,
+        bathrooms: usize,
+        storeys: usize,
+    ) -> f64 {
+        let minimum_area_per_bathroom = 40f64; // cm2
+                                               // Different requirements for single-storey dwellings
+
+        let (minimum_area_per_habitable_room, minimum_area_per_kitchen) = match storeys {
+            1 => (100, 100),
+            _ => (80, 80),
+        };
+
+        habitable_rooms as f64 * minimum_area_per_habitable_room as f64
+            + bathrooms as f64 * minimum_area_per_bathroom
+            + minimum_area_per_kitchen as f64 // Assume all dwellings have one kitchen
+    }
+
+    pub fn minimum_background_vent_count_continuous(bedrooms: usize) -> usize {
+        bedrooms + 2 //As per part F section 1.64
+    }
+
+    fn total_design_flow_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        let mut design_outdoor_air_flow_rate_sum = Sum2::zero();
+
+        for vent in vents {
+            let design_outdoor_air_flow_rate = vent.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?;
+
+            design_outdoor_air_flow_rate_sum += design_outdoor_air_flow_rate
+        }
+
+        Ok(design_outdoor_air_flow_rate_sum.sum())
+    }
+
+    fn sufficient_whole_dwelling_ventilation_rate_continuous(
+        vents: Vec<&JsonValue>,
+        total_floor_area: f64,
+        bedrooms: usize,
+    ) -> anyhow::Result<bool> {
+        let total_design_flow = total_design_flow_from_vents(&vents)?;
+
+        let min_ventilation =
+            minimum_whole_dwelling_ventilation_rate_continuous(total_floor_area, bedrooms);
+        Ok(total_design_flow >= min_ventilation)
+    }
+
+    fn sufficient_whole_dwelling_ventilation_rate_intermittent(
+        vents: &[&JsonValue],
+        bathrooms: usize,
+        utility_rooms: usize,
+        is_kitchen_vent_external: bool,
+    ) -> anyhow::Result<bool> {
+        let total_design_flow = total_design_flow_from_vents(vents)?;
+        let min_ventilation = minimum_whole_dwelling_ventilation_rate_intermittent(
+            bathrooms,
+            utility_rooms,
+            is_kitchen_vent_external,
+        );
+        Ok(total_design_flow >= min_ventilation)
+    }
+
+    fn sufficient_background_ventilation_area_continuous(
+        vents: &Vec<&JsonValue>,
+        habitable_rooms: usize,
+    ) -> anyhow::Result<bool> {
+        let total_vent_area = total_vent_area_from_vents(vents)?;
+        let min_area = minimum_background_ventilation_area_continuous(habitable_rooms);
+        Ok(total_vent_area >= min_area)
+    }
+
+    fn sufficient_background_vent_count_continuous(vents: &[&JsonValue], bedrooms: usize) -> bool {
+        vents.len() >= minimum_background_vent_count_continuous(bedrooms)
+    }
+
+    fn sufficient_background_ventilation_area_intermittent(
+        vents: &Vec<&JsonValue>,
+        habitable_rooms: usize,
+        bathrooms: usize,
+        storeys: usize,
+    ) -> anyhow::Result<bool> {
+        let total_vent_area = total_vent_area_from_vents(vents)?;
+        let min_area =
+            minimum_background_ventilation_area_intermittent(habitable_rooms, bathrooms, storeys);
+        Ok(total_vent_area >= min_area)
+    }
+
+    fn sufficient_mev_count(vents: &[&JsonValue], wet_rooms: usize) -> bool {
+        vents.len() >= wet_rooms
+    }
+
+    fn sufficient_large_imev(
+        vents: &[&JsonValue],
+        is_kitchen_vent_external: bool,
+    ) -> anyhow::Result<bool> {
+        let min_flow_rate = minimum_kitchen_vent_flow_rate(is_kitchen_vent_external); // l / s
+        let min_flow_rate_m3hr = litres_per_second_to_cubic_metres_per_hour(min_flow_rate); // m3/hr
+
+        let vent_flow_rates: Vec<f64> = vents.iter().map(|v| anyhow::Ok(v.get("design_outdoor_air_flow_rate").and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("design_outdoor_air_flow_rate provided as a number is expected for MechanicalVentilation"))?)).collect::<Result<_, _>>()?;
+
+        Ok(vent_flow_rates
+            .into_iter()
+            .any(|rate| rate >= min_flow_rate_m3hr))
+    }
+
+    fn sufficient_background_vent_count_intermittent(
+        background_vents: &[&JsonValue],
+        bedrooms: usize,
+    ) -> bool {
+        // As per part F section 1.57
+        let background_vents_required = if bedrooms < 2 { 4 } else { 5 };
+
+        background_vents.len() >= background_vents_required
+    }
+
+    fn total_vent_area_from_vents(vents: &[&JsonValue]) -> anyhow::Result<f64> {
+        let mut area_sum = Sum2::zero();
+
+        for vent in vents {
+            let area = vent
+                .get("area_cm2")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    anyhow!("area_cm2 provided as a number is expected for MechanicalVentilation")
+                })?;
+
+            area_sum += area;
+        }
+
+        Ok(area_sum.sum())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn validate_intermittent_vents(
+        intermittent_mev_vents: Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+        bathrooms: usize,
+        utility_rooms: usize,
+        storeys: usize,
+        is_kitchen_vent_external: bool,
+        bedrooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let background_compliant = sufficient_background_ventilation_area_intermittent(
+            background_vents,
+            habitable_rooms,
+            bathrooms,
+            storeys,
+        )?;
+        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_intermittent(
+            &intermittent_mev_vents,
+            bathrooms,
+            utility_rooms,
+            is_kitchen_vent_external,
+        )?;
+        let mev_count_compliant = sufficient_mev_count(&intermittent_mev_vents, wet_rooms);
+        let large_compliant =
+            sufficient_large_imev(&intermittent_mev_vents, is_kitchen_vent_external)?;
+        let background_count_compliant =
+            sufficient_background_vent_count_intermittent(background_vents, bedrooms);
+
+        let checks = [
+            (
+                background_compliant,
+                "Dwelling lacks sufficient background vent area for intermittent ventilation.",
+            ),
+            (mech_compliant, "Dwelling lacks sufficient intermittent mechanical extract rate."),
+            (mev_count_compliant, "Dwelling lacks sufficient number of intermittent mechanical vents."),
+            (
+                large_compliant,
+                "Dwelling lacks a large enough intermittent mechanical vent for cooking events.",
+            ),
+            (
+                background_count_compliant,
+                "Dwelling lacks sufficient number of background vents for intermittent ventilation.",
+            ),
+        ];
+
+        Ok(checks
+            .iter()
+            .filter(|(passed, _)| !passed)
+            .map(|(_, message)| message.to_string())
+            .collect())
+    }
+
+    /// Validates continuous ventilation systems.
+    ///
+    ///    A dwelling may satisfy continuous ventilation requirements via either:
+    ///        - Continuous MEV (centralised or decentralised), or
+    ///        - MVHR.
+    ///
+    ///    If multiple system types are present, at least one validation pathway
+    ///    must pass. However, whole-dwelling mechanical extract rate compliance
+    ///    is always required and evaluated independently of pathway success.
+    ///
+    ///    Returns:
+    ///        A list of validation error messages.
+    #[allow(clippy::too_many_arguments)]
+    fn validate_continuous_vents(
+        mvhr_vents: &[&JsonValue],
+        centralised_mev_vents: &Vec<&JsonValue>,
+        decentralised_mev_vents: &Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        total_floor_area: f64,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut all_errors: Vec<String> = Default::default();
+
+        let mut continuous_mev_vents = centralised_mev_vents.clone();
+        continuous_mev_vents.append(&mut decentralised_mev_vents.clone());
+
+        // Pathway specific checks for continuous MEV and MVHR systems
+        let mut continuous_mev_errors: Vec<String> = Default::default();
+
+        if !continuous_mev_vents.is_empty() {
+            continuous_mev_errors.append(&mut validate_continuous_mev_vents(
+                centralised_mev_vents,
+                decentralised_mev_vents,
+                background_vents,
+                bedrooms,
+                habitable_rooms,
+                wet_rooms,
+            )?);
+        }
+
+        let mut mvhr_errors: Vec<String> = Default::default();
+
+        if !mvhr_vents.is_empty() && !background_vents.is_empty() {
+            mvhr_errors.push(
+                "Dwelling with MVHR ventilation system should not have background vents.".into(),
+            );
+        }
+
+        // Only one of the validation pathways (continuous MEV or MVHR) needs to pass
+        let mut validation_pathway_errors: Vec<Vec<String>> = Default::default();
+        if !continuous_mev_vents.is_empty() {
+            validation_pathway_errors.push(continuous_mev_errors);
+        }
+        if !mvhr_vents.is_empty() {
+            validation_pathway_errors.push(mvhr_errors);
+        }
+        if validation_pathway_errors.iter().all(|v| !v.is_empty()) {
+            all_errors.append(&mut validation_pathway_errors.into_iter().flatten().collect());
+        }
+
+        // Whole dwelling mechanical extract rate validation always applies
+        let whole_building_vents = {
+            let mut whole_building_vents = continuous_mev_vents.clone();
+            whole_building_vents.append(&mut mvhr_vents.to_vec());
+            whole_building_vents
+        };
+        let mech_compliant = sufficient_whole_dwelling_ventilation_rate_continuous(
+            whole_building_vents,
+            total_floor_area,
+            bedrooms,
+        )?;
+        if !mech_compliant {
+            all_errors.push("Dwelling lacks sufficient continuous mechanical extract rate.".into());
+        }
+
+        Ok(all_errors)
+    }
+
+    fn validate_continuous_mev_vents(
+        centralised_mev_vents: &[&JsonValue],
+        decentralised_mev_vents: &Vec<&JsonValue>,
+        background_vents: &Vec<&JsonValue>,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        let background_area_compliant =
+            sufficient_background_ventilation_area_continuous(background_vents, habitable_rooms)?;
+
+        let background_count_compliant =
+            sufficient_background_vent_count_continuous(background_vents, bedrooms);
+
+        // the number of decentralised continuous vents only needs to be validated for
+        // decentralised systems (when no centralised vents exist)
+        let decentralised_vent_count_compliant =
+            if !decentralised_mev_vents.is_empty() && centralised_mev_vents.is_empty() {
+                sufficient_mev_count(decentralised_mev_vents, wet_rooms)
+            } else {
+                true
+            };
+
+        let checks = [
+            (
+                background_area_compliant,
+                "Dwelling lacks sufficient background vent area for continuous ventilation."
+            ),
+            (
+                background_count_compliant,
+                "Dwelling lacks sufficient number of background vents for continuous ventilation."
+            ),
+            (
+                decentralised_vent_count_compliant,
+                "Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."
+            )
+        ];
+
+        Ok(checks
+            .iter()
+            .filter(|(passed, _)| !passed)
+            .map(|(_, message)| message.to_string())
+            .collect())
+    }
+
+    // SAP 10.3 imposes a minimum air permeability on dwellings without a continuous
+    // mechanical ventilation system (natural or intermittent-extract only), so that
+    // Part L cannot be met through airtightness that would breach Part F. The
+    // applicable value depends on the test pressure recorded in the Leaks input:
+    // "Standard" reports air permeability at 50 Pa (AP50), "Pulse test only" at 4 Pa
+    // (AP4).
+    fn min_air_permeability_by_test_pressure(pressure: &str) -> anyhow::Result<f64> {
+        match pressure {
+            "Standard" => Ok(3.),           // AP50, m3/(h.m2)
+            "Pulse test only" => Ok(0.545), // AP4, m3/(h.m2)
+            _ => bail!("Unknown test pressure: {pressure}"),
+        }
+    }
+
+    fn sufficient_air_permeability(leaks: &JsonValue) -> anyhow::Result<bool> {
+        let min_air_permeability = min_air_permeability_by_test_pressure(
+            leaks
+                .get("test_pressure")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| {
+                    anyhow!("test_pressure provided as a string is expected for Leaks")
+                })?,
+        )?;
+        let test_result = leaks
+            .get("test_result")
+            .and_then(JsonValue::as_f64)
+            .ok_or_else(|| anyhow!("test_result provided as a number is expected for Leaks"))?;
+
+        Ok(test_result >= min_air_permeability
+            || relative_eq!(test_result, min_air_permeability, max_relative = 1e-9))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validate_dwelling_ventilation(
+        ventilation: &JsonValue,
+        total_floor_area: f64,
+        bedrooms: usize,
+        habitable_rooms: usize,
+        wet_rooms: usize,
+        bathrooms: usize,
+        utility_rooms: usize,
+        storeys: usize,
+        is_kitchen_vent_external: bool,
+    ) -> anyhow::Result<()> {
+        let mech_vents = ventilation
+            .get("MechanicalVentilation")
+            .and_then(|v| v.as_object());
+        let mech_vents = match mech_vents {
+            Some(mech_vents) if !mech_vents.is_empty() => mech_vents,
+            _ => bail!("FHS input validation failed, see part F of the building regulations.\nDwelling lacks any mechanical vents."),
+        };
+
+        let background_vents: Vec<&JsonValue> = ventilation
+            .get("Vents")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| anyhow!("Vents object is required for InfiltrationVentilation"))?
+            .values()
+            .collect();
+
+        let intermittent_mev_vents: Vec<&JsonValue> = mech_vents
+            .values()
+            .filter(|mech_vent| {
+                mech_vent.get("vent_type").and_then(|v| v.as_str()) == Some("Intermittent MEV")
+            })
+            .collect();
+        let mvhr_vents: Vec<&JsonValue> = mech_vents
+            .values()
+            .filter(|mech_vent| mech_vent.get("vent_type").and_then(|v| v.as_str()) == Some("MVHR"))
+            .collect();
+        let centralised_mev_vents: Vec<&JsonValue> = mech_vents
+            .values()
+            .filter(|mech_vent| {
+                mech_vent.get("vent_type").and_then(|v| v.as_str())
+                    == Some("Centralised continuous MEV")
+            })
+            .collect();
+        let decentralised_mev_vents: Vec<&JsonValue> = mech_vents
+            .values()
+            .filter(|mech_vent| {
+                mech_vent.get("vent_type").and_then(|v| v.as_str())
+                    == Some("Decentralised continuous MEV")
+            })
+            .collect();
+
+        let has_intermittent_vents = !intermittent_mev_vents.is_empty();
+        let has_continuous_vents = !mvhr_vents.is_empty()
+            || !centralised_mev_vents.is_empty()
+            || !decentralised_mev_vents.is_empty();
+
+        let mut intermittent_errors: Vec<String> = Default::default();
+        if has_intermittent_vents {
+            intermittent_errors = validate_intermittent_vents(
+                intermittent_mev_vents,
+                &background_vents,
+                habitable_rooms,
+                wet_rooms,
+                bathrooms,
+                utility_rooms,
+                storeys,
+                is_kitchen_vent_external,
+                bedrooms,
+            )?;
+        }
+
+        let mut continuous_errors: Vec<String> = Default::default();
+        if has_continuous_vents {
+            continuous_errors = validate_continuous_vents(
+                &mvhr_vents,
+                &centralised_mev_vents,
+                &decentralised_mev_vents,
+                &background_vents,
+                total_floor_area,
+                bedrooms,
+                habitable_rooms,
+                wet_rooms,
+            )?;
+        }
+
+        // The SAP 10.3 minimum air permeability applies only to dwellings without a
+        // continuous mechanical system. Because it never applies when continuous
+        // vents are present, it cannot be masked by the intermittent-or-continuous
+        // either/or check below (which only short-circuits when continuous vents
+        // exist).
+        let mut air_permeability_errors: Vec<String> = Default::default();
+        if !has_continuous_vents {
+            let leaks = ventilation
+                .get("Leaks")
+                .ok_or_else(|| anyhow!("Leaks object is required for InfiltrationVentilation"))?;
+
+            if !sufficient_air_permeability(leaks)? {
+                let min_air_permeability = min_air_permeability_by_test_pressure(
+                    leaks
+                        .get("test_pressure")
+                        .and_then(JsonValue::as_str)
+                        .ok_or_else(|| {
+                            anyhow!("test_pressure provided as a string is expected for Leaks")
+                        })?,
+                )?;
+
+                air_permeability_errors.push(format!("Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of {min_air_permeability} m3/(h.m2)."));
+            }
+        }
+
+        // note - important to clone() here so that `append` doesn't modify intermittent_errors or continuous_errors
+        let mut all_collected_errors = intermittent_errors.clone();
+        all_collected_errors.append(&mut continuous_errors.clone());
+        all_collected_errors.append(&mut air_permeability_errors.clone());
+
+        if all_collected_errors.is_empty() {
+            return Ok(());
+        }
+
+        if has_intermittent_vents && has_continuous_vents {
+            // Dwellings only have to pass either intermittent or continuous validation
+            if intermittent_errors.is_empty() || continuous_errors.is_empty() {
+                return Ok(());
+            }
+        }
+
+        bail!(
+            "FHS input validation failed, see part F of the building regulations.\nFailure(s):\n{}",
+            all_collected_errors.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::future_homes_standard::part_f_validation::part_f;
+    use serde_json::{json, Map, Value};
+
+    #[test]
+    fn test_mwdvr_when_bedroom_based_value_is_greater() {
+        // TFA criteria = 100 * 0.3 = 30 l/s
+        // Bedroom criteria = 13 + 4 * 6 = 37 l/s
+        let mwdvr = part_f::minimum_whole_dwelling_ventilation_rate_continuous(100.0, 4);
+
+        assert_eq!(mwdvr, 133.2) // 37 * 3.6 m3/hr
+    }
+
+    #[test]
+    fn test_mwdvr_when_floor_area_based_value_is_greater() {
+        // TFA criteria = 150 * 0.3 = 45 l/s
+        // Bedroom criteria = 13 + 4 * 6 = 37 l/s
+        let mwdvr = part_f::minimum_whole_dwelling_ventilation_rate_continuous(150.0, 4);
+
+        assert_eq!(mwdvr, 162.0) // 45 * 3.6 m3/hr
+    }
+
+    #[test]
+    fn test_minimum_excludes_sanitary_accommodations() {
+        // Sanitary accommodations no longer contribute to the intermittent
+        // minimum: the Part F table 1.1 footnote permits purge ventilation for
+        // them in place of a minimum extract rate.
+        // 2 bathrooms * 15 + 1 utility * 30 + 30 (external kitchen) = 90 l/s
+        let mwdvr = part_f::minimum_whole_dwelling_ventilation_rate_intermittent(2, 1, true);
+
+        assert_eq!(mwdvr, 324.); // 90 * 3.6 m3/hr, with no sanitary-accommodation term
+    }
+
+    #[test]
+    fn test_one_habitable_room() {
+        let mbva = part_f::minimum_background_ventilation_area_continuous(1);
+
+        assert_eq!(mbva, 40.0); // 1 * 40 = 40 cm2
+    }
+
+    #[test]
+    fn test_five_habitable_rooms() {
+        let mbva = part_f::minimum_background_ventilation_area_continuous(5);
+
+        assert_eq!(mbva, 200.0); // 5 * 40 = 200 cm2
+    }
+
+    #[test]
+    fn test_no_bedrooms() {
+        let bedrooms = 0;
+        let minimum_vent_count = part_f::minimum_background_vent_count_continuous(bedrooms);
+
+        assert_eq!(2, minimum_vent_count);
+    }
+
+    #[test]
+    fn test_five_bedrooms() {
+        let bedrooms = 5;
+        let minimum_vent_count = part_f::minimum_background_vent_count_continuous(bedrooms);
+
+        assert_eq!(7, minimum_vent_count);
+    }
+
+    // test_does_not_raise_if_sufficient_continuous_MEV_and_background_vents
+    #[test]
+    fn test_does_not_raise_if_sufficient_cmev_and_background_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    // test_raises_if_sufficient_continuous_MEV_but_insufficient_background_vents
+    #[test]
+    fn test_raises_if_sufficient_cmev_but_insufficient_background_vents() {
+        let vents = json!({
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling lacks sufficient background vent area for continuous ventilation."
+            ));
+            assert!(e.to_string().contains(
+                "Dwelling lacks sufficient number of background vents for continuous ventilation."
+            ));
+        });
+    }
+
+    #[test]
+    fn test_raises_if_sufficient_continuous_mev_but_insufficient_background_vent_count() {
+        // Given a dwelling with sufficient continuous MEV vents and background vent area
+        // but insufficient background vent count
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                }
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling lacks sufficient number of background vents for continuous ventilation."
+            ));
+        });
+    }
+
+    #[test]
+    fn test_raises_if_no_mechanical_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks any mechanical vents"));
+        });
+    }
+
+    // test_raises_if_neither_background_nor_continuous_MEV_ventilation_sufficient
+    #[test]
+    fn test_raises_if_neither_background_nor_cmev_ventilation_sufficient() {
+        let vents = json!({
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 50 // not enough for 100 floor area/4 beds
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message
+                .contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+            assert!(error_message.contains(
+                "Dwelling lacks sufficient background vent area for continuous ventilation."
+            ));
+            assert!(error_message.contains(
+                "Dwelling lacks sufficient number of background vents for continuous ventilation."
+            ));
+        });
+    }
+
+    // test_does_not_raise_if_sufficient_MVHR_and_no_background_vents
+    #[test]
+    fn test_does_not_raise_if_sufficient_mvhr_and_no_background_vents() {
+        let vents = json!({
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_raises_if_insufficient_mvhr() {
+        let vents = json!({
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+        });
+    }
+
+    #[test]
+    fn test_does_not_raise_if_sufficient_mvhr_and_continuous_mev_and_no_background_vents() {
+        // Given a dwelling with sufficient MVHR and continuous MEV, but no background vents
+        // (not needed if any MVHR vents are present)
+        let vents = json!({
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 100,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+                "mechvent2": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 80,
+                    "mid_height_air_flow_path": 1.5,
+                    "orientation360": 90,
+                    "pitch": 60,
+                },
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_does_not_raise_if_sufficient_imev_and_background_vents() {
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_does_not_raise_when_imev_meets_only_non_sanitary_minimum() {
+        // Given a dwelling whose intermittent extract rate meets exactly the
+        // bathroom + utility + kitchen minimum (1 * 15 + 0 + 30 = 45 l/s =
+        // 162 m3/hr) but would have failed the old minimum that added 6 l/s
+        // per sanitary accommodation (e.g. 3 sanitary accommodations would have
+        // required 15 + 18 + 30 = 63 l/s = 226.8 m3/hr).
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 162,
+                }
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 1, 1, 1, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_raises_if_sufficient_imev_but_insufficient_background_vents() {
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 700
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+        });
+    }
+
+    // test_raises_if_sufficient_background_vents_but_insufficient_iMEV
+    #[test]
+    fn test_raises_if_sufficient_background_vents_but_insufficient_imev() {
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10 // insufficient flow rate
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message
+                .contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains(
+                "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
+            ));
+        });
+    }
+
+    // test_raises_if_iMEV_sufficient_but_lacking_a_large_enough_kitchen_non_external_vent
+    #[test]
+    fn test_raises_if_imev_sufficient_but_lacking_a_large_enough_kitchen_non_external_vent() {
+        // Given a dwelling with sufficient iMEV vents and background vents
+        // But no individual fan of sufficient size for a kitchen without ventilation to the
+        // outside (216+ m3/hr)
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 215
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 215
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 215
+                },
+                "mechvent4": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 215
+                },
+                "mechvent5": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 215
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, false);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
+            ));
+        });
+    }
+
+    #[test]
+    fn test_raises_if_lacking_a_large_enough_kitchen_external_vent() {
+        // Given a dwelling with sufficient iMEV vents and background vents
+        // But no individual fan of sufficient size for a kitchen with ventilation to the
+        // outside (108+ m3/hr)
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 107
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 107
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 107
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 20., 1, 1, 1, 1, 0, 1, false);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling lacks a large enough intermittent mechanical vent for cooking events."
+            ));
+        });
+    }
+
+    // test_raises_if_neither_background_nor_iMEV_ventilation_sufficient
+    #[test]
+    fn test_raises_if_neither_background_nor_imev_ventilation_sufficient() {
+        // Given a dwelling that neither has enough background vents nor
+        // intermittent mechanical vents
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10 // insufficient flow rate
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains("Dwelling lacks a large enough intermittent mechanical vent for cooking events."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+        });
+    }
+
+    // test_raises_if_insufficient_number_of_iMEV
+    #[test]
+    fn test_raises_if_insufficient_number_of_imev() {
+        // Given a dwelling with sufficient background vents but insufficient number of iMEV
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e
+                .to_string()
+                .contains("Dwelling lacks sufficient number of intermittent mechanical vents."));
+        });
+    }
+
+    // test_does_not_raise_if_sufficient_iMEV_and_continuous_MEV_and_background_vents
+    #[test]
+    fn test_does_not_raise_if_sufficient_imev_and_continuous_mev_and_background_vents() {
+        // Given a dwelling with sufficient iMEV vents and continuous MEV vents and background vents
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 240
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 60
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 60
+                },
+                "mechvent4": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    // test_does_not_raise_if_sufficient_continuous_MEV_but_insufficient_background_vents_for_iMEV
+    #[test]
+    fn test_does_not_raise_if_sufficient_continuous_mev_but_insufficient_background_vents_for_imev()
+    {
+        // Given a dwelling with sufficient continuous MEV ventilation but
+        // insufficient background vents for intermittent ventilation.
+        // The dwelling passes because only one route needs to pass.
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 240
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 60
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 60
+                },
+                "mechvent4": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    // test_does_not_raise_if_sufficient_iMEV_and_background_vents_but_insufficient_continuous_MEV
+    #[test]
+    fn test_does_not_raise_if_sufficient_imev_and_background_vents_but_insufficient_continuous_mev()
+    {
+        // Given a dwelling with sufficient iMEV vents and background vents but insufficient
+        // continuous MEV vents. The dwelling passes because only one route needs to pass.
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent4": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent5": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 300,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                },
+                "mechvent4": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    // test_raises_if_insufficient_iMEV_and_continuous_MEV_and_background_vents
+    #[test]
+    fn test_raises_if_insufficient_imev_and_continuous_mev_and_background_vents() {
+        // Given a dwelling with insufficient iMEV vents and continuousMEV vents and background vents
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 240
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 60
+                },
+                "mechvent4": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 10
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, false);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient intermittent mechanical extract rate."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of intermittent mechanical vents."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for continuous ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for continuous ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient continuous mechanical extract rate."));
+        });
+    }
+
+    // test_does_not_raise_if_sufficient_decentralised_continuous_MEV_and_background_vents
+    #[test]
+    fn test_does_not_raise_if_sufficient_decentralised_continuous_mev_and_background_vents() {
+        // Given a dwelling with sufficient decentralised continuous MEV vents and background vents
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Decentralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 2, false);
+
+        assert!(result.is_ok());
+    }
+
+    // test_raises_if_sufficient_iMEV_but_insufficient_background_vent_count
+    #[test]
+    fn test_raises_if_sufficient_imev_but_insufficient_background_vent_count() {
+        // Given a dwelling with sufficient iMEV vents and background ventilator area, but
+        // insufficient background ventilator count
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 5},
+                "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 1000,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 700
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+        });
+    }
+
+    // test_raises_if_insufficient_decentralised_continuous_MEV_count
+    #[test]
+    fn test_raises_if_insufficient_decentralised_continuous_mev_count() {
+        // Given a dwelling with insufficient decentralised continuous MEV vents
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Decentralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2
+                }
+            }
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains("Dwelling lacks sufficient number of decentralised mechanical vents for continuous ventilation."));
+        });
+    }
+
+    /// Given a dwelling with only MVHR mech vents and one background vent
+    #[test]
+    fn test_raises_if_mvhr_system_with_background_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 1000,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                }
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+                "mechvent2": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling with MVHR ventilation system should not have background vents"
+            ));
+        });
+    }
+
+    /// Given a dwelling with a MVHR mech vent, a decentralised continuous MEV
+    /// and background vents
+    #[test]
+    fn test_does_not_raise_if_mixed_mvhr_system_with_background_vents() {
+        let vents = json!({
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "MVHR",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                    "mvhr_eff": 0.0,
+                    "mvhr_location": "inside",
+                    "position_intake": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "position_exhaust": {
+                        "mid_height_air_flow_path": 1.5,
+                        "orientation360": 90,
+                        "pitch": 60,
+                    },
+                    "ductwork": [
+                        {
+                            "cross_section_shape": "circular",
+                            "external_diameter_mm": 160,
+                            "insulation_thermal_conductivity": 0.04,
+                            "insulation_thickness_mm": 25,
+                            "internal_diameter_mm": 150,
+                            "length": 5.0,
+                            "reflective": false,
+                            "duct_type": "supply",
+                        }
+                    ],
+                },
+                "mechvent2": {
+                    "sup_air_flw_ctrl": "ODA",
+                    "sup_air_temp_ctrl": "NO_CTRL",
+                    "vent_type": "Decentralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                },
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 1, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    /// Build an iMEV-only dwelling that satisfies every Part F intermittent
+    /// check, so the supplied Leaks air permeability is the only variable under
+    /// test. Used by the SAP 10.3 air permeability tests.
+    fn passing_imev_only_vents(leaks: Value) -> Value {
+        let background_vent = json!({
+            "mid_height_air_flow_path": 1.5,
+            "area_cm2": 300,
+            "pressure_difference_ref": 20,
+            "orientation360": 0,
+            "pitch": 60,
+        });
+        let vents_map: Map<String, Value> = (0..5)
+            .map(|i| (format!("vent{i}"), background_vent.clone()))
+            .collect();
+
+        json!({
+            "Leaks": leaks,
+            "Vents": vents_map,
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 600,
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+            }
+        })
+    }
+
+    #[test]
+    fn test_does_not_raise_if_imev_only_and_ap50_at_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 50 Pa equals the SAP 10.3 minimum of 3 m3/(h.m2)
+        let vents =
+            passing_imev_only_vents(json!({"test_pressure": "Standard", "test_result": 3.0}));
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_raises_if_imev_only_and_ap50_below_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 50 Pa is below the SAP 10.3 minimum of 3 m3/(h.m2)
+        let vents =
+            passing_imev_only_vents(json!({"test_pressure": "Standard", "test_result": 2.5}));
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of 3 m3/(h.m2)."
+            ));
+        });
+    }
+
+    #[test]
+    fn test_does_not_raise_if_imev_only_and_ap4_at_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 4 Pa (pulse test) equals the SAP 10.3 minimum of 0.545 m3/(h.m2)
+        let vents = passing_imev_only_vents(
+            json!({"test_pressure": "Pulse test only", "test_result": 0.545}),
+        );
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_does_not_raise_if_imev_only_and_ap4_above_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 4 Pa (pulse test) is comfortably above the SAP 10.3 minimum of
+        // 0.545 m3/(h.m2)
+        let vents =
+            passing_imev_only_vents(json!({"test_pressure": "Pulse test only", "test_result": 1.}));
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_raises_if_imev_only_and_ap4_below_minimum() {
+        // Given an otherwise-compliant iMEV-only dwelling whose air permeability
+        // at 4 Pa (pulse test) is below the SAP 10.3 minimum of 0.545 m3/(h.m2)
+        let vents = passing_imev_only_vents(
+            json!({"test_pressure": "Pulse test only", "test_result": 0.5}),
+        );
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            assert!(e.to_string().contains(
+                "Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of 0.545 m3/(h.m2)."
+            ));
+        });
+    }
+
+    #[test]
+    fn test_does_not_raise_if_continuous_mev_present_despite_low_air_permeability() {
+        // Given a dwelling with a continuous mechanical system, the SAP 10.3 air
+        // permeability minimum does not apply even when the dwelling is very
+        // airtight (continuous mechanical ventilation guarantees supply).
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 0.1},
+            "Vents": {
+                "vent1": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 180,
+                    "pitch": 60,
+                },
+                "vent2": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+                "vent3": {
+                    "mid_height_air_flow_path": 1.5,
+                    "area_cm2": 100,
+                    "pressure_difference_ref": 20,
+                    "orientation360": 0,
+                    "pitch": 60,
+                },
+            },
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Centralised continuous MEV",
+                    "measured_fan_power": 12.26,
+                    "measured_air_flow_rate": 37,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 133.2,
+                }
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 1, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_raises_with_air_permeability_error_after_intermittent_errors() {
+        // Given an iMEV-only dwelling that both lacks background ventilation and
+        // has air permeability below the minimum
+        let vents = json!({
+            "Leaks": {"test_pressure": "Standard", "test_result": 2.0},
+            "Vents": {},
+            "MechanicalVentilation": {
+                "mechvent1": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 700,
+                },
+                "mechvent2": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+                "mechvent3": {
+                    "vent_type": "Intermittent MEV",
+                    "SFP": 1.5,
+                    "EnergySupply": "mains elec",
+                    "design_outdoor_air_flow_rate": 200,
+                },
+            },
+        });
+
+        let result = part_f::validate_dwelling_ventilation(&vents, 100., 4, 5, 3, 2, 0, 2, true);
+
+        assert!(result.is_err());
+        let _ = result.inspect_err(|e| {
+            let error_message = e.to_string();
+            assert!(error_message.contains("Dwelling lacks sufficient background vent area for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling lacks sufficient number of background vents for intermittent ventilation."));
+            assert!(error_message.contains("Dwelling without a continuous mechanical ventilation system has air permeability below the minimum of 3 m3/(h.m2)."));
+        });
+    }
+}

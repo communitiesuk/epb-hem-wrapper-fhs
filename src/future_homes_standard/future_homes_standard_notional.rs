@@ -4,28 +4,32 @@ use super::future_homes_standard::{
     ENERGY_SUPPLY_NAME_ELECTRICITY, HW_TEMPERATURE, LIVING_ROOM_SETPOINT_FHS,
     REST_OF_DWELLING_SETPOINT_FHS, SIMTIME_END, SIMTIME_START, SIMTIME_STEP,
 };
-use crate::future_homes_standard::fhs_hw_events::STANDARD_BATH_SIZE;
-use crate::future_homes_standard::fhs_part_f_validation::part_f::{
+use crate::future_homes_standard::hw_events::STANDARD_BATH_SIZE;
+use crate::future_homes_standard::input::{
+    json_error, set_window_part_field, window_part_field, InputForProcessing, JsonAccessResult,
+    UValueEditableBuildingElement, UValueEditableBuildingElementJsonValue,
+};
+use crate::future_homes_standard::part_f_validation::part_f::{
     minimum_background_vent_count_continuous, minimum_background_ventilation_area_continuous,
     minimum_whole_dwelling_ventilation_rate_continuous,
 };
-use crate::future_homes_standard::fhs_sleeved_dhn_validation::HeatNetworkType;
-use crate::future_homes_standard::fhs_ventilation::{
+use crate::future_homes_standard::sleeved_dhn_validation::HeatNetworkType;
+use crate::future_homes_standard::ventilation::{
     create_background_vents, create_mechanical_ventilation,
 };
-use crate::future_homes_standard::input::{
-    json_error, InputForProcessing, JsonAccessResult, UValueEditableBuildingElement,
-    UValueEditableBuildingElementJsonValue,
-};
+use accurate::{sum::Sum2, traits::*};
 use anyhow::{anyhow, bail};
-use arcstr::ArcStr;
+use approx::relative_eq;
+use home_energy_model::compare_floats::max_of_2;
 use home_energy_model::core::common::WaterSupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupply;
 use home_energy_model::core::energy_supply::energy_supply::EnergySupplyBuilder;
 use home_energy_model::core::heating_systems::wwhrs::WwhrsInstantaneous;
 use home_energy_model::core::schedule::{expand_events, TypedScheduleEvent};
+use home_energy_model::core::simulation_time::SimulationTime;
+use home_energy_model::core::simulation_time::Timestep;
 use home_energy_model::core::space_heat_demand::building_element::{
-    pitch_class, HeatFlowDirection,
+    convert_uvalue_to_resistance, pitch_class, HeatFlowDirection,
 };
 use home_energy_model::core::space_heat_demand::building_element::{R_SE, R_SI_UPWARDS};
 use home_energy_model::core::units::{
@@ -37,19 +41,19 @@ use home_energy_model::core::water_heat_demand::dhw_demand::HotWaterDemandResult
 use home_energy_model::core::water_heat_demand::misc::{water_demand_to_kwh, WaterEventResult};
 use home_energy_model::corpus::{calc_htc_hlp, ColdWaterSources, HtcHlpCalculation};
 use home_energy_model::corpus::{HotWaterSource, HotWaterSourceBehaviour};
-use home_energy_model::hem_core::simulation_time::SimulationTime;
-use home_energy_model::hem_core::simulation_time::SimulationTimeIteration;
 use home_energy_model::input::{
-    CustomEnergySourceFactor, EcoDesignController, GroundBuildingElement,
-    GroundBuildingElementJsonValue, WaterDistribution, WaterPipework,
+    CustomEnergySourceFactor, EcoDesignController, WaterDistribution, WaterPipework,
 };
 use home_energy_model::statistics::{np_interp, percentile};
+use home_energy_model::{ArcStr, ParkingLotMutex, ParkingLotRwLock};
 use indexmap::IndexMap;
-use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
-use tracing::instrument;
+
+// Notional external wall U-value (W/m².K), applied to every above-ground opaque wall.
+// Below-ground basement walls reuse this via their fabric-equivalent construction resistance.
+const NOTIONAL_WALL_U_VALUE: f64 = 0.18;
 
 const NOTIONAL_WWHRS: &str = "Notional_Inst_WWHRS";
 const NOTIONAL_HIU: &str = "notionalHIU";
@@ -68,7 +72,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
     fn demand_hot_water(
         &self,
         _usage_events: Vec<WaterEventResult>,
-        _simtime: SimulationTimeIteration,
+        _simtime: Timestep,
     ) -> anyhow::Result<f64> {
         unreachable!()
     }
@@ -77,7 +81,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
         &self,
         volume_required: f64,
         _volume_required_already: f64,
-        _simtime: SimulationTimeIteration,
+        _simtime: Timestep,
     ) -> anyhow::Result<Vec<(f64, f64)>> {
         Ok(vec![(HW_TEMPERATURE, volume_required)])
     }
@@ -86,7 +90,7 @@ impl HotWaterSourceBehaviour for MockHotWaterSource {
 /// Apply assumptions and pre-processing steps for the Future Homes Standard Notional building
 pub(crate) fn apply_fhs_notional_preprocessing(
     input: &mut InputForProcessing,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     fhs_fee_assumptions: bool,
 ) -> anyhow::Result<()> {
     let is_fee = fhs_fee_assumptions;
@@ -112,7 +116,7 @@ pub(crate) fn apply_fhs_notional_preprocessing(
 
     // add WWHRS if needed (and remove any existing systems)
     remove_wwhrs_if_present(input)?;
-    add_wwhrs(input, &cold_water_source, is_fee)?;
+    add_wwhrs(input, &cold_water_source, is_fee, heat_network_type)?;
 
     // remove pv diverter or electric battery if present
     remove_pv_diverter_if_present(input)?;
@@ -141,6 +145,8 @@ pub(crate) fn apply_fhs_notional_preprocessing(
         heat_network_type,
         custom_energy_supply_factors,
         is_fee,
+        #[cfg(test)]
+        None,
     )?;
 
     // modify air-conditioning
@@ -229,7 +235,7 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
                 building_element.set_u_value(0.11);
             }
             HeatFlowDirection::Horizontal => {
-                building_element.set_u_value(0.18);
+                building_element.set_u_value(NOTIONAL_WALL_U_VALUE);
 
                 if building_element.is_opaque() {
                     if let Some(true) = building_element.is_external_door() {
@@ -252,8 +258,12 @@ fn edit_opaque_adjztu_elements(input: &mut InputForProcessing) -> anyhow::Result
 fn edit_party_walls(input: &mut InputForProcessing) -> anyhow::Result<()> {
     for building_element in input.all_party_wall_building_elements_mut()? {
         building_element.insert("party_wall_cavity_type".into(), "filled_sealed".into());
+        // party_wall_lining_type not allowed for filled_sealed
         building_element.shift_remove("party_wall_lining_type");
-        building_element.shift_remove("thermal_resistance_cavity");
+        // The notional party wall loses no heat, so the whole-element U-value it
+        // carries for the compliance report is 0. Without this the element would
+        // keep the actual dwelling's figure, which describes a different wall.
+        building_element.insert("u_value_whole_wall".into(), 0.into());
     }
 
     Ok(())
@@ -317,22 +327,38 @@ fn split_glazing_and_walls(
     Ok((windows_rooflight, walls_roofs))
 }
 
-///Calculate difference between old  and new glazing area and adjust the glazing areas
+/// Resize a window/rooflight by a linear factor and scale its openable geometry
+/// to match, returning the reduction in glazed area.
+///
+/// The openable sections shrink with the glazed element: each part's openable area
+/// scales with the area (the square of the linear factor), its free area height
+/// scales with the linear factor, and its mid-height is repositioned about the
+/// (unchanged) sill so the opening stays proportionally placed within the smaller
+/// window. This keeps the summed openable area within the resized glazed area.
+///
+/// The FHS notional methodology does not prescribe how openable geometry is
+/// resized; this proportional scaling is a modelling choice made for internal
+/// consistency, so the opening stays in proportion to its (resized) window.
+///
+/// A part's ``mid_height`` is measured relative to the base of the ventilation
+/// zone, whereas ``base_height`` is ground-relative; the sill is converted into
+/// the zone-relative frame so the opening is repositioned about the correct datum.
 fn calculate_area_diff_and_adjust_glazing_area(
     input: &mut InputForProcessing,
     linear_reduction_factor: f64,
     window_rooflight_element: &Value,
     building_element_reference: &str,
+    ventilation_zone_base_height: f64,
 ) -> anyhow::Result<f64> {
     // expected to be passed a transparent building element value
     let height = window_rooflight_element
         .get("height")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Height field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("height field not found or not a float"))?;
     let width = window_rooflight_element
         .get("width")
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("Width field not found or not a float"))?;
+        .ok_or_else(|| anyhow!("width field not found or not a float"))?;
     let old_area = height * width;
     let new_height = height * linear_reduction_factor;
     let new_width = width * linear_reduction_factor;
@@ -343,6 +369,41 @@ fn calculate_area_diff_and_adjust_glazing_area(
         new_height,
     )?;
     input.set_numeric_field_for_building_element(building_element_reference, "width", new_width)?;
+
+    let sill_height = window_rooflight_element
+        .get("base_height")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow!("base_height field not found or not a float"))?
+        - ventilation_zone_base_height;
+
+    for window_part in
+        input.window_part_list_for_building_element_mut(building_element_reference)?
+    {
+        let window_part = window_part
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("window_part_list item not an object"))?;
+
+        let max_window_open_area = window_part_field(window_part, "max_window_open_area")?;
+        set_window_part_field(
+            window_part,
+            "max_window_open_area",
+            max_window_open_area * linear_reduction_factor.powi(2),
+        )?;
+
+        let free_area_height = window_part_field(window_part, "free_area_height")?;
+        set_window_part_field(
+            window_part,
+            "free_area_height",
+            free_area_height * linear_reduction_factor,
+        )?;
+
+        let mid_height = window_part_field(window_part, "mid_height")?;
+        set_window_part_field(
+            window_part,
+            "mid_height",
+            sill_height + (mid_height - sill_height) * linear_reduction_factor,
+        )?;
+    }
 
     let new_area = new_height * new_width;
 
@@ -451,7 +512,12 @@ fn calc_max_glazing_area_fraction(
         sum_uval_times_area += rooflight_area * u_value;
     }
 
-    let rooflight_correction_factor = if total_rooflight_area == 0.0 {
+    let rooflight_correction_factor = if relative_eq!(
+        total_rooflight_area,
+        0.,
+        epsilon = 1e-10,
+        max_relative = 1e-9
+    ) {
         0.0
     } else {
         let average_rooflight_uval = sum_uval_times_area / total_rooflight_area;
@@ -467,32 +533,26 @@ fn edit_glazing_for_glazing_limit(
     input: &mut InputForProcessing,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let total_glazing_area: f64 = input
-        .all_building_elements()?
-        .values()
-        .filter(|el| {
-            el.get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|type_str| type_str == "BuildingElementTransparent")
-        })
-        .map(|el| {
-            let height = el.get("height").and_then(Value::as_f64);
-            let width = el.get("width").and_then(Value::as_f64);
-            if let (Some(height), Some(width)) = (height, width) {
-                Ok(height * width)
-            } else {
-                bail!(
-                    "Failed to parse height and width as numbers for transparent element: {:?}",
-                    el
-                );
-            }
-        })
-        .sum::<Result<f64, _>>()?;
+    let mut area_sum = Sum2::zero();
+    for el in input.all_transparent_building_elements()? {
+        let height = el
+            .get("height")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse height as number"))?;
+        let width = el
+            .get("width")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow!("Failed to parse width as number"))?;
+
+        area_sum += height * width
+    }
+    let total_glazing_area = area_sum.sum();
 
     let max_glazing_area_fraction = calc_max_glazing_area_fraction(input, total_floor_area)?;
     let max_glazing_area = max_glazing_area_fraction * total_floor_area;
 
     let (windows_rooflight, mut walls_roofs) = split_glazing_and_walls(input)?;
+    let ventilation_zone_base_height = input.ventilation_zone_base_height()?;
 
     if total_glazing_area > max_glazing_area {
         let linear_reduction_factor = (max_glazing_area / total_glazing_area).sqrt();
@@ -507,6 +567,7 @@ fn edit_glazing_for_glazing_limit(
                 linear_reduction_factor,
                 &window_rooflight_element,
                 &building_element_reference,
+                ventilation_zone_base_height,
             )?;
 
             let same_orientation = find_walls_roofs_with_same_orientation_and_pitch(
@@ -514,10 +575,16 @@ fn edit_glazing_for_glazing_limit(
                 &window_rooflight_element,
             )?;
 
-            let wall_roof_area_total = same_orientation
-                .iter()
-                .filter_map(|(_, wall_roof)| wall_roof.get("area").and_then(Value::as_f64))
-                .sum::<f64>();
+            let mut area_sum = Sum2::zero();
+            for wall_roof in same_orientation.values() {
+                let area = wall_roof
+                    .get("area")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| anyhow!("Failed to parse area as number"))?;
+
+                area_sum += area
+            }
+            let wall_roof_area_total = area_sum.sum();
 
             for (wall_roof_ref, wall_roof_val) in same_orientation {
                 if let Some(area) = wall_roof_val.get("area").and_then(Value::as_f64) {
@@ -544,21 +611,59 @@ fn edit_glazing_for_glazing_limit(
 }
 
 /// Apply notional building ground specifications
+/// u-value = 0.13 W/m2.K
+/// thermal resistance of the floor construction,excluding the ground = 6.12 m2.K/W
+/// linear thermal transmittance, psi_wall_floor_junc = 0.16 W/m.K
 ///
-///     u-value = 0.13 W/m2.K
-///     thermal resistance of the floor construction,excluding the ground, r_f = 6.12 m2.K/W
-///     linear thermal transmittance, psi_wall_floor_junc = 0.16 W/m.K
+/// For basement floor types, the basement walls are held to the same construction
+/// standard as every other notional external wall. Following BS EN ISO 13370 section
+/// 7.3.3, a below-ground wall is specified by its construction resistance and the
+/// surrounding-soil resistance is added by the engine from the basement depth, so the
+/// wall's construction resistance is set to the fabric equivalent of the notional
+/// external wall rather than to a U-value. The above-ground portion of an
+/// unheated-basement wall is an ordinary external wall and takes the notional wall
+/// U-value directly. Basement geometry (depth, wall height) is left at the actual
+/// dwelling's values so the soil benefit applies equally to actual and notional.
 pub(crate) fn edit_ground_floors(input: &mut InputForProcessing) -> anyhow::Result<()> {
-    // TODO (from Python) waiting from MHCLG/DESNZ for clarification if basement floors and basement walls are treated the same
+    // Construction resistance (excluding surface resistances) of the notional external
+    // wall, i.e. the fabric equivalent of a notional_wall_u_value wall above ground.
+    // Vertical walls have a pitch of 90 degrees.
+    let thermal_resist_walls_base_notional =
+        convert_uvalue_to_resistance(NOTIONAL_WALL_U_VALUE, 90.);
 
-    for mut building_element in input
-        .all_ground_building_elements_mut()?
-        .into_iter()
-        .map(GroundBuildingElementJsonValue)
-    {
-        building_element.set_u_value(0.13);
-        building_element.set_thermal_resistance_floor_construction(6.12);
-        building_element.set_psi_wall_floor_junc(0.16);
+    for building_element in input.all_ground_building_elements_mut()? {
+        building_element.insert("u_value".into(), 0.13.into());
+        building_element.insert("thermal_resistance_floor_construction".into(), 6.12.into());
+        building_element.insert("psi_wall_floor_junc".into(), 0.16.into());
+
+        let floor_type = building_element
+            .get("floor_type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("missing floor_type on ground building element"))?;
+
+        let is_basement = matches!(floor_type, "Heated_basement" | "Unheated_basement");
+        let is_unheated_basement = matches!(floor_type, "Unheated_basement");
+        if is_basement {
+            building_element.insert(
+                "thermal_resist_walls_base".into(),
+                thermal_resist_walls_base_notional.into(),
+            );
+        }
+        if is_unheated_basement {
+            building_element.insert("thermal_transm_walls".into(), NOTIONAL_WALL_U_VALUE.into());
+        }
+
+        // The notional building has fixed air bricks, whatever the actual dwelling
+        // has. This edits the actual dwelling's elements in place, so the smart air
+        // brick inputs have to be removed rather than simply not set: the flag, and
+        // the airtightness-test state, which the core requires to be absent without a
+        // control. The control itself cannot be present at this point, since the
+        // schema rejects it as an input and the wrapper attaches it later, in
+        // final_preprocessing; it is removed anyway so that reordering the two cannot
+        // leave the notional referencing a smart air brick schedule.
+        building_element.remove("smart_air_bricks");
+        building_element.remove("Control_smart_air_brick");
+        building_element.remove("vents_open_during_airtightness_test");
     }
 
     Ok(())
@@ -654,13 +759,23 @@ static TABLE_R2: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
     ])
 });
 
-///  Apply heat network settings to notional building calculation in project_dict.
+///  Apply heat network settings to notional building calculation
 fn edit_add_heatnetwork_heating(
     input: &mut InputForProcessing,
     cold_water_source: &str,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     is_communal: bool,
 ) -> anyhow::Result<()> {
+    let build_type = input.build_type()?;
+    // Building-level distribution losses are the daily pipework heat loss within
+    // an apartment block up to the dwelling boundary, so they apply to flats
+    // only. 62 is the notional flat value; houses have no such losses.
+    let building_level_distribution_losses = match build_type.as_str() {
+        "flat" => 62.,
+        "house" => 0.,
+        other => bail!("Unrecognised build_type: {other}"),
+    };
+
     let notional_heat_network = json!(
      {
         NOTIONAL_HIU: {
@@ -668,7 +783,7 @@ fn edit_add_heatnetwork_heating(
             "EnergySupply": NOTIONAL_HEAT_NETWORK_NAME,
             "power_max": 45,
             "HIU_daily_loss": 0.8,
-            "building_level_distribution_losses": 62,
+            "building_level_distribution_losses": building_level_distribution_losses,
         }
     });
     input.set_heat_source_wet(notional_heat_network)?;
@@ -699,25 +814,26 @@ fn edit_add_heatnetwork_heating(
             },
         )]
     } else {
+        let length = custom_energy_supply_factors.len() as f64;
+        let mut emissions_sum = Sum2::zero();
+        let mut out_of_scope_sum = Sum2::zero();
+        let mut primary_energy_sum = Sum2::zero();
+
+        for factor in custom_energy_supply_factors.values() {
+            emissions_sum += factor.emissions_factor_kg_co2e_k_wh;
+            out_of_scope_sum +=
+                factor.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions;
+            primary_energy_sum += factor.primary_energy_factor_k_wh_k_wh_delivered;
+        }
+
         [(
             NOTIONAL_HEAT_NETWORK_NAME.into(),
             CustomEnergySourceFactor {
-                emissions_factor_kg_co2e_k_wh: custom_energy_supply_factors
-                    .values()
-                    .map(|f| f.emissions_factor_kg_co2e_k_wh)
-                    .sum::<f64>()
-                    / custom_energy_supply_factors.len() as f64,
-                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions:
-                    custom_energy_supply_factors
-                        .values()
-                        .map(|f| f.emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions)
-                        .sum::<f64>()
-                        / custom_energy_supply_factors.len() as f64,
-                primary_energy_factor_k_wh_k_wh_delivered: custom_energy_supply_factors
-                    .values()
-                    .map(|f| f.primary_energy_factor_k_wh_k_wh_delivered)
-                    .sum::<f64>()
-                    / custom_energy_supply_factors.len() as f64,
+                emissions_factor_kg_co2e_k_wh: emissions_sum.sum() / length,
+                emissions_factor_kg_co2e_k_wh_including_out_of_scope_emissions: out_of_scope_sum
+                    .sum()
+                    / length,
+                primary_energy_factor_k_wh_k_wh_delivered: primary_energy_sum.sum() / length,
             },
         )]
     }
@@ -924,7 +1040,7 @@ fn replace_space_heating_system(
             "emitters": [{"wet_emitter_type": "radiator", "frac_convective": 0.7, "c": c, "n": n}],
             "temp_diff_emit_dsgn": temp_diff_emit_dsgn,
             "variable_flow": false,
-            "HeatSource": {"name": heat_source_name, "temp_flow_limit_upper": 65.0},
+            "HeatSource": {"name": heat_source_name, "temp_flow_limit_upper": 55.0},
             "ecodesign_controller": eco_design_controller,
             "Control": HEATING_PATTERN,
             "design_flow_temp": design_flow_temp,
@@ -1014,11 +1130,18 @@ fn add_wwhrs(
     input: &mut InputForProcessing,
     cold_water_source_type: &str,
     is_fee: bool,
+    heat_network_type: Option<HeatNetworkType>,
 ) -> anyhow::Result<()> {
     let storeys_in_dwelling = input.storeys_in_dwelling()?;
 
-    // add WWHRS if more than 1 storeys in dwelling and not FEE
-    if storeys_in_dwelling > 1 && !is_fee {
+    // add WWHRS if more than 1 storey in dwelling, not FEE, and not a heat network type that
+    // uses a HIU in the notional building (sleeved DHN and communal). Unsleeved DHN uses a heat
+    // pump in the notional building, so WWHRS still applies.
+    let sleeved_dhn_or_communal = matches!(
+        heat_network_type,
+        Some(HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)
+    );
+    if storeys_in_dwelling > 1 && !is_fee && !sleeved_dhn_or_communal {
         input.register_wwhrs_name_on_showers(NOTIONAL_WWHRS, "B")?;
 
         input.set_wwhrs(json!({
@@ -1082,15 +1205,14 @@ fn calc_daily_hw_demand(
         })
         .collect();
 
-    let wwhrs: IndexMap<std::string::String, Arc<Mutex<WwhrsInstantaneous>>> = if let Some(
+    let wwhrs: IndexMap<String, Arc<ParkingLotMutex<WwhrsInstantaneous>>> = if let Some(
         waste_water_heat_recovery,
-    ) =
-        input.wwhrs()?
+    ) = input.wwhrs()?
     {
         let notional_wwhrs = waste_water_heat_recovery.get(NOTIONAL_WWHRS).ok_or_else(|| anyhow!("A {} entry for WWHRS was expected to have been set in the FHS Notional wrapper.", NOTIONAL_WWHRS))?;
         [(
             NOTIONAL_WWHRS.to_string(),
-            Arc::new(Mutex::new(WwhrsInstantaneous::new(
+            Arc::new(ParkingLotMutex::new(WwhrsInstantaneous::new(
                 notional_wwhrs.flow_rates.clone(),
                 notional_wwhrs.system_a_efficiencies.clone(),
                 cold_water_sources
@@ -1152,17 +1274,18 @@ fn calc_daily_hw_demand(
             event_name,
             serde_json::from_value(json!(event_type))?,
             event_schedules,
+            None,
         )?;
     }
 
     // Mock hot water source which returns the same temperature at every timestep
     let mock_hw_source: IndexMap<_, _> = IndexMap::from_iter([(
         "hw cylinder".into(),
-        HotWaterSource::Fake(Arc::new(MockHotWaterSource)),
+        HotWaterSource::Wildcard(Arc::new(MockHotWaterSource)),
     )]);
-    let energy_supply: Arc<RwLock<EnergySupply>> = {
+    let energy_supply: Arc<ParkingLotRwLock<EnergySupply>> = {
         let electricity_supply = input.energy_supply_by_key(ENERGY_SUPPLY_NAME_ELECTRICITY)?;
-        Arc::new(RwLock::new(EnergySupplyBuilder::new(
+        Arc::new(ParkingLotRwLock::new(EnergySupplyBuilder::new(
             serde_json::from_value(electricity_supply.and_then(|map| map.get("fuel")).ok_or_else(|| anyhow!("FHS Notional wrapper expected existence of energy supply with key '{ENERGY_SUPPLY_NAME_ELECTRICITY}'"))?.to_owned())?,
             simtime.total_steps(),
         ).with_export_capable(electricity_supply.is_some_and(|map| map.get("is_export_capable").and_then(|v| v.as_bool()).unwrap_or(true))).build()))
@@ -1241,7 +1364,7 @@ fn edit_storagetank(
     let daily_losses = calculate_daily_losses(cylinder_vol);
 
     // Modify primary pipework characteristics
-    let primary_pipework = edit_primary_pipework(input, total_floor_area)?;
+    let primary_pipework = edit_primary_pipework(input)?;
 
     // Modify cylinder characteristics
     input.set_hot_water_cylinder(json!({
@@ -1268,10 +1391,7 @@ fn edit_storagetank(
     Ok(())
 }
 
-fn edit_primary_pipework(
-    input: &InputForProcessing,
-    total_floor_area: f64,
-) -> anyhow::Result<Vec<WaterPipework>> {
+fn edit_primary_pipework(input: &InputForProcessing) -> anyhow::Result<Vec<WaterPipework>> {
     // Define minimum values
     let internal_diameter_mm_min = 20.;
     let external_diameter_mm_min = 22.;
@@ -1280,15 +1400,13 @@ fn edit_primary_pipework(
     let pipe_contents = "water";
     let insulation_thermal_conductivity = 0.035;
 
-    let length_max = match input.build_type()?.as_str() {
-        "flat" => 0.05 * total_floor_area,
-        "house" => {
-            0.05 * input.ground_floor_area()?.ok_or_else(|| {
-                anyhow!("FHS Notional wrapper expected ground floor area to be set for a house.")
-            })?
-        }
-        unknown_type => bail!("Encountered unexpected building type '{unknown_type}'"),
-    };
+    // Maximum primary-pipework length is 5 % of the ground-floor area for both
+    // houses and flats. Earlier code used TFA for flats, which overstated the
+    // cap by up to a factor of the storey count for multi-storey flats.
+    let length_max = 0.05
+        * input
+            .ground_floor_area()?
+            .ok_or_else(|| anyhow!("FHS Notional wrapper expected ground floor area to be set"))?;
 
     let mut primary_pipework = input.primary_pipework_clone()?;
 
@@ -1358,14 +1476,19 @@ fn edit_space_heating_system(
     cold_water_source: &str,
     total_floor_area: f64,
     heat_network_type: Option<HeatNetworkType>,
-    custom_energy_supply_factors: &mut IndexMap<Arc<str>, CustomEnergySourceFactor>,
+    custom_energy_supply_factors: &mut IndexMap<ArcStr, CustomEnergySourceFactor>,
     is_fee: bool,
+    #[cfg(test)] canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
 ) -> anyhow::Result<()> {
     // FEE calculation which doesn't need the space heating system at this stage.
     if !is_fee {
         // If Actual dwelling is heated with heat networks - Notional heated with HIU.
         // Otherwise, notional heated with an air to water heat pump
-        let (design_capacity_map, design_capacity_overall) = calc_design_capacity(input)?;
+        let (design_capacity_map, design_capacity_overall) = calc_design_capacity(
+            input,
+            #[cfg(test)]
+            canned_calc_design_capacity,
+        )?;
 
         if let Some(heat_network_type @ (HeatNetworkType::SleevedDhn | HeatNetworkType::Communal)) =
             heat_network_type
@@ -1428,10 +1551,17 @@ fn edit_space_cool_system(input: &mut InputForProcessing) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[instrument(skip(input))]
 fn calc_design_capacity(
     input: &InputForProcessing,
+    #[cfg(test)] canned_result: Option<(IndexMap<ArcStr, f64>, f64)>,
 ) -> anyhow::Result<(IndexMap<ArcStr, f64>, f64)> {
+    #[cfg(test)]
+    {
+        if let Some(canned_result) = canned_result {
+            return Ok(canned_result);
+        }
+    }
+
     // Create a deep copy as init_resistance_or_uvalue() will add u_value & r_c
     // which will raise warning when called second time
     let mut input = input.clone();
@@ -1452,7 +1582,7 @@ fn calc_design_capacity(
 
     let HtcHlpCalculation {
         htc_map: htc_dict, ..
-    } = calc_htc_hlp(&input.as_input_for_calc_htc_hlp()?)?;
+    } = calc_htc_hlp(&input.as_input_for_calc_htc_hlp()?, None)?;
 
     // Calculate design capacity
     let min_air_temp = *input.external_conditions()?.air_temperatures().as_ref().ok_or_else(|| anyhow!("FHS Notional wrapper expected to have air temperatures merged onto the input structure."))?.iter().min_by(|a, b| a.total_cmp(b)).ok_or_else(|| anyhow!("FHS Notional wrapper expects air temperature list set on input structure not to be empty."))?;
@@ -1470,7 +1600,10 @@ fn calc_design_capacity(
         })
         .collect();
 
-    let design_capacity_overall = design_capacity_map.values().sum::<f64>();
+    let design_capacity_overall = design_capacity_map
+        .values()
+        .copied()
+        .sum_with_accumulator::<Sum2<_>>();
 
     Ok((design_capacity_map, design_capacity_overall))
 }
@@ -1486,92 +1619,162 @@ fn initialise_temperature_setpoints(input: &mut InputForProcessing) -> anyhow::R
     Ok(())
 }
 
+/// Divide the notional dwelling's inverter peak power between its PV arrays.
+///
+/// The notional's total is the actual dwelling's total, or the lower limit where that is larger,
+/// so the limit applies once for the dwelling and not once for each array the actual dwelling
+/// happens to declare.
+///
+/// The total is divided in proportion to the panel capacity behind each array, which is what
+/// makes the notional's generation independent of how those arrays were divided up. The core
+/// takes an inverter's efficiency from its own load ratio, its input over its rated capacity, so
+/// giving every array the same panels-to-inverter ratio gives every array the same load ratio,
+/// and that is the ratio one inverter carrying all the panels would run at. Dividing by the
+/// actual dwelling's own inverter split instead would leave an array with few panels heavily
+/// over-inverted and one with many panels under-inverted, both away from the ratio the dwelling
+/// as a whole implies, and would keep the notional sensitive to a choice the assessor made.
+///
+/// Args:
+///     peak_power_panels: panel peak power in kW, by array name. Only the proportions are used,
+///             so the actual dwelling's figures serve: the notional scales them all by one factor.
+///     inverter_peak_power_actual: the actual dwelling's inverter peak power in kW, by array
+///             name. Only the total is used.
+///     min_peak_power_kW: lower limit on the dwelling's total inverter peak power, in kW.
+///
+/// Returns:
+///     The notional dwelling's inverter peak power in kW, by array name.
+fn notional_inverter_peak_power<'a>(
+    peak_power_panels: &IndexMap<&'a str, f64>,
+    inverter_peak_power_actual: &IndexMap<&str, f64>,
+    min_peak_power_kw: f64,
+) -> IndexMap<&'a str, f64> {
+    let total_notional = max_of_2(
+        min_peak_power_kw,
+        inverter_peak_power_actual
+            .values()
+            .copied()
+            .sum_with_accumulator::<Sum2<_>>(),
+    );
+    let total_panels = peak_power_panels
+        .values()
+        .copied()
+        .sum_with_accumulator::<Sum2<_>>();
+
+    // Panel peak power is a required input with a positive minimum, so the total cannot be zero.
+    // Dividing before multiplying keeps a single array on exactly the total.
+    peak_power_panels
+        .iter()
+        .map(|(&name, peak_power)| (name, total_notional * (peak_power / total_panels)))
+        .collect()
+}
+
 fn add_solar_pv(
     input: &mut InputForProcessing,
     is_fee: bool,
     total_floor_area: f64,
 ) -> anyhow::Result<()> {
-    let build_type = input.build_type()?;
-
-    let storeys_in_building = if build_type == "flat" {
-        input
-            .storeys_in_building()?
-            .ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?
-    } else {
-        input.storeys_in_dwelling()?
-    };
-
-    // PV is included in the notional if the building contains 15 stories or
-    // less that contain dwellings.
-    if storeys_in_building <= 15 && !is_fee {
+    if !is_fee {
         let ground_floor_area = input
             .ground_floor_area()?
-            .ok_or_else(|| anyhow!("Notional wrapped expected ground floor area to be set"))?;
+            .ok_or_else(|| anyhow!("notional wrapper expected ground floor area to be set"))?;
+
         let peak_kw = match input.build_type()?.as_str() {
             "house" => ground_floor_area * 0.4 / 4.5,
-            "flat" => total_floor_area * 0.4 / (4.5 * storeys_in_building as f64),
-            unknown_type => bail!("Unexpected building type '{unknown_type}' encountered"),
+            "flat" => {
+                let storeys_in_building = input
+                    .storeys_in_building()?
+                    .ok_or_else(|| anyhow!("expected storeys_in_building for build_type flat"))?;
+                total_floor_area * 0.4 / (4.5 * storeys_in_building as f64)
+            }
+            unknown_type => bail!("unexpected building type '{unknown_type}' encountered"),
         };
 
         // If actual has no solar panels then notional will also have nothing
         if let Some(on_site_generation) = input.on_site_generation()? {
-            let total_peak_power: f64 = on_site_generation
-                .values()
-                .filter_map(|panel| panel.get("peak_power").and_then(|power| power.as_f64()))
-                .sum();
+            // Lower limit on the dwelling's total inverter power in kW, matching the 3.68 kW
+            // single-phase threshold in ENA EREC G98, which applies per connection rather than
+            // per inverter. An individual array of the notional may therefore fall below it.
+            let min_inverter_peak_power_kw: f64 = 3.68;
+            let capacity = on_site_generation.len();
+            let mut peak_power_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut inverter_ac_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut inverter_dc_panels: IndexMap<&str, f64> = IndexMap::with_capacity(capacity);
+            let mut total_peak_power = Sum2::zero();
+
+            for (name, panel) in on_site_generation {
+                let peak_power = panel
+                    .get("peak_power")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| anyhow!("peak_power not found or not a float"))?;
+                peak_power_panels.insert(name, peak_power);
+
+                inverter_ac_panels.insert(
+                    name,
+                    panel
+                        .get("inverter_peak_power_ac")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            anyhow!("inverter_peak_power_ac not found or not a float")
+                        })?,
+                );
+
+                inverter_dc_panels.insert(
+                    name,
+                    panel
+                        .get("inverter_peak_power_dc")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            anyhow!("inverter_peak_power_dc not found or not a float")
+                        })?,
+                );
+
+                total_peak_power += peak_power;
+            }
 
             // If the calculated peak_kW is less than the actual total power,
             // scale the actual values down to match the peak by applying a scaling factor.
             // The scaling factor is capped at a minimum of 1.0 to avoid scaling up.
-            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power);
-            let min_inverter_peak_power_kw: f64 = 3.68; // Fixed lower limit on inverter power in kW
+            let scaling_factor = 1.0f64.min(peak_kw / total_peak_power.sum());
 
-            let notional_panels: IndexMap<String, Value> = on_site_generation
-                .iter()
-                .filter_map(|(name, panel)| {
-                    let pv_peak_power = panel
-                        .get("peak_power")
-                        .and_then(|power| power.as_f64())
-                        .unwrap_or(0.0)
-                        * scaling_factor;
-                    let pv_area = 4.5 * pv_peak_power;
-                    // PV width and height based on 2:1 aspect ratio
-                    let pv_height = (pv_area / 2.).powf(0.5);
-                    let pv_width = 2. * pv_height;
-                    let mut updated_panel = panel.clone();
-                    let updated_panel = match updated_panel.as_object_mut() {
-                        Some(panel) => panel,
-                        None => return None,
-                    };
-                    updated_panel.insert("peak_power".to_string(), json!(pv_peak_power));
-                    updated_panel.insert(
-                        "inverter_peak_power_ac".to_string(),
-                        min_inverter_peak_power_kw
-                            .max(
-                                panel
-                                    .get("inverter_peak_power_ac")
-                                    .and_then(|power| power.as_f64())
-                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
-                            )
-                            .into(),
-                    ); // default to smaller value than min so always beaten
-                    updated_panel.insert(
-                        "inverter_peak_power_dc".to_string(),
-                        min_inverter_peak_power_kw
-                            .max(
-                                panel
-                                    .get("inverter_peak_power_dc")
-                                    .and_then(|power| power.as_f64())
-                                    .unwrap_or(min_inverter_peak_power_kw - 1.),
-                            )
-                            .into(),
-                    ); // default to smaller value than min so always beaten
-                    updated_panel.insert("height".to_string(), json!(pv_height));
-                    updated_panel.insert("width".to_string(), json!(pv_width));
+            let inverter_peak_power_ac = notional_inverter_peak_power(
+                &peak_power_panels,
+                &inverter_ac_panels,
+                min_inverter_peak_power_kw,
+            );
+            let inverter_peak_power_dc = notional_inverter_peak_power(
+                &peak_power_panels,
+                &inverter_dc_panels,
+                min_inverter_peak_power_kw,
+            );
 
-                    Some((String::from(name), json!(updated_panel)))
-                })
-                .collect();
+            let mut notional_panels: IndexMap<String, Value> = IndexMap::with_capacity(capacity);
+
+            for (name, panel) in on_site_generation {
+                let pv_peak_power = peak_power_panels[name.as_str()] * scaling_factor;
+                let pv_area = 4.5 * pv_peak_power;
+                // PV width and height based on 2:1 aspect ratio
+                let pv_height = (pv_area / 2.).powf(0.5);
+                let pv_width = 2. * pv_height;
+
+                let mut updated_panel = panel.clone();
+                let updated_panel = updated_panel
+                    .as_object_mut()
+                    .ok_or_else(|| anyhow!("panel not an object"))?;
+
+                updated_panel.insert("peak_power".into(), json!(pv_peak_power));
+                updated_panel.insert(
+                    "inverter_peak_power_ac".into(),
+                    json!(inverter_peak_power_ac[name.as_str()]),
+                );
+                updated_panel.insert(
+                    "inverter_peak_power_dc".into(),
+                    json!(inverter_peak_power_dc[name.as_str()]),
+                );
+                updated_panel.insert("height".into(), json!(pv_height));
+                updated_panel.insert("width".into(), json!(pv_width));
+
+                notional_panels.insert(name.clone(), json!(updated_panel));
+            }
 
             input.set_on_site_generation(json!(notional_panels))?;
         }
@@ -1746,7 +1949,7 @@ mod tests {
             "wall 0".into() => (Some(0.7), None),  // a party wall - thermal resistance left as is
             "wall 1".into() => (None, Some(1.0)),  // non party - door = notional 1
             "wall 2".into() => (None, Some(0.18)),  // non party - horizontal = notional 0.18
-            "wall 3".into() => (None, Some(0.3)),  // a party wall- u_value left as is,
+            "wall 3".into() => (Some(3.3), None),  // a party wall - thermal resistance left as is
             "wall 4".into() => (None, Some(0.11)),  // non party - upwards (ceiling) = notional 0.11
         };
 
@@ -1758,7 +1961,7 @@ mod tests {
         // Given an actual building with an unfilled_sealed party wall
         test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({
             "type": "BuildingElementPartyWall",
-            "u_value": 0.3,
+            "thermal_resistance_construction": 3.3,
             "areal_heat_capacity": "Very light",
             "mass_distribution_class": "I: Mass concentrated at internal side",
             "pitch": 90,
@@ -1785,31 +1988,30 @@ mod tests {
     }
 
     #[rstest]
-    fn test_edit_party_walls_removes_thermal_resistance_cavity(mut test_input: InputForProcessing) {
-        // Given an actual building with a defined_resistance party wall
-        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({"type": "BuildingElementPartyWall",
-            "u_value": 0.3,
+    fn test_edit_party_walls_zeroes_whole_wall_uvalue(mut test_input: InputForProcessing) {
+        // Given an actual building whose party wall loses heat and so declares a
+        // non-zero whole-wall U-value for the compliance report
+        test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"] = json!({
+            "type": "BuildingElementPartyWall",
+            "thermal_resistance_construction": 3.3,
             "areal_heat_capacity": "Very light",
             "mass_distribution_class": "I: Mass concentrated at internal side",
             "pitch": 90,
             "area": 15.0,
-            "party_wall_cavity_type": "defined_resistance",
-            "thermal_resistance_cavity": "1.0",});
+            "party_wall_cavity_type": "unfilled_sealed",
+            "party_wall_lining_type": "dry_lined",
+            "u_value_whole_wall": 0.2,
+        });
 
         // When notional building is created
         edit_party_walls(&mut test_input).unwrap();
 
-        // Then the party wall's party_wall_cavity_type is changed to filled_sealed
+        // Then the whole-wall U-value is zeroed to match the filled_sealed cavity type
+        // the notional forces, which loses no heat
         assert_eq!(
             test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
-                ["party_wall_cavity_type"],
-            "filled_sealed"
-        );
-        // And any properties contingent on party_wall_cavity_type are removed
-        assert!(
-            test_input.input["Zone"]["whole dwelling"]["BuildingElement"]["wall 3"]
-                .get("thermal_resistance_cavity")
-                .is_none()
+                ["u_value_whole_wall"],
+            0
         );
     }
 
@@ -1831,6 +2033,105 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[rstest]
+    fn test_edit_ground_floors_removes_smart_air_bricks(mut test_input: InputForProcessing) {
+        // Given a suspended floor with smart air bricks, the control the wrapper attaches to
+        // them, and the airtightness-test vent state
+        test_input.input["Zone"]["zone 1"]["BuildingElement"]["ground"] = json!({
+            "type": "BuildingElementGround",
+            "floor_type": "Suspended_floor",
+            "area_per_perimeter_vent": 0.003,
+            "smart_air_bricks": true,
+            "Control_smart_air_brick": "SmartAirBrick_Control",
+            "vents_open_during_airtightness_test": true,
+        });
+
+        // When the notional ground floor specification is applied
+        edit_ground_floors(&mut test_input).unwrap();
+
+        // Then all three are removed: the notional has fixed air bricks whatever the actual
+        // dwelling has, and the core forbids the airtightness-test state without a control.
+        // This edits the actual dwelling's elements in place, so they must be removed rather
+        // than merely not set.
+        let element = &test_input.input["Zone"]["zone 1"]["BuildingElement"]["ground"];
+
+        assert!(element.get("smart_air_bricks").is_none());
+        assert!(element.get("Control_smart_air_brick").is_none());
+        assert!(element.get("vents_open_during_airtightness_test").is_none());
+        // And the vent opening area is untouched, being ordinary suspended-floor geometry
+        assert_eq!(element["area_per_perimeter_vent"], 0.003);
+    }
+
+    #[rstest]
+    fn test_edit_ground_floors_sets_notional_basement_walls(mut test_input: InputForProcessing) {
+        // Given ground elements carrying the actual dwelling's basement wall fabric:
+        // a heated basement, an unheated basement, and a non-basement slab
+        test_input.input["Zone"]["z"]["BuildingElement"] = json!({
+            "heated_basement": {
+                "type": "BuildingElementGround",
+                "floor_type": "Heated_basement",
+                "thermal_resist_walls_base": 0.5,
+            },
+            "unheated_basement": {
+                "type": "BuildingElementGround",
+                "floor_type": "Unheated_basement",
+                "thermal_resist_walls_base": 0.5,
+                "thermal_transm_walls": 1.5,
+            },
+            "slab": {
+                "type": "BuildingElementGround",
+                "floor_type": "Slab_no_edge_insulation",
+            },
+        });
+
+        // When the notional ground specification is applied
+        edit_ground_floors(&mut test_input).unwrap();
+
+        let elements = &test_input.input["Zone"]["z"]["BuildingElement"];
+
+        // Then every ground element takes the notional floor specification
+        for element in elements.as_object().unwrap().values() {
+            assert_eq!(element["u_value"], 0.13);
+            assert_eq!(element["thermal_resistance_floor_construction"], 6.12);
+            assert_eq!(element["psi_wall_floor_junc"], 0.16);
+        }
+
+        // And both basement types take the notional wall construction resistance: the
+        // fabric equivalent of a 0.18 W/m2.K external wall. Rather than pin the exact
+        // figure (which would track hem-core's internal surface-resistance coefficients
+        // in lockstep and so never detect a change to them), assert the physical round
+        // trip: the returned construction resistance, combined with the BS EN ISO 6946
+        // vertical-wall surface resistances (R_si = 0.13, R_se = 0.04 m2.K/W),
+        // reconstructs the 0.18 W/m2.K target. The tolerance absorbs the small
+        // difference between those nominal surface resistances and the engine's.
+        let (r_si, r_se) = (0.13, 0.04);
+
+        for basement in ["heated_basement", "unheated_basement"] {
+            let r_construction = &elements[basement]["thermal_resist_walls_base"]
+                .as_f64()
+                .unwrap();
+            let reconstructed_u = 1.0 / (r_si + r_construction + r_se);
+
+            assert_relative_eq!(reconstructed_u, 0.18, max_relative = 1e-3);
+        }
+
+        // And the unheated basement's above-ground wall portion takes the notional wall U-value
+        assert_eq!(
+            elements["unheated_basement"]["thermal_transm_walls"]
+                .as_f64()
+                .unwrap(),
+            0.18
+        );
+
+        // And basement wall properties are not added to the non-basement slab, nor is the
+        // above-ground wall transmittance added to the heated basement
+        assert!(elements["slab"].get("thermal_resist_walls_base").is_none());
+        assert!(elements["slab"].get("thermal_transm_walls").is_none());
+        assert!(elements["heated_basement"]
+            .get("thermal_transm_walls")
+            .is_none());
     }
 
     #[rstest]
@@ -1876,6 +2177,138 @@ mod tests {
                 panic!("Unknown thermal bridging type '{bridging_type}' encountered");
             }
         }
+    }
+
+    #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_scales_openable_geometry(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a window over-glazed enough to be halved (linear reduction factor 0.5)
+        // with a single openable section, in a zone whose base is at ground level
+        let window = json!({
+            "base_height": 1.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [
+                {"free_area_height": 1.6, "mid_height": 2.0, "max_window_open_area": 1.2}
+            ],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is reduced
+        let area_diff = calculate_area_diff_and_adjust_glazing_area(
+            &mut test_input,
+            0.5,
+            &window,
+            "window",
+            0.,
+        )
+        .unwrap();
+
+        // Then the glazed dimensions and the freed area are reduced
+        let window = &test_input.input["Zone"]["z"]["BuildingElement"]["window"];
+
+        assert_eq!(window["height"], 1.);
+        assert_eq!(window["width"], 1.5);
+        assert_eq!(area_diff, 4.5); // 2.0 * 3.0 - 1.0 * 1.5
+
+        // And the openable geometry scales with the resized window: area by the
+        // square of the factor, free area height by the factor, and the mid-height
+        // repositioned about the unchanged sill
+        let part = &window["window_part_list"][0];
+
+        assert_eq!(part["max_window_open_area"], 0.3); // 1.2 * 0.5**2
+        assert_eq!(part["free_area_height"], 0.8); // 1.6 * 0.5
+        assert_eq!(part["mid_height"], 1.5); // sill 1.0 + (2.0 - 1.0) * 0.5
+    }
+
+    #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_repositions_about_zone_relative_sill(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a window in a zone whose base is above ground (base height 1.5):
+        // the part mid_height is zone-relative, base_height is ground-relative, so
+        // the sill in the zone-relative frame is base_height - ventilation_zone_base
+        // = 2.0 - 1.5 = 0.5
+        let window = json!({
+            "base_height": 2.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [
+                {"free_area_height": 1.6, "mid_height": 1.5, "max_window_open_area": 1.2}
+            ],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is halved
+        calculate_area_diff_and_adjust_glazing_area(&mut test_input, 0.5, &window, "window", 1.5)
+            .unwrap();
+
+        // Then the mid-height is repositioned about the zone-relative sill, not the
+        // ground-relative base height
+        let part =
+            &test_input.input["Zone"]["z"]["BuildingElement"]["window"]["window_part_list"][0];
+
+        assert_eq!(part["mid_height"], 1.); // sill 0.5 + (1.5 - 0.5) * 0.5
+    }
+
+    #[rstest]
+    fn test_calculate_area_diff_and_adjust_glazing_area_handles_no_window_parts(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a fixed (non-openable) window with no openable sections
+        // NOTE: the python has another test window that omits the window_part_list field but the
+        // field is required by the fhs schema so expected to be present in the rust
+        let window = json!({
+            "base_height": 2.0,
+            "height": 2.0,
+            "width": 3.0,
+            "window_part_list": [],
+        });
+        test_input.input["Zone"]["z"]["BuildingElement"]["window"] = window.clone();
+
+        // When the glazing area is reduced
+        let area_diff = calculate_area_diff_and_adjust_glazing_area(
+            &mut test_input,
+            0.5,
+            &window,
+            "window",
+            0.,
+        )
+        .unwrap();
+
+        // Then the glazed dimensions and freed area are still reduced, without raising
+        let window = &test_input.input["Zone"]["z"]["BuildingElement"]["window"];
+
+        assert_eq!(window["height"], 1.0);
+        assert_eq!(window["width"], 1.5);
+        assert_eq!(area_diff, 4.5); // 2.0 * 3.0 - 1.0 * 1.5
+    }
+
+    fn zone_input_for_max_glazing_area_test(u_value: f64, pitch_override: Option<f64>) -> Value {
+        json!({"test_zone": {
+            "BuildingElement": {
+                "test_rooflight": {
+                    "type": "BuildingElementTransparent",
+                    "pitch": pitch_override.unwrap_or(0.0),
+                    "height": 2.0,
+                    "width": 1.0,
+                    "u_value": u_value,
+                    "orientation360": 0.0,
+                    "g_value": 0.0,
+                    "frame_area_fraction": 0.0,
+                    "free_area_height": 0.0,
+                    "base_height": 0.0,
+                    "max_window_open_area": 3,
+                    "mid_height": 1.5,
+                    "shading": [],
+                    "window_part_list": []
+                }
+            },
+            "ThermalBridging": 1.0,
+            "area": 10.0,
+            "volume": 20.0
+        }})
     }
 
     #[rstest]
@@ -1928,30 +2361,60 @@ mod tests {
         );
     }
 
-    fn zone_input_for_max_glazing_area_test(u_value: f64, pitch_override: Option<f64>) -> Value {
-        json!({"test_zone": {
-            "BuildingElement": {
-                "test_rooflight": {
-                    "type": "BuildingElementTransparent",
-                    "pitch": pitch_override.unwrap_or(0.0),
-                    "height": 2.0,
-                    "width": 1.0,
-                    "u_value": u_value,
-                    "orientation360": 0.0,
-                    "g_value": 0.0,
-                    "frame_area_fraction": 0.0,
-                    "free_area_height": 0.0,
-                    "base_height": 0.0,
-                    "max_window_open_area": 3,
-                    "mid_height": 1.5,
-                    "shading": [],
-                    "window_part_list": []
+    #[rstest]
+    fn test_calc_max_glazing_area_fraction_when_u_value_is_specified(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a rooflight with a specified u_value instead of a thermal_resistance_construction
+        test_input.input["Zone"] = json!({
+            "test_zone": {
+                "BuildingElement": {
+                    "test_rooflight": {
+                        "type": "BuildingElementTransparent",
+                        "pitch": 0.0,
+                        "height": 2.0,
+                        "width": 1.0,
+                        "u_value": 1.5,
+                    }
                 }
-            },
-            "ThermalBridging": 1.0,
-            "area": 10.0,
-            "volume": 20.0
-        }})
+            }
+        });
+        let total_floor_area = 100.;
+
+        // When the max glazing area fraction is calculated
+        let max_glazing_area_fraction =
+            calc_max_glazing_area_fraction(&test_input, total_floor_area).unwrap();
+
+        // Then its value is based on test_rooflight u-value
+        assert_relative_eq!(max_glazing_area_fraction, 0.245);
+    }
+
+    #[rstest]
+    fn test_calc_max_glazing_area_fraction_when_thermal_resistance_is_specified(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a rooflight with a specified thermal_resistance_construction instead of a u_value
+        test_input.input["Zone"] = json!({
+            "test_zone": {
+                "BuildingElement": {
+                    "test_rooflight": {
+                        "type": "BuildingElementTransparent",
+                        "pitch": 0.0,
+                        "height": 2.0,
+                        "width": 1.0,
+                        "thermal_resistance_construction": 0.5,
+                    }
+                }
+            }
+        });
+        let total_floor_area = 100.;
+
+        // When the max glazing area fraction is calculated
+        let max_glazing_area_fraction =
+            calc_max_glazing_area_fraction(&test_input, total_floor_area).unwrap();
+
+        // Then its value is based on test_rooflight thermal_resistance_construction
+        assert_relative_eq!(max_glazing_area_fraction, 0.2439640980006486);
     }
 
     // this test does not exist in Python HEM
@@ -2258,7 +2721,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured
-        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false, None).unwrap();
 
         // Then a WWHRS is added and the showers are updated to use it
         let expected_wwhrs: WasteWaterHeatRecovery = serde_json::from_value(json!({
@@ -2305,7 +2768,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured
-        add_wwhrs(&mut test_input, cold_water_source_type, false).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, false, None).unwrap();
 
         // Then a WWHRS is not added and the showers are not updated to use it
         let showers = &test_input.input["HotWaterDemand"]["Shower"];
@@ -2336,7 +2799,7 @@ mod tests {
         let cold_water_source_type = "mains water";
 
         // When the notional building's WWHRS is configured with is_FEE True
-        add_wwhrs(&mut test_input, cold_water_source_type, true).unwrap();
+        add_wwhrs(&mut test_input, cold_water_source_type, true, None).unwrap();
 
         // Then a WWHRS is not added and the showers are not updated to use it
         let showers = &test_input.input["HotWaterDemand"]["Shower"];
@@ -2344,6 +2807,103 @@ mod tests {
         assert_eq!(showers["main"]["WWHRS_configuration"], "A");
         assert!(showers["ensuite"].get("WWHRS").is_none());
         assert!(showers["ensuite"].get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_does_not_add_wwhrs_config_when_heat_network_present(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a multi-storey dwelling on a sleeved DHN (notional uses HIU)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::SleevedDhn.into(),
+        )
+        .unwrap();
+
+        // Then no WWHRS is added because the notional building uses a HIU
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_none());
+        assert!(shower_main.get("WWHRS").is_none());
+        assert!(shower_main.get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_does_not_add_wwhrs_config_when_communal_heat_network_present(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a multi-storey dwelling on a communal heat network (notional uses HIU)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::Communal.into(),
+        )
+        .unwrap();
+
+        // Then no WWHRS is added because the notional building uses a HIU
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_none());
+        assert!(shower_main.get("WWHRS").is_none());
+        assert!(shower_main.get("WWHRS_configuration").is_none());
+    }
+
+    #[rstest]
+    fn test_add_wwhrs_adds_wwhrs_config_for_unsleeved_dhn(mut test_input: InputForProcessing) {
+        // Given a multi-storey dwelling on an unsleeved DHN (notional uses heat pump)
+        test_input.set_storeys_in_dwelling(2).unwrap();
+        test_input
+            .set_shower(json!({
+            "main": {
+                "type": "MixerShower",
+                "flowrate": 8.0,
+                "ColdWaterSource": "mains water",
+            }}))
+            .unwrap();
+        let cold_water_source_type = "mains water";
+
+        // When the notional building's WWHRS is configured
+        add_wwhrs(
+            &mut test_input,
+            cold_water_source_type,
+            false,
+            HeatNetworkType::UnsleevedDhn.into(),
+        )
+        .unwrap();
+
+        // Then WWHRS is added because the notional building uses a heat pump
+        let shower_main = &test_input.input["HotWaterDemand"]["Shower"]["main"];
+
+        assert!(test_input.wwhrs().unwrap().is_some());
+        assert_eq!(shower_main["WWHRS"], "Notional_Inst_WWHRS");
+        assert_eq!(shower_main["WWHRS_configuration"], "B");
     }
 
     #[rstest]
@@ -2402,6 +2962,27 @@ mod tests {
             test_input.hot_water_source().unwrap().clone(),
             expected_hotwater_source
         );
+    }
+
+    #[rstest]
+    fn test_edit_primary_pipework_multistorey_flat_uses_gfa(mut test_input: InputForProcessing) {
+        // A multi-storey flat: GroundFloorArea is 50 m², total floor area
+        // would be larger if summed across storeys. The notional primary
+        // pipework cap must follow ground-floor area only.
+        test_input.input["General"]["build_type"] = json!("flat");
+        test_input.input["General"]["storeys_in_dwelling"] = json!(2);
+        test_input.input["GroundFloorArea"] = json!(50);
+        test_input.input["HotWaterSource"]["hw cylinder"]
+            .as_object_mut()
+            .unwrap()
+            .remove("primary_pipework");
+
+        let primary_pipework = edit_primary_pipework(&test_input).unwrap();
+
+        // 5 % of GroundFloorArea = 0.05 * 50 = 2.5 m. Using TFA would have
+        // produced a larger length (the bug this test guards against).
+        assert_eq!(primary_pipework.len(), 1);
+        assert_eq!(primary_pipework[0].length, 2.5);
     }
 
     #[rstest]
@@ -2954,8 +3535,10 @@ mod tests {
                 "EnergySupply": "mains elec",
                 "orientation360": 180,
                 "peak_power": 1.8803418803418803,
-                "inverter_peak_power_ac": 3.68,
-                "inverter_peak_power_dc": 3.68,
+                // The dwelling's 9.0 kW of inverter, which is above the 3.68 kW minimum, divided
+                // by panel capacity: 5.5 of the 13.0 kW of panels sit behind this array
+                "inverter_peak_power_ac": 3.8076923076923075,
+                "inverter_peak_power_dc": 3.8076923076923075,
                 "inverter_type": "optimised_inverter",
                 "inverter_is_inside": false,
                 "pitch": 45,
@@ -2970,8 +3553,9 @@ mod tests {
                 "EnergySupply": "mains elec",
                 "orientation360": 180,
                 "peak_power": 2.5641025641025643,
-                "inverter_peak_power_ac": 5.5,
-                "inverter_peak_power_dc": 5.5,
+                // The other 7.5 kW of the dwelling's panels, so the other 5.19 kW of its inverter
+                "inverter_peak_power_ac": 5.192307692307692,
+                "inverter_peak_power_dc": 5.192307692307692,
                 "inverter_type": "optimised_inverter",
                 "inverter_is_inside": false,
                 "pitch": 45,
@@ -3039,38 +3623,259 @@ mod tests {
         );
     }
 
+    /// One PV array, as used by the inverter invariance test.
+    fn pv_array(peak_power: f64, inverter_peak_power: f64) -> Value {
+        json!({
+            "EnergySupply": "mains elec",
+            "orientation360": 180,
+            "peak_power": peak_power,
+            "inverter_peak_power_ac": inverter_peak_power,
+            "inverter_peak_power_dc": inverter_peak_power,
+            "inverter_type": "optimised_inverter",
+            "inverter_is_inside": false,
+            "pitch": 45,
+            "type": "PhotovoltaicSystem",
+            "ventilation_strategy": "moderately_ventilated",
+            "shading": [],
+            "base_height": 10,
+            "width": 1,
+            "height": 1,
+        })
+    }
+
+    /// Return the notional's total AC and DC inverter capacity for a given actual PV.
+    fn notional_inverter_capacity(
+        arrays: Value,
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) -> (f64, f64) {
+        test_input.input["OnSiteGeneration"] = arrays;
+
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+        let notional = &test_input.input["OnSiteGeneration"].as_object().unwrap();
+
+        let mut ac_sum = Sum2::zero();
+        let mut dc_sum = Sum2::zero();
+
+        for array in notional.values() {
+            let ac_val = array["inverter_peak_power_ac"].as_f64().unwrap();
+            let dc_val = array["inverter_peak_power_dc"].as_f64().unwrap();
+
+            ac_sum += ac_val;
+            dc_sum += dc_val;
+        }
+
+        (ac_sum.sum(), dc_sum.sum())
+    }
+
     #[rstest]
-    fn test_add_solar_pv_does_not_modify_flats_in_tall_buildings(
+    fn test_notional_inverter_capacity_does_not_depend_on_how_arrays_are_split(
+        test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given one dwelling's PV described two ways: as a single array, and split across two
+        // arrays that sum to the same peak power and the same total inverter capacity. The arrays
+        // are deliberately oversized on the DC side, at 8 kW of PV behind 6 kW of inverter, which
+        // is an ordinary ratio in practice and is the case where the floor bites.
+        let as_one_array = json!({"PV1": pv_array(8., 6.)});
+        let as_two_arrays = json!({"PV1": pv_array(4., 3.), "PV2": pv_array(4., 3.)});
+
+        // When the notional building's PV is determined for each
+        let (one_array_ac, one_array_dc) =
+            notional_inverter_capacity(as_one_array, test_input.clone(), is_fee, tfa);
+        let (two_array_ac, two_array_dc) =
+            notional_inverter_capacity(as_two_arrays, test_input, is_fee, tfa);
+
+        // Then the notional is the same target either way. It must be neither easier nor harder to
+        // comply because the actual dwelling used two inverters rather than one, so the notional's
+        // inverter capacity has to follow the notional's own PV and not the actual's array count.
+        assert_relative_eq!(two_array_ac, one_array_ac);
+        assert_relative_eq!(two_array_dc, one_array_dc);
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_is_divided_by_panel_capacity(
         mut test_input: InputForProcessing,
         is_fee: bool,
         tfa: f64,
     ) {
-        let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
-        test_input.input["General"] = json!({
-            "build_type": "flat",
-            "storey_of_dwelling": 3,
-            "storeys_in_building": 16,
-            "storeys_in_dwelling": 1,
-        });
+        // Given a dwelling whose two arrays fall short of the 3.68 kW minimum together, and whose
+        // panels are split one quarter to three quarters while its inverters are split evenly.
+        // The two splits differ deliberately: dividing the notional's capacity by the actual's
+        // inverter split would give both arrays 1.84 kW, leaving the 1 kW array heavily
+        // over-inverted and the 3 kW array under-inverted
+        let arrays = json!({"PV1": pv_array(1., 1.), "PV2": pv_array(3., 1.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
         add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
-        assert_eq!(
-            previous_on_site_generation,
-            json!(test_input.on_site_generation().unwrap().unwrap())
+
+        // Then the dwelling is brought up to the minimum once, and that total is divided by the
+        // panel capacity behind each array rather than by the actual dwelling's inverter split
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            notional
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap())
+                .sum_with_accumulator::<Sum2<_>>(),
+            3.68
         );
     }
 
     #[rstest]
-    fn test_add_solar_pv_does_modify_flats_in_short_buildings(
+    fn test_notional_puts_every_array_on_the_dwelling_ratio_of_panels_to_inverter(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling whose arrays differ widely in size
+        let arrays = json!({"PV1": pv_array(0.5, 2.), "PV2": pv_array(4.5, 2.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then every array carries the same panel capacity per kW of inverter, which is what makes
+        // the notional's generation independent of how the arrays were divided: the core takes an
+        // inverter's efficiency from its own load ratio, so equal ratios mean equal efficiencies,
+        // and they are the ratio one inverter carrying all the panels would run at.
+        // The ratio is of the notional's panels to the notional's inverter, so it takes the panel
+        // scaling into account: this 50 m2 dwelling is allowed 4.4444 kW of panels, so the 5.0 kW
+        // declared is scaled down to that, and 4.4444 over the dwelling's 4.0 kW of inverter is
+        // 1.1111. Uniform scaling cannot disturb the uniformity of the ratio, which is the point
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        for array in notional.as_object().unwrap().values() {
+            assert_relative_eq!(
+                array["peak_power"].as_f64().unwrap()
+                    / array["inverter_peak_power_ac"].as_f64().unwrap(),
+                1.1111111111111112
+            );
+            assert_relative_eq!(
+                array["peak_power"].as_f64().unwrap()
+                    / array["inverter_peak_power_dc"].as_f64().unwrap(),
+                1.1111111111111112
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_is_redivided_above_the_minimum(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling whose arrays are each already above the 3.68 kW minimum, 5.0 kW of
+        // inverter behind 4.0 kW of panels and 4.0 kW behind 6.0 kW, so the minimum binds neither
+        // array nor the dwelling and only the division decides the result
+        let arrays = json!({"PV1": pv_array(4., 5.), "PV2": pv_array(6., 4.)});
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then the dwelling keeps its 9.0 kW total and the division follows panel capacity, which
+        // is what holds every array at the dwelling's own panels-to-inverter ratio
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            3.6
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            5.4
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            3.6
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            5.4
+        );
+        assert_relative_eq!(
+            notional
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|v| v["inverter_peak_power_ac"].as_f64().unwrap())
+                .sum_with_accumulator::<Sum2<_>>(),
+            9.
+        );
+    }
+
+    #[rstest]
+    fn test_notional_inverter_capacity_treats_the_ac_and_dc_channels_separately(
+        mut test_input: InputForProcessing,
+        is_fee: bool,
+        tfa: f64,
+    ) {
+        // Given a dwelling below the minimum on its AC total, at 2.4 kW, and above it on its DC
+        // total, at 4.0 kW, so the two channels cannot come out the same
+        let mut arrays = json!({"PV1": pv_array(1., 1.2), "PV2": pv_array(3., 1.2)});
+        for array in arrays.as_object_mut().unwrap().values_mut() {
+            array["inverter_peak_power_dc"] = json!(2);
+        }
+        test_input.input["OnSiteGeneration"] = json!(arrays);
+
+        // When the notional building's PV is determined
+        add_solar_pv(&mut test_input, is_fee, tfa).unwrap();
+
+        // Then AC is brought up to the 3.68 kW minimum and divided by panel capacity, while DC
+        // keeps the dwelling's own 4.0 kW total and is divided the same way
+        let notional = &test_input.input["OnSiteGeneration"];
+
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            0.92
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_ac"].as_f64().unwrap(),
+            2.76
+        );
+        assert_relative_eq!(
+            notional["PV1"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            1.
+        );
+        assert_relative_eq!(
+            notional["PV2"]["inverter_peak_power_dc"].as_f64().unwrap(),
+            3.
+        );
+    }
+
+    #[rstest]
+    fn test_add_solar_pv_modifies_flats(
         mut test_input: InputForProcessing,
         is_fee: bool,
         tfa: f64,
     ) {
         let previous_on_site_generation = json!(test_input.on_site_generation().unwrap().unwrap());
 
-        // Given a building with 15 storeys
+        // Given a flat in a 15 storey building
         test_input.input["General"] = json!({
             "build_type": "flat",
-            "storey_of_dwelling": 3,
             "storeys_in_building": 15,
             "storeys_in_dwelling": 1,
         });
@@ -3102,7 +3907,7 @@ mod tests {
     }
 
     #[fixture]
-    fn cold_water_source(test_input: InputForProcessing) -> std::string::String {
+    fn cold_water_source(test_input: InputForProcessing) -> String {
         test_input.input["ColdWaterSource"]
             .as_object()
             .unwrap()
@@ -3112,13 +3917,21 @@ mod tests {
             .to_string()
     }
 
+    #[fixture]
+    fn canned_calc_design_capacity() -> Option<(IndexMap<ArcStr, f64>, f64)> {
+        Some((
+            serde_json::from_value(json!({"whole dwelling": 1})).unwrap(),
+            1.,
+        ))
+    }
+
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_non_sleeved_district_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
         // Given an unsleeved DHN network
         // When the notional heating system is created
@@ -3129,6 +3942,7 @@ mod tests {
             HeatNetworkType::UnsleevedDhn.into(),
             &mut Default::default(),
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
 
@@ -3256,40 +4070,37 @@ mod tests {
             serde_json::from_value(test_input.input["HeatSourceWet"].clone()).unwrap();
         assert_eq!(actual_heat_source_wet, expected_heat_source_wet);
 
-        let expected_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
-            serde_json::from_value(json!({
-                "hw cylinder": {
-                    "ColdWaterSource": &cold_water_source,
-                    "HeatSource": {
-                        "notional_HP": {
-                            "heater_position": 0.1,
-                            "name": "notional_HP",
-                            "temp_flow_limit_upper": 60,
-                            "thermostat_position": 0.1,
-                            "type": "HeatSourceWet",
-                        }
-                    },
-                    "daily_losses": 0.46660029577109363,
-                    "type": "StorageTank",
-                    "volume": 80.0,
-                    "primary_pipework": [
-                        {
-                            "external_diameter_mm": 28,
-                            "insulation_thermal_conductivity": 0.035,
-                            "insulation_thickness_mm": 35,
-                            "internal_diameter_mm": 26,
-                            "length": 2.5,
-                            "location": "internal",
-                            "pipe_contents": "water",
-                            "surface_reflectivity": false,
-                        }
-                    ],
-                }
-            }))
-            .unwrap();
-        let actual_hot_water_source: IndexMap<String, HotWaterSourceDetails> =
-            serde_json::from_value(test_input.input["HotWaterSource"].clone()).unwrap();
-        assert_eq!(actual_hot_water_source, expected_hot_water_source);
+        let expected_hot_water_source = json!({
+            "hw cylinder": {
+                "ColdWaterSource": &cold_water_source,
+                "HeatSource": {
+                    "notional_HP": {
+                        "heater_position": 0.1,
+                        "name": "notional_HP",
+                        "temp_flow_limit_upper": 60,
+                        "thermostat_position": 0.1,
+                        "type": "HeatSourceWet",
+                    }
+                },
+                "daily_losses": 0.46660029577109363,
+                "type": "StorageTank",
+                "volume": 80.0,
+                "primary_pipework": [
+                    {
+                        "external_diameter_mm": 28.,
+                        "insulation_thermal_conductivity": 0.035,
+                        "insulation_thickness_mm": 35.,
+                        "internal_diameter_mm": 26.,
+                        "length": 2.5,
+                        "location": "internal",
+                        "pipe_contents": "water",
+                        "surface_reflectivity": false,
+                    }
+                ],
+            }
+        });
+        let actual_hot_water_source = &test_input.input["HotWaterSource"];
+        assert_eq!(actual_hot_water_source, &expected_hot_water_source);
 
         // And the SpaceHeatSystem is replaced with a notional one
         assert_eq!(
@@ -3314,7 +4125,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 5,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notional_HP", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notional_HP", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {
                         "ecodesign_control_class": 2,
                         "max_outdoor_temp": 20,
@@ -3335,14 +4146,59 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
+    fn test_heat_network_rebuild_keeps_the_electricity_supply_export_limit(
+        mut test_input: InputForProcessing,
+        cold_water_source: String,
+    ) {
+        // Given an actual dwelling on a heat network whose electricity supply carries a
+        // DNO export limit
+        test_input.input["EnergySupply"]["mains elec"]["is_export_capable"] = json!(true);
+        test_input.input["EnergySupply"]["mains elec"]["power_limit_export"] = json!(3);
+        test_input.input["EnergySupply"]["custom_1"] =
+            json!({"fuel": "custom", "is_export_capable": false});
+
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }
+            }))
+            .unwrap();
+
+        // When the notional heat network supply replaces the actual custom supplies
+        edit_add_heatnetwork_heating(
+            &mut test_input,
+            &cold_water_source,
+            &mut custom_energy_factors,
+            false,
+        )
+        .unwrap();
+
+        // Then the electricity supply keeps its export limit through the rebuild
+        assert_relative_eq!(
+            test_input.input["EnergySupply"]["mains elec"]["power_limit_export"]
+                .as_f64()
+                .unwrap(),
+            3.
+        );
+        // And the notional heat network supply gains none, since it cannot export
+        assert_eq!(
+            test_input.input["EnergySupply"]["_notional_heat_network"],
+            json!({"fuel": "custom", "is_export_capable": false})
+        );
+    }
+
+    #[rstest]
     fn test_sleeved_dhn_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -3365,6 +4221,7 @@ mod tests {
             HeatNetworkType::SleevedDhn.into(),
             &mut custom_energy_factors,
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
         // Then the heating system created is a heat network with an HIU
@@ -3376,7 +4233,7 @@ mod tests {
                     "EnergySupply": "_notional_heat_network",
                     "power_max": 45,
                     "HIU_daily_loss": 0.8,
-                    "building_level_distribution_losses": 62,
+                    "building_level_distribution_losses": 0,
                 }
             }))
             .unwrap();
@@ -3419,7 +4276,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 20,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {"ecodesign_control_class": 1},
                     "Control": "HeatingPattern_Null",
                     "design_flow_temp": 55,
@@ -3435,7 +4292,7 @@ mod tests {
 
         // And the custom energy factors have the notional heat network has
         // the mean factors of the actual custom supplies
-        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let expected_custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "_notional_heat_network": {
                     "Emissions Factor kgCO2e/kWh": 0.75,
@@ -3460,14 +4317,14 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore = "This currently fails because test data does not adhere correctly to the FHS schema."]
     fn test_communal_heat_network(
         mut test_input: InputForProcessing,
-        cold_water_source: std::string::String,
+        cold_water_source: String,
         is_fee: bool,
         tfa: f64,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
     ) {
-        let mut custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "custom_1": {
                     "Emissions Factor kgCO2e/kWh": 1,
@@ -3500,6 +4357,7 @@ mod tests {
             serde_json::from_value(heat_network_type).unwrap(),
             &mut custom_energy_factors,
             is_fee,
+            canned_calc_design_capacity,
         )
         .unwrap();
 
@@ -3512,7 +4370,7 @@ mod tests {
                     "EnergySupply": "_notional_heat_network",
                     "power_max": 45,
                     "HIU_daily_loss": 0.8,
-                    "building_level_distribution_losses": 62,
+                    "building_level_distribution_losses": 0,
                 }
             }))
             .unwrap();
@@ -3555,7 +4413,7 @@ mod tests {
                     ],
                     "temp_diff_emit_dsgn": 20,
                     "variable_flow": false,
-                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 65.0},
+                    "HeatSource": {"name": "notionalHIU", "temp_flow_limit_upper": 55.0},
                     "ecodesign_controller": {"ecodesign_control_class": 1},
                     "Control": "HeatingPattern_Null",
                     "design_flow_temp": 55,
@@ -3570,7 +4428,7 @@ mod tests {
         assert_eq!(actual_space_heat_system, expected_space_heat_system);
 
         // And the custom energy factors have the standardised factors of a communal system
-        let expected_custom_energy_factors: IndexMap<Arc<str>, CustomEnergySourceFactor> =
+        let expected_custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
             serde_json::from_value(json!({
                 "_notional_heat_network": {
                     "Emissions Factor kgCO2e/kWh": 0.033,
@@ -3595,9 +4453,51 @@ mod tests {
     }
 
     #[rstest]
+    fn test_flat_uses_notional_building_level_losses(
+        mut test_input: InputForProcessing,
+        cold_water_source: String,
+        tfa: f64,
+        is_fee: bool,
+        canned_calc_design_capacity: Option<(IndexMap<ArcStr, f64>, f64)>,
+    ) {
+        // Given a flat (building-level distribution losses apply to flats only)
+        test_input.input["General"]["build_type"] = json!("flat");
+        let mut custom_energy_factors: IndexMap<ArcStr, CustomEnergySourceFactor> =
+            serde_json::from_value(json!({
+                "custom_1": {
+                    "Emissions Factor kgCO2e/kWh": 1,
+                    "Emissions Factor kgCO2e/kWh including out-of-scope emissions": 1,
+                    "Primary Energy Factor kWh/kWh delivered": 1,
+                }
+            }))
+            .unwrap();
+
+        // When the notional heating system is created
+        edit_space_heating_system(
+            &mut test_input,
+            &cold_water_source,
+            tfa,
+            HeatNetworkType::SleevedDhn.into(),
+            &mut custom_energy_factors,
+            is_fee,
+            canned_calc_design_capacity,
+        )
+        .unwrap();
+
+        // Then the notional HIU uses the flat building-level loss value of 62
+        assert_eq!(
+            test_input.input["HeatSourceWet"]["notionalHIU"]["building_level_distribution_losses"]
+                .as_f64()
+                .unwrap(),
+            62.
+        );
+    }
+
+    #[rstest]
     fn test_actual_with_centralised_mechanical_ventilation_system(
         mut test_input: InputForProcessing,
     ) {
+        // Given a dwelling with two wet rooms and a Centralised continuous MEV
         test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
             "mechvent1": {
                 "vent_type": "Centralised continuous MEV",
@@ -3650,6 +4550,66 @@ mod tests {
         });
         let actual_mech_vent =
             test_input.input["InfiltrationVentilation"]["MechanicalVentilation"].clone();
+        assert_eq!(actual_mech_vent, expected_mech_vent);
+    }
+
+    #[rstest]
+    fn test_actual_with_decentralised_mechanical_ventilation_system(
+        mut test_input: InputForProcessing,
+    ) {
+        // Given a dwelling with two wet rooms and a Decentralised continuous MEV
+        test_input.input["InfiltrationVentilation"]["MechanicalVentilation"] = json!({
+            "mechvent1": {
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0,
+                "pitch": 90,
+            }
+        });
+        let minimum_air_flow_rate = 100.;
+        let minimum_vent_area = 200.;
+        let minimum_vent_count = 4;
+
+        // When the notional infiltration ventilation preprocessing is applied
+        edit_infiltration_ventilation(
+            &mut test_input,
+            minimum_air_flow_rate,
+            minimum_vent_area,
+            minimum_vent_count,
+        )
+        .unwrap();
+
+        // Then two dMEVs are created in the notional with numbered vent names
+        let expected_mech_vent = json!({
+            "Decentralised_Continuous_MEV_0": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 2.25,
+                "orientation360": 90.,
+                "pitch": 90.,
+            },
+            "Decentralised_Continuous_MEV_1": {
+                "sup_air_flw_ctrl": "ODA",
+                "sup_air_temp_ctrl": "NO_CTRL",
+                "vent_type": "Decentralised continuous MEV",
+                "SFP": 0.15,
+                "EnergySupply": "mains elec",
+                "design_outdoor_air_flow_rate": 50.0,
+                "mid_height_air_flow_path": 1.25,
+                "orientation360": 0.,
+                "pitch": 90.,
+            },
+        });
+        let actual_mech_vent =
+            test_input.input["InfiltrationVentilation"]["MechanicalVentilation"].clone();
+
         assert_eq!(actual_mech_vent, expected_mech_vent);
     }
 }

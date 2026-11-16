@@ -1,7 +1,7 @@
 use crate::future_homes_standard::fhs_schema_validation::apply_schema_validation;
+use accurate::{sum::Sum2, traits::*};
 use anyhow::anyhow;
-use arcstr::ArcStr;
-use home_energy_model::hem_core::simulation_time::SimulationTime;
+use home_energy_model::core::simulation_time::SimulationTime;
 use home_energy_model::input::{
     ColdWaterSourceInput, ExternalConditionsInput, Input, WasteWaterHeatRecovery,
     WaterDistribution, WaterHeatingEvent, WaterPipework,
@@ -9,6 +9,7 @@ use home_energy_model::input::{
 use home_energy_model::input::{
     Control, EnergySupplyInput, InfiltrationVentilation, InputForCalcHtcHlp, ZoneDictionary,
 };
+use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,8 @@ pub(crate) fn ingest_for_processing(json: impl Read) -> Result<InputForProcessin
 pub(crate) struct InputForProcessing {
     pub(crate) input: JsonValue,
 }
+
+pub(crate) const SMART_AIR_BRICK_CONTROL_NAME: &str = "SmartAirBrick_Control";
 
 impl InputForProcessing {
     pub fn init_with_json(json: impl Read) -> Result<Self, anyhow::Error> {
@@ -69,13 +72,13 @@ impl InputForProcessing {
         serde_json::from_value(self.input).map_err(|err| anyhow!(err))
     }
 
-    pub fn root(&self) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
+    pub fn root(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.input
             .as_object()
             .ok_or(json_error("Root document is not an object"))
     }
 
-    fn root_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    fn root_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.input
             .as_object_mut()
             .ok_or(json_error("Root document is not an object"))
@@ -93,10 +96,7 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    fn root_object(
-        &self,
-        root_key: &str,
-    ) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
+    fn root_object(&self, root_key: &str) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root()?
             .get(root_key)
             .ok_or(json_error(format!("No {root_key} node found")))?
@@ -104,10 +104,7 @@ impl InputForProcessing {
             .ok_or(json_error(format!("{root_key} node was not an object")))
     }
 
-    fn root_object_mut(
-        &mut self,
-        root_key: &str,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    fn root_object_mut(&mut self, root_key: &str) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_mut()?
             .get_mut(root_key)
             .ok_or(json_error(format!("No {root_key} node found")))?
@@ -119,7 +116,7 @@ impl InputForProcessing {
     pub(crate) fn root_object_entry_mut(
         &mut self,
         root_key: &str,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    ) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_mut()?
             .entry(root_key)
             .or_insert(json!({}))
@@ -130,14 +127,14 @@ impl InputForProcessing {
     fn optional_root_object(
         &self,
         root_key: &str,
-    ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         Ok(self.root()?.get(root_key).and_then(|v| v.as_object()))
     }
 
     pub fn optional_root_object_mut(
         &mut self,
         root_key: &str,
-    ) -> JsonAccessResult<Option<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
         Ok(self
             .root_mut()?
             .get_mut(root_key)
@@ -198,16 +195,11 @@ impl InputForProcessing {
         self.root_object("Zone")
     }
 
-    pub fn zone_node_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut serde_json::Map<std::string::String, JsonValue>> {
+    pub fn zone_node_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("Zone")
     }
 
-    pub fn specific_zone(
-        &self,
-        zone_key: &str,
-    ) -> JsonAccessResult<&serde_json::Map<std::string::String, JsonValue>> {
+    pub fn specific_zone(&self, zone_key: &str) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.zone_node()?
             .get(zone_key)
             .ok_or(json_error(format!("Zone key {zone_key} did not exist")))?
@@ -218,7 +210,7 @@ impl InputForProcessing {
     fn specific_zone_mut(
         &mut self,
         zone_key: &str,
-    ) -> JsonAccessResult<&mut serde_json::Map<std::string::String, JsonValue>> {
+    ) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.zone_node_mut()?
             .get_mut(zone_key)
             .ok_or(json_error(format!("Zone key {zone_key} did not exist")))?
@@ -227,7 +219,8 @@ impl InputForProcessing {
     }
 
     pub fn total_zone_area(&self) -> JsonAccessResult<f64> {
-        self.zone_node()?
+        let areas = self
+            .zone_node()?
             .values()
             .map(|z| {
                 z.get("area")
@@ -235,7 +228,9 @@ impl InputForProcessing {
                     .as_f64()
                     .ok_or(json_error("Area field not a number"))
             })
-            .sum::<JsonAccessResult<f64>>()
+            .collect::<JsonAccessResult<Vec<_>>>()?;
+
+        Ok(Sum2::zero().absorb(areas).sum())
     }
 
     pub fn area_for_zone(&self, zone: &str) -> anyhow::Result<f64> {
@@ -288,7 +283,7 @@ impl InputForProcessing {
 
     pub(crate) fn all_thermal_bridging_elements(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         let zones = self.zone_node_mut()?;
         let mut result = Vec::new();
         for zone in zones.values_mut() {
@@ -350,16 +345,6 @@ impl InputForProcessing {
             as usize)
     }
 
-    pub(crate) fn number_of_sanitary_accommodations(&self) -> JsonAccessResult<usize> {
-        Ok(self
-            .input
-            .get("NumberOfSanitaryAccommodations")
-            .and_then(|n| n.as_u64())
-            .ok_or_else(|| {
-                json_error("NumberOfSanitaryAccommodations not available as positive integer")
-            })? as usize)
-    }
-
     pub(super) fn number_of_hot_tapped_rooms(&self) -> JsonAccessResult<usize> {
         match self.input.get("NumberOfHotTappedRooms") {
             Some(JsonValue::Number(n)) => Ok(n
@@ -379,7 +364,7 @@ impl InputForProcessing {
             .ok_or_else(|| json_error("Extractor hood external not found or not a boolean"))
     }
 
-    fn internal_gains_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    fn internal_gains_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_entry_mut("InternalGains")
     }
 
@@ -456,6 +441,21 @@ impl InputForProcessing {
         Ok(self)
     }
 
+    pub(crate) fn add_control_smart_air_brick(
+        &mut self,
+        schedule: Vec<f64>,
+    ) -> JsonAccessResult<&Self> {
+        self.add_control(
+            SMART_AIR_BRICK_CONTROL_NAME,
+            json!({
+                "type": "SetpointTimeControl",
+                "start_day": 0,
+                "time_series_step": 0.5,
+                "schedule": {"main": schedule},
+            }),
+        )
+    }
+
     pub(crate) fn remove_preheated_water_sources(&mut self) -> JsonAccessResult<&mut Self> {
         self.remove_root_key("PreHeatedWaterSource")
     }
@@ -464,7 +464,7 @@ impl InputForProcessing {
         Ok(self.root()?.contains_key("PreHeatedWaterSource"))
     }
 
-    pub(crate) fn all_preheated_tank_heat_source_values_mut(
+    pub(crate) fn _all_preheated_tank_heat_source_values_mut(
         &mut self,
     ) -> JsonAccessResult<Vec<&mut JsonValue>> {
         Ok(self
@@ -477,6 +477,12 @@ impl InputForProcessing {
             .ok_or_else(|| json_error("HeatSource not an object"))?
             .values_mut()
             .collect())
+    }
+
+    pub(crate) fn preheated_tank_mut(&mut self) -> JsonAccessResult<&mut JsonValue> {
+        self.root_object_mut("PreHeatedWaterSource")?
+            .get_mut("preheated tank")
+            .ok_or_else(|| json_error("preheated tank not found"))
     }
 
     pub fn zone_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
@@ -730,9 +736,7 @@ impl InputForProcessing {
     }
 
     #[cfg(test)]
-    pub(crate) fn space_cool_system(
-        &self,
-    ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    pub(crate) fn space_cool_system(&self) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         self.optional_root_object("SpaceCoolSystem")
     }
 
@@ -812,13 +816,11 @@ impl InputForProcessing {
         self.set_on_root_key("HotWaterSource", hot_water_source)
     }
 
-    pub fn hot_water_source(&self) -> JsonAccessResult<&Map<std::string::String, JsonValue>> {
+    pub fn hot_water_source(&self) -> JsonAccessResult<&Map<String, JsonValue>> {
         self.root_object("HotWaterSource")
     }
 
-    pub fn hot_water_source_mut(
-        &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    pub fn hot_water_source_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("HotWaterSource")
     }
 
@@ -869,7 +871,7 @@ impl InputForProcessing {
 
     pub fn set_gains_for_field(
         &mut self,
-        field: impl Into<std::string::String>,
+        field: impl Into<String>,
         gains_details: JsonValue,
     ) -> JsonAccessResult<&Self> {
         self.root_object_entry_mut("ApplianceGains")?
@@ -939,7 +941,7 @@ impl InputForProcessing {
         self.set_on_root_key("Events", json!({"Bath": {}, "Shower": {}, "Other": {}}))
     }
 
-    pub(crate) fn showers(&self) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    pub(crate) fn showers(&self) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         self.hot_water_demand()?
             .get("Shower")
             .map(|showers| {
@@ -999,7 +1001,7 @@ impl InputForProcessing {
         Ok(())
     }
 
-    pub(crate) fn baths(&self) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    pub(crate) fn baths(&self) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         Ok(self
             .hot_water_demand()?
             .get("Bath")
@@ -1058,9 +1060,7 @@ impl InputForProcessing {
         Ok(flowrate)
     }
 
-    pub(crate) fn other_water_uses(
-        &self,
-    ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    pub(crate) fn other_water_uses(&self) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         Ok(self
             .hot_water_demand()?
             .get("Other")
@@ -1325,9 +1325,7 @@ impl InputForProcessing {
         self.remove_root_key("OnSiteGeneration")
     }
 
-    pub(crate) fn on_site_generation(
-        &self,
-    ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    pub(crate) fn on_site_generation(&self) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         self.optional_root_object("OnSiteGeneration")
     }
 
@@ -1355,16 +1353,14 @@ impl InputForProcessing {
     pub(crate) fn energy_supply_by_key(
         &self,
         energy_supply_key: &str,
-    ) -> JsonAccessResult<Option<&Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Option<&Map<String, JsonValue>>> {
         Ok(self
             .root_object("EnergySupply")?
             .get(energy_supply_key)
             .and_then(|energy_supply| energy_supply.as_object()))
     }
 
-    pub fn energy_supplies_mut(
-        &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    pub fn energy_supplies_mut(&mut self) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         Ok(self
             .root_object_mut("EnergySupply")?
             .values_mut()
@@ -1438,7 +1434,7 @@ impl InputForProcessing {
     fn all_building_elements_of_types(
         &self,
         types: &[&str],
-    ) -> JsonAccessResult<Vec<&Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&Map<String, JsonValue>>> {
         let building_elements = self
             .zone_node()?
             .values()
@@ -1458,7 +1454,7 @@ impl InputForProcessing {
     fn all_building_elements_mut_of_types(
         &mut self,
         types: &[&str],
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         Ok(self
             .zone_node_mut()?
             .values_mut()
@@ -1479,7 +1475,7 @@ impl InputForProcessing {
 
     pub(crate) fn all_building_elements_mut(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         Ok(self
             .zone_node_mut()?
             .values_mut()
@@ -1494,13 +1490,19 @@ impl InputForProcessing {
 
     pub fn all_transparent_building_elements_mut(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         self.all_building_elements_mut_of_types(&["BuildingElementTransparent"])
+    }
+
+    pub fn all_transparent_building_elements(
+        &mut self,
+    ) -> JsonAccessResult<Vec<&Map<String, JsonValue>>> {
+        self.all_building_elements_of_types(&["BuildingElementTransparent"])
     }
 
     pub(crate) fn all_ground_building_elements_mut(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         self.all_building_elements_mut_of_types(&["BuildingElementGround"])
     }
 
@@ -1512,7 +1514,7 @@ impl InputForProcessing {
 
     pub(crate) fn all_opaque_and_adjztu_building_elements_mut_u_values(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         self.all_building_elements_mut_of_types(&[
             "BuildingElementOpaque",
             "BuildingElementAdjacentUnconditionedSpace_Simple",
@@ -1521,7 +1523,7 @@ impl InputForProcessing {
 
     pub(super) fn all_opaque_building_elements_except_unheated_pitched_roofs(
         &self,
-    ) -> JsonAccessResult<Vec<&Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&Map<String, JsonValue>>> {
         let opaque_building_elements =
             self.all_building_elements_of_types(&["BuildingElementOpaque"])?;
 
@@ -1597,6 +1599,29 @@ impl InputForProcessing {
         Ok(())
     }
 
+    pub(crate) fn window_part_list_for_building_element_mut(
+        &mut self,
+        building_element_reference: &str,
+    ) -> JsonAccessResult<&mut Vec<JsonValue>> {
+        self.zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|el| el.as_object_mut())
+            })
+            .flatten()
+            .find(|(name, _value)| *name == building_element_reference)
+            .ok_or_else(|| {
+                json_error(format!(
+                    "Could not find building element with reference '{building_element_reference}'",
+                ))
+            })?
+            .1
+            .get_mut("window_part_list")
+            .and_then(|list| list.as_array_mut())
+            .ok_or_else(|| json_error("Could not find window_part_list"))
+    }
+
     pub fn all_building_elements(&self) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>> {
         self.zone_node()?
             .values()
@@ -1614,6 +1639,41 @@ impl InputForProcessing {
             .flatten()
             .map(|(_, el)| el)
             .collect())
+    }
+
+    pub(crate) fn all_smart_air_brick_building_elements(
+        &self,
+    ) -> JsonAccessResult<IndexMap<ArcStr, &JsonValue>> {
+        self.zone_node()?
+            .values()
+            .filter_map(|zone| zone.get("BuildingElement").and_then(|el| el.as_object()))
+            .flatten()
+            .filter(|(_key, el)| {
+                el.get("smart_air_bricks")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|(key, el)| Ok((ArcStr::from(key), el)))
+            .collect()
+    }
+
+    pub(crate) fn all_smart_air_brick_building_elements_mut(
+        &mut self,
+    ) -> JsonAccessResult<IndexMap<ArcStr, &mut JsonValue>> {
+        self.zone_node_mut()?
+            .values_mut()
+            .filter_map(|zone| {
+                zone.get_mut("BuildingElement")
+                    .and_then(|el| el.as_object_mut())
+            })
+            .flatten()
+            .filter(|(_key, el)| {
+                el.get("smart_air_bricks")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|(key, el)| Ok((ArcStr::from(key), el)))
+            .collect()
     }
 
     pub(crate) fn all_building_element_values_mut(
@@ -1706,7 +1766,7 @@ impl InputForProcessing {
         Ok(self.root_object_entry_mut("Appliances")?.get_mut(key))
     }
 
-    pub fn clone_appliances(&self) -> Map<std::string::String, JsonValue> {
+    pub fn clone_appliances(&self) -> Map<String, JsonValue> {
         self.root_object("Appliances")
             .cloned()
             .unwrap_or(Map::new())
@@ -1727,7 +1787,7 @@ impl InputForProcessing {
     pub fn loadshifting_for_appliance(
         &self,
         appliance_key: &str,
-    ) -> JsonAccessResult<Option<Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Option<Map<String, JsonValue>>> {
         let appliance = self.appliance_with_key(appliance_key)?;
 
         Ok(appliance
@@ -1760,7 +1820,7 @@ impl InputForProcessing {
 
     pub fn infiltration_ventilation_node_mut(
         &mut self,
-    ) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    ) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("InfiltrationVentilation")
     }
 
@@ -1775,7 +1835,7 @@ impl InputForProcessing {
 
     pub fn mechanical_ventilations_for_processing(
         &mut self,
-    ) -> JsonAccessResult<Vec<&mut Map<std::string::String, JsonValue>>> {
+    ) -> JsonAccessResult<Vec<&mut Map<String, JsonValue>>> {
         let mech_vents = match self
             .infiltration_ventilation_node_mut()?
             .get_mut("MechanicalVentilation")
@@ -1817,7 +1877,7 @@ impl InputForProcessing {
         Ok(self)
     }
 
-    pub fn vents_mut(&mut self) -> JsonAccessResult<&mut Map<std::string::String, JsonValue>> {
+    pub fn vents_mut(&mut self) -> JsonAccessResult<&mut Map<String, JsonValue>> {
         self.root_object_mut("InfiltrationVentilation")?
             .get_mut("Vents")
             .and_then(|v| v.as_object_mut())
@@ -1954,6 +2014,13 @@ impl InputForProcessing {
             .collect::<anyhow::Result<_, _>>()
     }
 
+    pub(crate) fn heat_source_wet_keys(&self) -> JsonAccessResult<Vec<ArcStr>> {
+        Ok(self
+            .optional_root_object("HeatSourceWet")?
+            .map(|heat_sources| heat_sources.keys().map(Into::into).collect())
+            .unwrap_or_default())
+    }
+
     pub fn heat_source_wet_mut(&mut self) -> JsonAccessResult<Option<&mut Map<String, JsonValue>>> {
         self.optional_root_object_mut("HeatSourceWet")
     }
@@ -1978,6 +2045,48 @@ impl InputForProcessing {
             .and_then(|value| value.get_mut(key))
             .and_then(|value| value.as_object_mut())
             .ok_or_else(|| anyhow!("No HeatSourceWet object with key {key}"))
+    }
+
+    pub(crate) fn heat_batteries_with_charging_sources(
+        &self,
+    ) -> anyhow::Result<IndexMap<ArcStr, JsonValue>> {
+        Ok(self
+            .heat_source_wet()?
+            .into_iter()
+            .filter(|(_, hsw)| hsw.get("type").and_then(JsonValue::as_str) == Some("HeatBattery"))
+            .filter(|(_, hsw)| hsw.get("HeatSource").is_some())
+            .collect())
+    }
+
+    pub(crate) fn heat_battery_charging_sources(
+        &self,
+        battery_name: ArcStr,
+    ) -> anyhow::Result<IndexMap<ArcStr, JsonValue>> {
+        let batteries = self.heat_batteries_with_charging_sources()?;
+        let battery = batteries.get(&battery_name).ok_or_else(|| {
+            anyhow!("Heat battery '{battery_name}' was not found or has no charging sources")
+        })?;
+        let charging_sources = battery
+            .get("HeatSource")
+            .and_then(JsonValue::as_object)
+            .ok_or_else(|| {
+                anyhow!("Heat battery '{battery_name}' has a HeatSource that is not an object")
+            })?;
+
+        Ok(charging_sources
+            .iter()
+            .map(|(name, source)| (ArcStr::from(name.as_str()), source.clone()))
+            .collect())
+    }
+
+    /// Return a PCM heat battery's upper phase transition temperature, or None if it has none.
+    pub(crate) fn heat_battery_phase_transition_temperature_upper(
+        &self,
+        battery: &JsonValue,
+    ) -> anyhow::Result<Option<f64>> {
+        Ok(battery
+            .get("phase_transition_temperature_upper")
+            .and_then(JsonValue::as_f64))
     }
 
     pub fn remove_heat_source_wet(&mut self) -> JsonAccessResult<&mut Self> {
@@ -2154,7 +2263,6 @@ impl InputForProcessing {
             "NumberOfWetRooms",
             "NumberOfUtilityRooms",
             "NumberOfBathrooms",
-            "NumberOfSanitaryAccommodations",
             "PartGcompliance",
             "PartO_active_cooling_required",
             "BuildingLength",
@@ -2225,8 +2333,17 @@ impl InputForProcessing {
                     {
                         building_element.remove("security_risk");
                         building_element.remove("is_external_door");
+                        // Whole-wall party-wall U-value is carried for the compliance report only;
+                        // hem-core forbids it on party walls, so strip it before the core run.
+                        building_element.remove("u_value_whole_wall");
+                        // Smart air bricks are stated as a flag, which the wrapper turns into the
+                        // Control_smart_air_brick reference the core reads. The flag itself is not a
+                        // core input.
+                        building_element.remove("smart_air_bricks");
                     }
                 }
+                /*
+                +            */
                 if let Some(building_elements) = zone
                     .get_mut("ThermalBridging")
                     .and_then(|be| be.as_object_mut())
@@ -2253,9 +2370,7 @@ pub trait UValueEditableBuildingElement {
     fn remove_thermal_resistance_construction(&mut self);
 }
 
-pub struct UValueEditableBuildingElementJsonValue<'a>(
-    pub &'a mut Map<std::string::String, JsonValue>,
-);
+pub struct UValueEditableBuildingElementJsonValue<'a>(pub &'a mut Map<String, JsonValue>);
 
 impl UValueEditableBuildingElement for UValueEditableBuildingElementJsonValue<'_> {
     fn set_u_value(&mut self, new_u_value: f64) {
@@ -2308,6 +2423,28 @@ pub(super) fn set_control_max_name_for_heat_source(
     Ok(())
 }
 
+pub(crate) fn window_part_field(
+    window_part: &Map<String, JsonValue>,
+    field: &str,
+) -> JsonAccessResult<f64> {
+    window_part
+        .get(field)
+        .and_then(JsonValue::as_f64)
+        .ok_or_else(|| json_error(format!("{field} field not found or not a float")))
+}
+
+pub(crate) fn set_window_part_field(
+    window_part: &mut Map<String, JsonValue>,
+    field: &str,
+    new_value: f64,
+) -> JsonAccessResult<()> {
+    *window_part
+        .get_mut(field)
+        .ok_or_else(|| json_error(format!("{field} field not found")))? = json!(new_value);
+
+    Ok(())
+}
+
 pub(crate) type MaybeShowerFlowRateFields = (Option<f64>, Option<bool>);
 
 pub trait HotWaterSourceDetailsForProcessing {
@@ -2321,7 +2458,7 @@ pub trait HotWaterSourceDetailsForProcessing {
     fn set_temp_setpnt_max(&mut self, temp_setpoint_max_name: &str);
 }
 
-pub struct HotWaterSourceDetailsJsonMap<'a>(pub &'a mut Map<std::string::String, JsonValue>);
+pub struct HotWaterSourceDetailsJsonMap<'a>(pub &'a mut Map<String, JsonValue>);
 
 impl HotWaterSourceDetailsForProcessing for HotWaterSourceDetailsJsonMap<'_> {
     fn all_heat_sources_mut(&mut self) -> JsonAccessResult<Vec<&mut JsonValue>> {

@@ -19,7 +19,8 @@ the wrapper written in Python commissioned by DESNZ.
 Requires the `rustup` toolchain to use. ([Instructions](https://rustup.rs) for installation. For macOS, don't use
 Homebrew to install Rust.)
 
-Running the engine requires an input JSON file that conforms to the [FHS input schema](schema/input_fhs.schema.json).
+Running the engine requires an input JSON file that conforms to
+the [FHS input schema](src/future_homes_standard/schema.json).
 
 Example input files for demonstration purposes can be found at
 [examples/input/future_homes_standard](examples/input/future_homes_standard).

@@ -35,10 +35,13 @@ static MODE_OUTPUTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::n
 #[test]
 fn test_fhs_preprocessing_output_against_provided_results() {
     let demo_file_names = [
+        "demo_FHS",
         "DESN-H-End-02-ESH-cMEV",
+        "DESN-F-MS-02-ESH-cMEV",
         "DESN-H-End-02-HP-iMEV-pre-heat",
         "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
-        "demo_FHS",
+        "DESN-H-End-02-HP-MVHR-basement",
+        "DESN-H-End-02-HN-cMEV",
     ];
 
     let mut total_difference_count = 0;
@@ -156,7 +159,10 @@ fn run_fhs_preprocessing(
 ) {
     let input_file_path = &format!("{DEMO_FILES_DIR}{input_file_name}.json");
     let input_file_path = Path::new(input_file_path);
-    let input = BufReader::new(File::open(input_file_path).unwrap());
+    let input = BufReader::new(
+        File::open(input_file_path)
+            .unwrap_or_else(|_| panic!("Failed to open file: {:?}", input_file_path)),
+    );
 
     println!("\nStarting to run Rust FHS preprocessing for: {input_file_name}.json");
     let result = run_wrappers(
@@ -170,10 +176,12 @@ fn run_fhs_preprocessing(
         false,
         &[OutputFormat::Json],
     );
+
     assert!(
         result.is_ok(),
-        "\nError running Rust FHS preprocessing for: {}.json",
-        input_file_name
+        "\nError running Rust FHS preprocessing for {}.json: {:?}",
+        input_file_name,
+        result.err().unwrap()
     );
     println!("Finished running Rust FHS preprocessing for: {input_file_name}.json");
 }
