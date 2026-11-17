@@ -45,8 +45,8 @@ doctest = false
 name = "future-homes-standard"
 path = "src/main.rs"
 doc = false
-required-features = ["clap"]
+required-features = ["cli"]
 
 [features]
-default = []
 indicatif = ["home-energy-model/indicatif"]
+cli = ["dep:clap"]
