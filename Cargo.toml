@@ -34,7 +34,7 @@ tracing = "0.1.43"
 tracing-subscriber = { version = "0.3.23", optional = true }
 
 [dev-dependencies]
-rstest = "0.28.0"
+rstest = "0.29.0"
 walkdir = "2.5.0"
 
 [lib]
