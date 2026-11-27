@@ -19,18 +19,19 @@ pub use home_energy_model::read_weather_file;
 use home_energy_model::read_weather_file::{
     epw_weather_data_to_external_conditions, ExternalConditions,
 };
-pub use home_energy_model::ArcStr;
+#[cfg(feature = "use-aws-step-functions")]
+pub use home_energy_model::runner::aws_step_functions::AwsStepFunctionHemRunner;
+pub use home_energy_model::runner::RunsBatchedHemAsync;
 pub use home_energy_model::HemResponse;
 pub use home_energy_model::HEM_VERSION;
 pub use home_energy_model::HEM_VERSION_DATE;
-use home_energy_model::{CalculationResult, OutputFormat};
+use home_energy_model::{ArcStr, CalculationResult, OutputFormat};
 use indexmap::IndexMap;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{BufReader, Cursor, Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use tracing::{error, instrument};
+use tracing::{error, info, instrument};
 
 pub mod future_homes_standard;
 mod random;
@@ -164,18 +165,20 @@ impl HemWrapper for ChosenWrapper {
 
 #[instrument(skip_all)]
 #[allow(clippy::too_many_arguments)]
-pub fn run_wrappers(
+pub async fn run_wrappers(
+    // TODO: consider if this should move to main.rs
     input: impl Read,
     output_writer: &impl OutputWriter,
+    runner: &impl RunsBatchedHemAsync<Key = CalculationKey>,
     external_conditions_data: Option<ExternalConditions>,
-    tariff_data_file: Option<&str>,
+    _tariff_data_file: Option<&str>,
     flags: &FhsFlags,
     preprocess_only: bool,
     heat_balance: bool,
     detailed_output_heating_cooling: bool,
     core_output_formats: &[OutputFormat],
 ) -> Result<Option<HemResponse>, HemError> {
-    catch_unwind(AssertUnwindSafe(|| {
+    async {
         #[instrument(skip_all)]
         fn ingest_input_and_start_preprocessing(
             input: impl Read,
@@ -245,6 +248,8 @@ pub fn run_wrappers(
             Ok(())
         }
 
+        info!("in run_wrappers!");
+
         // 1. ingest / parse input and enter preprocessing stage
         let mut input_for_processing =
             ingest_input_and_start_preprocessing(input, external_conditions_data.as_ref())?;
@@ -269,6 +274,8 @@ pub fn run_wrappers(
             }
         };
 
+        info!("preprocessing happened!!!! 💁🏼");
+
         // 2b.(!) If preprocess-only flag is present and there is a primary calculation key, write out preprocess file
         if preprocess_only {
             for (calculation_key, (input_for_processing, _)) in inputs_by_key {
@@ -279,13 +286,26 @@ pub fn run_wrappers(
             return Ok(None);
         }
 
-        let contextualised_results: Result<HashMap<CalculationKey, CalculationResult>, HemError> =
-            inputs_by_key.par_iter()
-                .map(|(key, input_value)| {
-                    let finalized = input_value.0.clone().finalize()?; // TODO avoid cloning here!
-                    home_energy_model::run_project(finalized, external_conditions_data.clone(), tariff_data_file, heat_balance, detailed_output_heating_cooling)
-                        .map(|result_value| (*key, result_value))
-                    }).collect();
+
+        let batched_inputs: HashMap<CalculationKey, home_energy_model::RunInput<'static>> =
+            inputs_by_key
+                .iter()
+                .map(|(key, unfinalised_input)| {
+                    let finalized = unfinalised_input.0.clone().finalize()?;
+                    let run_input = home_energy_model::RunInput::Json(serde_json::to_value(finalized)?);
+                    Ok((*key, run_input))
+                })
+                .collect::<Result<_, anyhow::Error>>()
+                .map_err(HemError::InvalidRequest)?;
+
+        info!("we have some batched inputs");
+
+        let contextualised_results = runner
+            .run_batched_hem(&batched_inputs)
+            .await
+            .map_err(|_| HemError::PanicInCalculation("something happened, idk".to_owned()))?;
+
+        info!("hey we just ran batched hem!!");
 
         // 7. Run wrapper post-processing and capture any output.
         #[instrument(skip_all)]
@@ -305,16 +325,10 @@ pub fn run_wrappers(
 
         let custom_energy_supply_factors = inputs_by_key.iter().map(|(key, (_, factors))| (*key, factors.clone())).collect::<HashMap<_, _>>();
 
-        run_wrapper_postprocessing(output_writer, &contextualised_results?, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
+        run_wrapper_postprocessing(output_writer, &contextualised_results, &wrapper, flags, core_output_formats, heat_balance, detailed_output_heating_cooling, &custom_energy_supply_factors)
             .map_err(|e| HemError::ErrorInPostprocessing(PostprocessingError::new(e)))
-    }))
-        .map_err(|e| {
-            HemError::GeneralPanic(
-                e.downcast_ref::<&str>()
-                    .map_or("Uncaught panic - could not capture more information; to debug further, try replicating in debug mode.", |v| v)
-                    .to_owned(),
-            )
-        })?
+    }
+    .await
 }
 
 type CustomEnergySourceFactors = IndexMap<ArcStr, CustomEnergySourceFactor>;

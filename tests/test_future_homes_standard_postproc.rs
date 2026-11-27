@@ -1,4 +1,5 @@
 use csv::{ReaderBuilder, StringRecord};
+use futures::future::join_all;
 use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags};
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -15,8 +16,8 @@ mod common;
 use common::{InMemoryDirectoryOutputWriter, DEMO_FILES_DIR, FLOAT_THRESHOLD};
 const PYTHON_OUTPUT_DIR: &str = "./tests/e2e/expected_generated_results";
 
-#[test]
-fn test_fhs_postproc_result_files() {
+#[tokio::test]
+async fn test_fhs_postproc_result_files() {
     let demo_filepaths = fs::read_dir(DEMO_FILES_DIR)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -26,46 +27,45 @@ fn test_fhs_postproc_result_files() {
     let total_files = demo_filepaths.len();
 
     let postproc_and_metric_differences: Vec<(Vec<Difference>, Vec<Difference>, Option<String>)> =
-        demo_filepaths
-            .par_iter()
-            .map(|demo_input_file_path| {
-                let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
-                let demo_input = demo_input(&demo_file_name);
+        join_all(demo_filepaths.par_iter().map(async |demo_input_file_path| {
+            let demo_file_name = demo_input_file_path.file_stem().unwrap().to_str().unwrap();
+            let demo_input = demo_input(&demo_file_name);
 
-                let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
+            let output_writer = InMemoryDirectoryOutputWriter::new(demo_file_name);
 
-                println!("Running {}", demo_file_name);
+            println!("Running {}", demo_file_name);
 
-                let result = run_wrappers(
-                    demo_input,
-                    &output_writer,
-                    None,
-                    None,
-                    &FhsFlags::FHS_COMPLIANCE,
-                    false,
-                    false,
-                    false,
-                    &[],
+            let result = run_wrappers(
+                demo_input,
+                &output_writer,
+                None,
+                None,
+                &FhsFlags::FHS_COMPLIANCE,
+                false,
+                false,
+                false,
+                &[],
+            )
+            .await;
+
+            if let Err(e) = result {
+                let failed_file_error = format!(
+                    "💥 Error running project for file {}: {}",
+                    demo_file_name, e
                 );
+                return (vec![], vec![], Some(failed_file_error));
+            }
 
-                if let Err(e) = result {
-                    let failed_file_error = format!(
-                        "💥 Error running project for file {}: {}",
-                        demo_file_name, e
-                    );
-                    return (vec![], vec![], Some(failed_file_error));
-                }
-
-                let rust_files = &output_writer.files();
-                let differences = postproc_csv_results_differences(demo_file_name, rust_files);
-                let metrics_differences =
-                    postproc_metrics_results_differences(demo_file_name, rust_files);
-                if differences.is_empty() && metrics_differences.is_empty() {
-                    atomic_counter.fetch_add(1, Relaxed);
-                }
-                (differences, metrics_differences, None)
-            })
-            .collect();
+            let rust_files = &output_writer.files();
+            let differences = postproc_csv_results_differences(demo_file_name, rust_files);
+            let metrics_differences =
+                postproc_metrics_results_differences(demo_file_name, rust_files);
+            if differences.is_empty() && metrics_differences.is_empty() {
+                atomic_counter.fetch_add(1, Relaxed);
+            }
+            (differences, metrics_differences, None)
+        }))
+        .await;
 
     let (differences, metric_differences, failed_files): (
         Vec<Difference>,
@@ -109,8 +109,8 @@ fn test_fhs_postproc_result_files() {
 
 // TODO: Consider deleting below test once python test_fhs_postproc_result_files passes
 // as this supersedes test_fhs_postproc_compliance_differences
-#[test]
-fn test_fhs_postproc_compliance_differences() {
+#[tokio::test]
+async fn test_fhs_postproc_compliance_differences() {
     // even if we get different Target and Dwelling values
     // we may still get the correct compliance result (Target and Dwelling differences)
     let demo_files = [
@@ -119,16 +119,15 @@ fn test_fhs_postproc_compliance_differences() {
         "DESN-H-End-02-HP-iMEV-pre-heat",
         "DESN-H-End-02-HP-iMEV-wwhrs-storage-tank",
     ];
-    let differences: Vec<(String, usize)> = demo_files
-        .par_iter()
-        .map(|demo_input_file_name| {
+    let differences: Vec<(String, usize)> =
+        join_all(demo_files.par_iter().map(async |demo_input_file_name| {
             let demo_input = demo_input(demo_input_file_name);
 
             let output_writer = InMemoryDirectoryOutputWriter::new(demo_input_file_name);
 
             let result = run_wrappers(
                 demo_input,
-                &output_writer,
+                output_writer.clone(),
                 None,
                 None,
                 &FhsFlags::FHS_COMPLIANCE,
@@ -136,7 +135,8 @@ fn test_fhs_postproc_compliance_differences() {
                 false,
                 false,
                 &[],
-            );
+            )
+            .await;
 
             assert!(result.is_ok());
 
@@ -144,8 +144,8 @@ fn test_fhs_postproc_compliance_differences() {
             let differences = postproc_csv_compliance_differences(demo_input_file_name, rust_files);
 
             (differences.iter().join("\n"), differences.len())
-        })
-        .collect();
+        }))
+        .await;
     let (differences, total_difference_count) =
         differences
             .into_iter()
