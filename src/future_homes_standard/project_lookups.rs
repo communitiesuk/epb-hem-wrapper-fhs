@@ -1,9 +1,9 @@
 //! Functionality to support looking up information from the project input to help interpret returns
 //! from the core
-use accurate::{sum::Sum2, traits::*};
 use anyhow::bail;
 use home_energy_model::input::{FuelType, Input, InputForCalcHtcHlp};
 use home_energy_model::output::{OutputCore, OutputSummary};
+use home_energy_model::summing::precise_sum;
 use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 
@@ -115,10 +115,10 @@ fn eer_energy_by_period(
     // flexible start time, so we anchor to sim_start rather than assuming t=0 is midnight
     let is_offpeak = |t: f64| (t - sim_start).rem_euclid(24.) < OFFPEAK_END_HOUR;
 
-    let mut consumption_off_peak: Vec<f64> = vec![];
-    let mut consumption_on_peak: Vec<f64> = vec![];
-    let mut generation_off_peak: Vec<f64> = vec![];
-    let mut generation_on_peak: Vec<f64> = vec![];
+    let mut consumption_off_peak: Vec<f64> = Vec::with_capacity(timestep_array.len());
+    let mut consumption_on_peak: Vec<f64> = Vec::with_capacity(timestep_array.len());
+    let mut generation_off_peak: Vec<f64> = Vec::with_capacity(timestep_array.len());
+    let mut generation_on_peak: Vec<f64> = Vec::with_capacity(timestep_array.len());
 
     for (source, values) in usage_by_end_use.iter() {
         if !is_eer_applicable_source(input, source.as_ref()) {
@@ -162,10 +162,8 @@ fn eer_energy_by_period(
     }
 
     Ok((
-        Sum2::zero().absorb(consumption_off_peak).sum()
-            - Sum2::zero().absorb(generation_off_peak).sum(),
-        Sum2::zero().absorb(consumption_on_peak).sum()
-            - Sum2::zero().absorb(generation_on_peak).sum(),
+        precise_sum(&consumption_off_peak) - precise_sum(&generation_off_peak),
+        precise_sum(&consumption_on_peak) - precise_sum(&generation_on_peak),
     ))
 }
 
@@ -189,10 +187,7 @@ fn eer_energy_by_period(
 ///         the core convention that export is negative demand, and all zeros for a supply
 ///         that exports nothing.
 fn export_credit_tariff(generation_to_grid: &[f64]) -> anyhow::Result<Option<Tariff>> {
-    let exported = -generation_to_grid
-        .iter()
-        .copied()
-        .sum_with_accumulator::<Sum2<_>>();
+    let exported = -precise_sum(generation_to_grid);
     if exported > 0.0 {
         let (export_price, export_sc) = match tariff_lookup("electricity_exported_pv") {
             Ok(Some((export_price, export_sc))) => (export_price, export_sc),
@@ -318,7 +313,7 @@ pub(crate) fn by_fuel(
                 .energy_generated_consumed
                 .get(supply)
                 .cloned()
-                .map(|x| x.sum_with_accumulator::<Sum2<_>>())
+                .map(|x| precise_sum(&x))
                 .unwrap_or_default();
             let mut tariffs = rates
                 .iter()

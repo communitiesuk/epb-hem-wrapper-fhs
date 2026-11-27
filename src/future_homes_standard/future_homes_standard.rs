@@ -30,6 +30,7 @@ use home_energy_model::input::{
     SpaceHeatSystemDetails, TransparentBuildingElement, TransparentBuildingElementJsonValue,
 };
 use home_energy_model::output_writer::OutputWriter;
+use home_energy_model::summing::precise_sum;
 use home_energy_model::ArcStr;
 use indexmap::IndexMap;
 use itertools::{izip, Itertools};
@@ -665,12 +666,7 @@ where
             supply_emis_result.export,
             supply_emis_oos_result.export,
             supply_pe_result.export,
-        ) = if energy_export[&energy_supply_key]
-            .iter()
-            .copied()
-            .sum_with_accumulator::<Sum2<_>>()
-            < 0.
-        {
+        ) = if precise_sum(&energy_export[&energy_supply_key]) < 0. {
             match fuel_code {
                 FuelType::Electricity => (
                     apply_energy_factor_series(
@@ -738,12 +734,7 @@ where
         // Calculate energy generated and associated emissions/PE
         let mut energy_generated = vec![0.; number_of_timesteps];
         for end_user_energy in results_end_user[&energy_supply_key].values() {
-            if end_user_energy
-                .iter()
-                .copied()
-                .sum_with_accumulator::<Sum2<_>>()
-                < 0.
-            {
+            if precise_sum(end_user_energy) < 0. {
                 for (t_idx, energy_generated_value) in energy_generated.iter_mut().enumerate() {
                     *energy_generated_value -= end_user_energy[t_idx];
                 }
@@ -762,12 +753,7 @@ where
             supply_emis_result.generated,
             supply_emis_oos_result.generated,
             supply_pe_result.generated,
-        ) = if energy_generated
-            .iter()
-            .copied()
-            .sum_with_accumulator::<Sum2<_>>()
-            > 0.
-        {
+        ) = if precise_sum(&energy_generated) > 0. {
             // TODO (from Python) Allow custom (user-defined) factors for generated energy?
             let generation_factors = EMIS_PE_FACTORS
                 .get(&String::from("generation"))
@@ -922,12 +908,12 @@ where
     // nothing decided here depends on the sign.
     let total_emissions_rate = emis_results
         .values()
-        .map(|emis| emis.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .map(|emis| precise_sum(&emis.total))
         .sum_with_accumulator::<Sum2<_>>()
         / tfa;
     let total_pe_rate = pe_results
         .values()
-        .map(|pe| pe.total.iter().copied().sum_with_accumulator::<Sum2<_>>())
+        .map(|pe| precise_sum(&pe.total))
         .sum_with_accumulator::<Sum2<_>>()
         / tfa;
 

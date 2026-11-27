@@ -152,7 +152,7 @@ fn mode_differences(
     mode_difference_count
 }
 
-fn run_fhs_preprocessing(
+async fn run_fhs_preprocessing(
     input_file_name: &str,
     external_conditions: Option<ExternalConditions>,
     output_writer: &impl OutputWriter,
@@ -175,7 +175,8 @@ fn run_fhs_preprocessing(
         false,
         false,
         &[OutputFormat::Json],
-    );
+    )
+    .await;
 
     assert!(
         result.is_ok(),
